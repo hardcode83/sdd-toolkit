@@ -8,12 +8,16 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Run
 
-Execute the implementation. Arguments: the feature name (if omitted and exactly one non-archived change exists in `sdd/changes/`, use it), plus an optional mode:
+Execute the implementation. Arguments: the feature name (if omitted and exactly one non-archived change exists in `sdd/changes/`, use it), plus an optional scope/mode (addresses refer to the numbering in the change's `tasks.md`):
 
-- default — run all remaining tasks sequentially, with the review panel after each section.
-- `next` — run only the next unchecked task, then stop for review.
-- `solo` — skip the review panel entirely (cheap mode for scaffolding-heavy changes).
-- `tournament <task>` — parallel-generation for ONE hard task, where `<task>` is the task's number as written in the change's `tasks.md` (e.g. `2.1`) or enough of its description to identify it unambiguously. It must be a single unchecked task; the rest of the change runs normally. See step 6. Never the default.
+- default — run ALL remaining tasks sequentially, with the review panel after each section.
+- `next [N]` — run only the next N unchecked tasks (default 1), then stop for review.
+- `<section>` (e.g. `2`) — run only that section's pending tasks; panel at its close.
+- `<task>` (e.g. `2.3`) — run only that task (and its subtasks, if it has them). The panel fires when a section *completes*, so a lone task triggers it only if it was the section's last unchecked one.
+- `solo` — skip the review panel entirely (cheap mode for scaffolding-heavy changes). Combinable with a scope: `2 solo`.
+- `tournament <task>` — parallel-generation for ONE hard task (same addressing, e.g. `2.1`, or enough description to identify it unambiguously). It must be a single unchecked task; the rest of the change runs normally. See step 6. Never the default.
+
+**Out-of-order guard**: `tasks.md` is ordered so the system stays working after each section. If the requested scope would leave *earlier* unchecked tasks behind (e.g. `3.2` while section 1 has pending tasks), say so and get the user's confirmation before proceeding — the order exists for a reason, but the user may know better (e.g. a task parked on purpose).
 
 ## Steps
 

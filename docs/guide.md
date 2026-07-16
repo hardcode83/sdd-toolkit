@@ -111,7 +111,17 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 Solo esa tarea compite: 3 agentes la implementan en paralelo en worktrees aislados con ángulos distintos (simple-correcto / performance / defensivo), el panel juzga los 3 diffs contra los mismos referentes, el ganador se aplica y se injertan las ideas buenas de los perdedores. ~3× el coste de *esa tarea*; el resto del change va por run normal. No lo uses para CRUD — el panel normal ya cubre eso.
 
-**Ir tarea a tarea con revisión tuya entre medias** → `/sdd:run <feature> next`.
+**Ejecutar solo una parte del tasks.md** → el scope de `run` usa la numeración del propio archivo:
+
+```
+/sdd:run cleaning              # todas las tareas pendientes (panel por sección)
+/sdd:run cleaning next         # solo la siguiente tarea, y para
+/sdd:run cleaning next 3       # las 3 siguientes, y para
+/sdd:run cleaning 2            # solo la sección 2 completa (panel al cerrarla)
+/sdd:run cleaning 2.3          # solo la tarea 2.3 (y sus subtareas)
+```
+
+El panel salta al *completarse una sección* — una tarea suelta solo lo dispara si era la última pendiente de la suya. Y si pides algo fuera de orden (la `3.2` con la sección 1 a medias), te avisará antes: el orden del tasks.md existe para que el sistema siga funcionando tras cada sección.
 
 **¿Cuánto costó cada feature?** → activa métricas en `/sdd:init` (extras) y reinicia la sesión. Cada fase deja su fila (tokens in/out/cache por modelo + coste estimado, subagentes incluidos) en `changes/<feature>/metrics.md`; al archivar se consolida en `sdd/metrics.md`. Úsalo para calibrar el panel: si en tu proyecto una lente no paga su coste, quítala.
 
