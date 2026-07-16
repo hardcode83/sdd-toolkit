@@ -95,6 +95,8 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos).
 
+**Quedó deuda a mitad de un run** (un panel interrumpido por límites, una verificación aplazada, una tarea aparcada) → no depende de que te acuerdes: toda fase que termina dejando algo pendiente lo persiste en el `BLOCKED.md` del change (tipo `decision` si te toca a ti, `deferred` con su comando exacto de reanudación si puede retomarlo el flujo). `/sdd:status` lo enseña como bandeja de entrada, y `/sdd:archive` **se niega a cerrar** un change con entradas sin resolver (salvo override explícito tuyo). Resolver una entrada = ejecutar su comando o decidir, y borrarla.
+
 **Delegar solo el final** → aprueba tú proposal/design/tasks como siempre y luego `/sdd:auto <feature>`: detecta la fase y ejecuta lo mecánico (run→review→archive) sin gates.
 
 **En equipo: ¿quién tiene qué?** → la rama remota `sdd/<feature>` es el candado. `/sdd:new` avisa si la feature ya está cogida y ofrece pushear tu claim; `/sdd:status` enseña las de los demás como "en curso por otros". Si al mergear chocan dos `specs/<capability>.md`, no es ruido: dos features tocaron el mismo comportamiento — resolvedlo hablando, el merge textual es lo de menos.

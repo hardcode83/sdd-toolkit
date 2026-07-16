@@ -15,6 +15,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
 ## Steps
 
 1. **Verify completion.** Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> archive` (silent no-op if tracking is disabled). Read the change's `tasks.md`. If any task is unchecked, list them and ask the user to confirm archiving anyway (they may have been done outside the flow) — never check boxes yourself here.
+   - **Pending queue gate**: if `BLOCKED.md` exists, present its entries and STOP — resolve them first (run the resume commands, or the user decides), or get the user's explicit override to archive with debt (record the override in the archive summary). Never archive past an unread queue.
    - **Steering**: if `sdd/steering/` exists, load the docs whose `phases` include `archive` and whose `applies_to` matches this change (e.g. `documentation.md`) and apply their archive-time rules/checklists before closing.
 2. **Update the living specs.** For each capability the change touched (see "Affected specs" in the proposal, plus anything discovered during implementation):
    - Create or update `sdd/specs/<capability>.md` following `${CLAUDE_PLUGIN_ROOT}/templates/spec-template.md`.

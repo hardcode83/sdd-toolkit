@@ -86,10 +86,10 @@ Documents already written by the user's manual phases are treated as approved in
 
 When blocking a feature:
 
-1. Write `sdd/changes/<feature>/BLOCKED.md`: which phase blocked, the exact
-   question(s) a human must answer or the findings that persisted, and what
-   was tried. This file is the handoff — write it so the user can decide in
-   one read.
+1. Write `sdd/changes/<feature>/BLOCKED.md` (entry format per shared rule 5:
+   phase · type · what & why · exact resume command): the exact question(s)
+   a human must answer or the findings that persisted, and what was tried.
+   This file is the handoff — write it so the user can decide in one read.
 2. Commit whatever is consistent (documents + code that passed its
    verification) on `sdd/<feature>` — never leave uncommitted work.
 3. Annotate the roadmap entry with ` ⛔ blocked`.

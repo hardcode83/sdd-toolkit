@@ -11,7 +11,17 @@
 4. **Context loading**: read `sdd/project.md` at the start of every phase.
    Steering docs in `sdd/steering/` load selectively per
    `${CLAUDE_PLUGIN_ROOT}/references/steering.md`.
-5. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
+5. **No pending work lives only in the conversation.** If a phase ends
+   leaving anything undone or undecided — an interrupted panel, a skipped
+   verification, a parked task, a question for the user — it MUST persist it
+   in `sdd/changes/<feature>/BLOCKED.md` before finishing, one entry per
+   item: **phase** · **type** (`decision`: needs a human / `deferred`: the
+   flow can resume it) · **what & why** · **exact resume command** (e.g.
+   `/sdd:review <feature>`). `/sdd:status` surfaces this queue first;
+   `/sdd:archive` refuses to close a change with unresolved entries unless
+   the user explicitly overrides; resolving an entry deletes it (delete the
+   file when empty).
+6. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
    → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`. Support: `/sdd:status`
    (read-only, includes the BLOCKED queue), `/sdd:review` (drift /
    pre-archive check), `/sdd:history` (read-only queries over the archive),
