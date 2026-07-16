@@ -8,7 +8,9 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — New
 
-Create a change proposal. Argument: the feature name — normalize to kebab-case (e.g. `user-auth`). If no argument was given: if `sdd/roadmap.md` exists, propose taking its first unchecked entry; otherwise derive a short name from the user's description and confirm it.
+Create a change proposal. Arguments: the feature name — normalize to kebab-case (e.g. `user-auth`) — plus an optional **requirements/seed document** (a path to a markdown file, e.g. `/sdd:new user-auth docs/reqs-auth.md`). If no argument was given: if `sdd/roadmap.md` exists, propose taking its first unchecked entry; otherwise derive a short name from the user's description and confirm it.
+
+**Seed document** (from the argument, or referenced as `fuente:` in the roadmap entry): read it and use it as the source of truth for requirements — but **convert, don't copy**: restate its requirements as numbered user stories with EARS criteria, flag anything ambiguous or untestable as written (those become your questions in step 2, or explicit `ASSUMPTION`s), flag anything that contradicts `product.md`/existing specs, and note what the doc leaves out (error cases, limits). Link the doc from the proposal's Why section. A good seed doc makes step 2 unnecessary — that's what makes it ideal for `/sdd:auto`.
 
 ## Steps
 

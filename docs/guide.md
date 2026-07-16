@@ -89,6 +89,12 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje.
 
+**Tengo los requisitos ya escritos en un doc** → dos vías equivalentes: `/sdd:new mi-feature docs/reqs.md` (el doc como semilla directa), o entrada de roadmap con `(fuente: docs/reqs.md)` para que lo use cuando le llegue el turno. En ambos casos el proposal *convierte* el doc a EARS (no lo copia), señala ambigüedades y huecos, y cuanto mejor esté escrito el doc, menos preguntas te hará — con un doc realmente cerrado, la feature es candidata ideal para `/sdd:auto`.
+
+**Lanzar features sin intervenir** → `/sdd:auto [N]`: consume las próximas N entradas del roadmap de punta a punta — rama + PR por feature, panel obligatorio, y todo lo que necesitaría tu decisión acaba en `BLOCKED.md` (cola visible en `/sdd:status`) en vez de adivinarse. Tu gate se mueve a revisar las PRs. Empieza con `/sdd:auto 1` en sesión normal; desatendido: `claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron. Requisito real: steering docs concretos y roadmap curado — en auto, basura pre-autorizada sigue siendo basura.
+
+**Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>`.
+
 **Cambió el plan/PRD** → pocos cambios: edita roadmap/steering a mano. Revisión gorda: `/sdd:init plan-v2.md` — hace *merge*, nunca regenera: lo hecho es historia, lo nuevo se inserta, y lo que contradice specs ya construidas te lo señala como candidatos a `/sdd:new` (ahí hay código real que cambiar, no solo texto).
 
 **Endurecer una regla** (p. ej. seguridad) → edítala en `sdd/steering/security.md`. Automáticamente guiará la generación en las fases donde carga *y* la exigirá sdd-security en el panel. Regla concreta = panel afilado; regla vaga = panel débil.
