@@ -65,9 +65,11 @@ Take the next unchecked, un-started roadmap entry. Then:
    consolidation, roadmap tick). Commit: `sdd(<feature>): archive`.
 8. **Publish**: if a remote and `gh` are available, push and open a PR from
    `sdd/<feature>` to BASE — title `SDD: <feature>`, body = the proposal's
-   Why/What + panel verdict + link to the archived change; end the body
-   with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-   No remote → leave the branch and say so.
+   Why/What + panel verdict + link to the archived change. **Attribution
+   follows the project's settings**: only append the Claude Code attribution
+   line (and co-author trailers in commits) if `includeCoAuthoredBy` is not
+   disabled in the effective settings — never hardcode signatures against
+   the user's configuration. No remote → leave the branch and say so.
 9. `git checkout BASE` and continue with the next entry.
 
 ## Resuming a mid-flight feature
