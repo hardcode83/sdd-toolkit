@@ -35,6 +35,7 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:status` | Changes activos + roadmap como to-do list. | haiku |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
+| `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
 Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola. El modelo por fase se fija en el frontmatter de cada `skills/*/SKILL.md` (editar aquí y subir versión aplica a todos los proyectos; el override dura solo esa invocación).
 

@@ -22,5 +22,6 @@ Write the technical design for a change. Argument: the feature name; if omitted 
    - Cover every requirement in the proposal — if a requirement has no design implication, say so explicitly.
    - Surface **open questions** rather than silently deciding on things the user should weigh in on.
    - No code beyond short illustrative snippets or interface signatures.
+   - If a visual would say it better (flows, state machines, component interactions), generate it with the `sdd:diagram` skill and reference the PNG from the design doc.
 5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> design` (silent no-op if tracking is disabled).
 6. **Gate.** Summarize the key decisions and open questions, resolve the open questions with the user (AskUserQuestion when they are concrete choices), and wait for approval. Then suggest `/sdd:tasks`.
