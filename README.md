@@ -174,6 +174,16 @@ Ejecuta features del roadmap **sin intervención**, sustituyendo cada gate human
 
 Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
+**Reanudación parcial**: `/sdd:auto <feature>` sobre un change ya empezado no regenera nada — detecta la fase actual y continúa desde ahí (tus documentos manuales cuentan como aprobados). El híbrido natural: tú conduces las fases de pensamiento (proposal, design), auto remata las mecánicas (run→review→archive).
+
+## Trabajo en equipo
+
+**Una feature = una rama `sdd/<feature>` = un dueño.** El código y su carpeta `sdd/changes/<feature>/` viajan juntos en la rama; la PR mergea código + specs + change archivado + tick del roadmap en un solo diff revisable (el revisor ve porqué, decisiones y verificación al lado del código).
+
+- **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros".
+- **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `roadmap.md`/`metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
+- **Distribución**: `.claude/settings.json` versionado con `extraKnownMarketplaces` + `enabledPlugins` hace que quien clone reciba el prompt de instalar el plugin al confiar en la carpeta.
+
 ## Métricas de uso por feature
 
 Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
