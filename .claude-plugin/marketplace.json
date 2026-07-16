@@ -7,7 +7,7 @@
     {
       "name": "sdd",
       "source": "./",
-      "description": "Spec-Driven Development workflow (Kiro-style simplicity over OpenSpec conventions)."
+      "description": "Spec-Driven Development workflow (Kiro-style simplicity over OpenSpec conventions): approval-gated phases, multi-agent review panel, autonomous mode, usage metrics and decision history."
     }
   ]
 }

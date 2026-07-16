@@ -19,7 +19,7 @@ Ninguna fase encadena con la siguiente sola: cada una termina esperándote.
 ## Instalación (una vez por máquina)
 
 ```
-/plugin marketplace add <owner>/sdd        # o ruta local al clon
+/plugin marketplace add hardcode83/sdd-toolkit   # o ruta local al clon
 /plugin install sdd@sdd-toolkit
 ```
 
@@ -114,7 +114,8 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 ## Mantenimiento del plugin
 
 - **Actualizar**: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit`. Tus `sdd/` no se tocan — son datos del proyecto.
-- **Cambiar el modelo de una fase**: edita el frontmatter `model:` de `skills/<fase>/SKILL.md` en el repo del plugin y commitea. Aplica a todos tus proyectos (el perfil es del plugin, no del proyecto).
+- **Cambiar el modelo de una fase o de un agente del panel**: frontmatter `model:` de `skills/<fase>/SKILL.md` o de `agents/sdd-*.md` en el repo del plugin, commit y subir versión. Aplica a todos tus proyectos (la configuración de modelos/agentes es del plugin, no del proyecto) — la tabla completa fase→modelo→agentes está en el README.
+- **Ajustar el panel**: los agentes leen *tus* steering docs como referente, así que su agresividad se calibra sobre todo ahí (reglas concretas = findings útiles). Para cambiar su contrato (qué chequean, formato de findings), edita `agents/sdd-*.md`.
 - **Añadir MCPs/LSPs a los catálogos**: `references/mcp-catalog.md` / `lsp-catalog.md`.
 
 ## Las reglas de oro

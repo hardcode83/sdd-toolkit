@@ -1,8 +1,22 @@
-# SDD — plugin de Claude Code
+# SDD Toolkit — plugin de Claude Code
 
-Flujo de **Spec-Driven Development** como plugin de Claude Code, inspirado en [OpenSpec](https://github.com/Fission-AI/OpenSpec) con la simplicidad de Kiro: tres documentos por cambio, un flujo lineal con puertas de aprobación, specs vivas y métricas de uso por feature.
+Flujo de **Spec-Driven Development** como plugin de Claude Code, inspirado en [OpenSpec](https://github.com/Fission-AI/OpenSpec) con la simplicidad de Kiro: tres documentos por cambio, un flujo lineal con puertas de aprobación, specs vivas, **panel multiagente de revisión** (architect/security/qa), **modo autónomo** con PRs, **métricas de tokens/coste por feature** y un **registro de decisiones consultable**.
 
 > **¿Primera vez?** Empieza por la [guía de uso paso a paso](docs/guide.md) — este README es la referencia.
+
+```mermaid
+flowchart LR
+    R[("roadmap.md")] --> N["/sdd:new<br/>proposal EARS"]
+    N -->|apruebas| D["/sdd:design<br/>decisiones"]
+    N -.->|trivial| T
+    D -->|apruebas| T["/sdd:tasks<br/>checklist"]
+    T -->|apruebas| RU["/sdd:run<br/>implementa"]
+    RU <--> P{{"panel por sección<br/>architect·security·qa"}}
+    RU --> A["/sdd:archive"]
+    A --> S[("specs/ vivas")]
+    A --> H[("archive/ = memoria<br/>consultable con /sdd:history")]
+    AUTO["/sdd:auto"] -. "todo el ciclo sin gates,<br/>PR por feature, BLOCKED si duda" .-> N
+```
 
 ## Filosofía
 
@@ -10,11 +24,12 @@ Flujo de **Spec-Driven Development** como plugin de Claude Code, inspirado en [O
 2. **Dos espacios:** `sdd/specs/` (verdad viva: qué hace el sistema hoy) y `sdd/changes/` (propuestas en curso que, al completarse, actualizan las specs y se archivan).
 3. **Simple estilo Kiro.** `proposal.md` + `design.md` (opcional si trivial) + `tasks.md`, con aprobación explícita entre fases.
 4. **El proyecto guarda los datos; el plugin, la lógica.** `sdd/` en cada repo es pura persistencia (specs, changes, steering, roadmap, métricas) — sobrevive a actualizaciones del plugin y a cambios de máquina.
+5. **Los documentos son referentes ejecutables.** Las reglas de steering guían la generación *y* las verifica el panel; el archivo de changes es un registro de decisiones con citas (`/sdd:history`). Nada se revisa ni se recuerda "de memoria".
 
 ## Instalación
 
 ```
-/plugin marketplace add <owner>/<repo>        # o ruta local: /plugin marketplace add ~/personal/sdd
+/plugin marketplace add hardcode83/sdd-toolkit   # o ruta local al clon
 /plugin install sdd@sdd-toolkit
 ```
 
@@ -38,7 +53,33 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | sonnet |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
-Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola. El modelo por fase se fija en el frontmatter de cada `skills/*/SKILL.md` (editar aquí y subir versión aplica a todos los proyectos; el override dura solo esa invocación).
+Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola (excepto `/sdd:auto`, que sustituye los gates por sus equivalentes automáticos).
+
+## Modelos y agentes por fase
+
+Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
+
+| Fase | Modelo | Agentes que intervienen |
+|---|---|---|
+| `init` | sonnet | — |
+| `new` | **opus** | — (gate humano; en auto: auto-check vs roadmap + product.md) |
+| `design` | **opus** | en modo auto: `sdd-architect` pre-aprueba el design antes de codificar |
+| `tasks` | sonnet | — (check de cobertura R#→tareas) |
+| `run` | sonnet | **panel por sección**: `sdd-architect` + `sdd-security` + `sdd-qa` en paralelo; en `tournament`: 3 implementadores en worktrees + panel como juez |
+| `review` | sonnet | el mismo panel, a escala feature |
+| `archive` | haiku | — |
+| `status` / `history` | haiku / sonnet | — (solo lectura) |
+| `auto` | sonnet (orquestador) | todos los anteriores según la fase que esté ejecutando |
+
+Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
+
+| Agente | Modelo | Referente que verifica | Regla |
+|---|---|---|---|
+| `sdd-architect` | sonnet | `design.md` (D#) + `steering/architecture.md` | Desviación del design = finding aunque funcione; design obsoleto = `DESIGN-CONFLICT`, nunca parche |
+| `sdd-security` | **opus** | `steering/security.md` regla a regla; sin ese doc, solo clases objetivas con evidencia | Cita la regla o el input→sink; sin evidencia no reporta |
+| `sdd-qa` | sonnet | criterios EARS del proposal + `steering/testing.md` | Por cada R#: ¿implementado? ¿testeado de verdad? ¿aguanta? — ejecuta tests, intenta romper |
+
+**Cómo cambiar la configuración**: el modelo de una fase se edita en el frontmatter `model:` de `skills/<fase>/SKILL.md`; el de un agente, en `agents/sdd-*.md`. Es configuración del plugin (no por proyecto): editar, commitear y subir versión aplica a todos tus proyectos. El override de modelo dura solo esa invocación — la sesión vuelve a tu modelo al terminar.
 
 ## Estructura en el proyecto destino
 
@@ -55,7 +96,8 @@ proyecto/
     ├── specs/                  # verdad viva, una capability por .md
     └── changes/
         ├── <feature>/          # proposal.md · design.md · tasks.md · metrics.md
-        └── archive/2026-07-15-<feature>/
+        │                       # (+ BLOCKED.md si el modo auto necesita tu decisión)
+        └── archive/2026-07-15-<feature>/   # memoria del proyecto → /sdd:history
 ```
 
 ## Steering: instrucciones permanentes con carga selectiva
@@ -106,12 +148,13 @@ Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepci�
 ```
 .claude-plugin/{plugin,marketplace}.json
 rules.md            # reglas compartidas que toda fase lee primero
-skills/<fase>/      # init·new·design·tasks·run·archive·status·review
+skills/<fase>/      # init·new·design·tasks·run·archive·status·review·auto·history·diagram
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
 scripts/            # usage-{mark,phase,sink} · rtk-rewrite.sh
+docs/guide.md       # guía de uso narrativa
 ```
 
 Para añadir una fase propia: carpeta en `skills/` + entrada en `rules.md`. Para tus MCPs/LSPs: edita los catálogos.

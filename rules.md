@@ -12,5 +12,8 @@
    Steering docs in `sdd/steering/` load selectively per
    `${CLAUDE_PLUGIN_ROOT}/references/steering.md`.
 5. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
-   → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`, plus `/sdd:status`
-   (read-only) and `/sdd:review` (drift / pre-archive check).
+   → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`. Support: `/sdd:status`
+   (read-only, includes the BLOCKED queue), `/sdd:review` (drift /
+   pre-archive check), `/sdd:history` (read-only queries over the archive),
+   `/sdd:auto` (the whole cycle with automated gate substitutes), and
+   `/sdd:diagram` (visuals for design docs).
