@@ -26,6 +26,50 @@ flowchart LR
 4. **El proyecto guarda los datos; el plugin, la lógica.** `sdd/` en cada repo es pura persistencia (specs, changes, steering, roadmap, métricas) — sobrevive a actualizaciones del plugin y a cambios de máquina.
 5. **Los documentos son referentes ejecutables.** Las reglas de steering guían la generación *y* las verifica el panel; el archivo de changes es un registro de decisiones con citas (`/sdd:history`). Nada se revisa ni se recuerda "de memoria".
 
+## ¿Qué vive dónde? — arquitectura de capas
+
+Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define *cómo* trabaja el flujo → plugin; si define *qué* es tu proyecto y bajo qué reglas → proyecto; si es efímero → máquina.**
+
+```
+┌─ 🔌 PLUGIN ─────────────── el CÓMO se trabaja ──────────────────┐
+│  fases y sus modelos · agentes del panel · plantillas · catálogos │
+│  vive: instalado por usuario (igual en todos tus proyectos)       │
+│  cambia: /plugin update                                           │
+└──────────────────────────────┬────────────────────────────────────┘
+                               │  /sdd:init copia plantillas UNA vez
+                               │  y las rellena; las fases leen/escriben
+                               ▼
+┌─ 📁 PROYECTO ───────────── el QUÉ construyes y tus REGLAS ──────┐
+│  sdd/: steering (tus reglas) · specs (verdad viva) · changes ·    │
+│  roadmap · métricas  +  CLAUDE.md · .mcp.json · settings.json     │
+│  vive: versionado en el repo (viaja con el equipo)                │
+│  cambia: tú y las fases — sobrevive a updates del plugin          │
+└──────────────────────────────┬────────────────────────────────────┘
+                               │  runtime
+                               ▼
+┌─ 💻 MÁQUINA ────────────── lo EFÍMERO ──────────────────────────┐
+│  .sdd-usage/ (snapshots de uso) · binarios: rtk, mmdc, LSPs       │
+│  vive: local, gitignorado — no viaja                              │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+| Componente | Capa | Quién lo escribe | Cómo cambia |
+|---|---|---|---|
+| `skills/` (fases + modelos) | Plugin | tú, en el repo del plugin | commit + subir versión → llega a todos tus proyectos vía update |
+| `agents/` (panel) | Plugin | ídem | ídem |
+| `templates/` (esqueletos) | Plugin | ídem | solo afecta a documentos que se creen *a partir de ahora* |
+| `references/` (catálogos) | Plugin | ídem | el init los relee en cada re-ejecución |
+| `scripts/` + `hooks/` | Plugin | ídem | commit + versión |
+| `sdd/project.md` | Proyecto | `/sdd:init` lo genera; se edita a mano | cuando cambie stack/comandos |
+| `sdd/steering/` | Proyecto | el init crea el esqueleto; **tú lo llenas de reglas** | editar a mano — efectivo al instante para fases y panel |
+| `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
+| `sdd/changes/` + `archive/` | Proyecto | las fases del ciclo | el ciclo del change |
+| `sdd/roadmap.md` | Proyecto | init lo siembra; **editable a mano** | añadir/reordenar líneas |
+| `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
+| `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
+
+**La frontera interesante son los templates y el steering**: el plugin pone la *forma* (esqueleto + frontmatter + reglas de carga en `references/steering.md`), el proyecto pone el *contenido* (tus reglas concretas). El init copia una vez y rellena; los updates del plugin **jamás tocan lo copiado** — por eso endurecer una regla de seguridad es editar un markdown de tu repo, y cambiar cómo se revisa es editar el plugin. Y el mismo patrón explica el panel: los agentes (plugin) no llevan reglas propias — verifican las tuyas (proyecto).
+
 ## Instalación
 
 ```
@@ -45,7 +89,7 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:new [feature]` | Proposal con user stories EARS (3-7 requisitos). Sin argumento, coge la siguiente entrada del roadmap. | opus |
 | `/sdd:design [feature]` | Diseño técnico con decisiones y alternativas. Se salta si el cambio es trivial. | opus |
 | `/sdd:tasks [feature]` | Checklist de tareas pequeñas y verificables que referencian requisitos `[R1]`. | sonnet |
-| `/sdd:run [feature] [next]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. | sonnet |
+| `/sdd:run [feature] [scope]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. Scope opcional: `next [N]`, una sección (`2`), una tarea (`2.3`), `solo` (sin panel), `tournament <tarea>`. | sonnet |
 | `/sdd:archive [feature]` | Fusiona en las specs vivas (spec on first touch), consolida métricas y archiva. | haiku |
 | `/sdd:status` | Changes activos + roadmap como to-do list. | haiku |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
