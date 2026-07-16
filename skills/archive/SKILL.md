@@ -1,7 +1,7 @@
 ---
 name: archive
 model: haiku
-description: Close a completed SDD change - merges it into the living specs (sdd/specs/) and moves it to the archive. Use when the user runs /sdd-toolkit:archive after implementation is done.
+description: Close a completed SDD change - merges it into the living specs (sdd/specs/) and moves it to the archive. Use when the user runs /sdd:archive after implementation is done.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).

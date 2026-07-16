@@ -1,6 +1,6 @@
 ---
 name: sdd-qa
-description: SDD review-panel agent - verifies that each EARS acceptance criterion in scope is implemented and tested, runs the tests, and tries to break the implementation. Launched in parallel with sdd-architect and sdd-security during /sdd-toolkit:run and /sdd-toolkit:review. May run tests but never edits files.
+description: SDD review-panel agent - verifies that each EARS acceptance criterion in scope is implemented and tested, runs the tests, and tries to break the implementation. Launched in parallel with sdd-architect and sdd-security during /sdd:run and /sdd:review. May run tests but never edits files.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

@@ -1,7 +1,7 @@
 ---
 name: auto
 model: sonnet
-description: Run SDD features end-to-end without human intervention - consumes roadmap entries through new/design/tasks/run/review/archive with automated gate substitutes, one branch+PR per feature, and a BLOCKED queue for anything needing a human decision. Use when the user runs /sdd-toolkit:auto, optionally with a count or feature name.
+description: Run SDD features end-to-end without human intervention - consumes roadmap entries through new/design/tasks/run/review/archive with automated gate substitutes, one branch+PR per feature, and a BLOCKED queue for anything needing a human decision. Use when the user runs /sdd:auto, optionally with a count or feature name.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first. This skill **overrides rule 3

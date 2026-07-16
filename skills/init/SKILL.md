@@ -1,7 +1,7 @@
 ---
 name: init
 model: sonnet
-description: Bootstrap the SDD (Spec-Driven Development) workflow in this project - generates steering docs, optionally seeds from a planning document, creates a spec baseline for existing codebases, and interactively enables optional MCPs, LSPs and usage metrics. Use when the user runs /sdd-toolkit:init or asks to set up SDD in a project.
+description: Bootstrap the SDD (Spec-Driven Development) workflow in this project - generates steering docs, optionally seeds from a planning document, creates a spec baseline for existing codebases, and interactively enables optional MCPs, LSPs and usage metrics. Use when the user runs /sdd:init or asks to set up SDD in a project.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
@@ -37,7 +37,7 @@ Keep exploration proportional — this is a steering summary, not an audit.
 | Stack/architecture decisions already made | `sdd/project.md` + `sdd/steering/architecture.md` |
 | Feature list / phases / milestones | `sdd/roadmap.md` — one line per future change, in order |
 
-Do NOT turn the plan's features into proposals now — proposals are written just-in-time by `/sdd-toolkit:new`, one at a time, when their turn comes.
+Do NOT turn the plan's features into proposals now — proposals are written just-in-time by `/sdd:new`, one at a time, when their turn comes.
 
 **Re-ingesting an updated plan** (project already initialized): merge, never regenerate. Diff the plan against the current `sdd/roadmap.md` and steering, then:
 
@@ -45,7 +45,7 @@ Do NOT turn the plan's features into proposals now — proposals are written jus
 - New features → new `- [ ]` entries, inserted where they belong in the order.
 - Dropped features → remove their pending entries (confirm first).
 - Changed features not yet started → edit their pending line.
-- Changes that contradict behavior already built (there's a spec in `sdd/specs/` for it) → don't just edit the roadmap: flag them explicitly as `/sdd-toolkit:new` candidates, because reality now disagrees with the plan.
+- Changes that contradict behavior already built (there's a spec in `sdd/specs/` for it) → don't just edit the roadmap: flag them explicitly as `/sdd:new` candidates, because reality now disagrees with the plan.
 - Vision/architecture deltas → update the affected steering docs, showing the user the diff.
 
 ### 3. Write the core scaffold
@@ -79,7 +79,7 @@ If step 2 found significant existing functionality and `sdd/specs/` is empty, of
 2. Let the user pick the 3-6 **core** ones (AskUserQuestion, multiSelect). Recommend against a full backfill — speculative specs nobody audits are worse than no specs.
 3. For each chosen capability, read the actual implementation and write `sdd/specs/<capability>.md` describing **current real behavior** (present tense, EARS), using `${CLAUDE_PLUGIN_ROOT}/templates/spec-template.md`.
 
-Tell the user the rest is covered lazily: when a change touches an undocumented area, `/sdd-toolkit:archive` creates its spec ("spec on first touch").
+Tell the user the rest is covered lazily: when a change touches an undocumented area, `/sdd:archive` creates its spec ("spec on first touch").
 
 ### 6. Offer optional extras
 
@@ -102,7 +102,7 @@ When re-running this step on an already-initialized project, first diff against 
 ## Spec-Driven Development
 
 This project uses the SDD workflow (sdd plugin). Read `sdd/project.md` before significant work.
-New features and non-trivial changes go through /sdd-toolkit:new → /sdd-toolkit:design → /sdd-toolkit:tasks → /sdd-toolkit:run → /sdd-toolkit:archive.
+New features and non-trivial changes go through /sdd:new → /sdd:design → /sdd:tasks → /sdd:run → /sdd:archive.
 Current system behavior is documented in `sdd/specs/`; in-flight changes live in `sdd/changes/`; standing rules in `sdd/steering/`.
 <!-- sdd:end -->
 ```
@@ -113,4 +113,4 @@ Current system behavior is documented in `sdd/specs/`; in-flight changes live in
 
 ### 8. Summarize
 
-Report what was created/enabled. Note the per-phase model profile is fixed in the plugin (opus for new/design, sonnet for the bulk, haiku for archive/status) and is changed by editing the plugin's skill frontmatter, not per project. Suggest the first step: `/sdd-toolkit:new` on the first roadmap entry if a roadmap exists, otherwise `/sdd-toolkit:new <feature>`.
+Report what was created/enabled. Note the per-phase model profile is fixed in the plugin (opus for new/design, sonnet for the bulk, haiku for archive/status) and is changed by editing the plugin's skill frontmatter, not per project. Suggest the first step: `/sdd:new` on the first roadmap entry if a roadmap exists, otherwise `/sdd:new <feature>`.

@@ -1,6 +1,6 @@
 # MCP Catalog
 
-Optional MCP servers offered during `/sdd-toolkit:init`. Each entry is a key to merge
+Optional MCP servers offered during `/sdd:init`. Each entry is a key to merge
 into the `mcpServers` object of the project's `.mcp.json`. Offer only the
 ones relevant to the detected stack. Edit this file to add your own.
 

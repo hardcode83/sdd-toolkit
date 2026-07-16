@@ -28,7 +28,7 @@ exists, read each doc's frontmatter and load the full doc when **both**:
 
 1. `phases` is absent or includes the current phase, and
 2. `applies_to` is absent or matches the files/areas the change touches
-   (for `/sdd-toolkit:new`, judge by the areas the request describes; for later
+   (for `/sdd:new`, judge by the areas the request describes; for later
    phases, use the proposal's scope and the actual files being modified).
 
 ## Recommended frontmatter per doc type
