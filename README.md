@@ -26,6 +26,53 @@ flowchart LR
 4. **El proyecto guarda los datos; el plugin, la lógica.** `sdd/` en cada repo es pura persistencia (specs, changes, steering, roadmap, métricas) — sobrevive a actualizaciones del plugin y a cambios de máquina.
 5. **Los documentos son referentes ejecutables.** Las reglas de steering guían la generación *y* las verifica el panel; el archivo de changes es un registro de decisiones con citas (`/sdd:history`). Nada se revisa ni se recuerda "de memoria".
 
+## ¿Qué vive dónde? — arquitectura de capas
+
+Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define *cómo* trabaja el flujo → plugin; si define *qué* es tu proyecto y bajo qué reglas → proyecto; si es efímero → máquina.**
+
+```mermaid
+flowchart TB
+    subgraph PLUGIN["🔌 PLUGIN — por usuario, igual en todos tus proyectos, se actualiza con /plugin update"]
+        SK["skills/ · lógica de cada fase<br/>+ modelo por fase"]
+        AG["agents/ · contratos del panel<br/>+ modelo por agente"]
+        TPL["templates/ · esqueletos<br/>de documentos"]
+        REF["references/ · catálogos MCP/LSP,<br/>formato steering, métricas"]
+        SCR["scripts/ + hooks/ ·<br/>métricas OTel, hook rtk"]
+    end
+    subgraph PROYECTO["📁 PROYECTO — versionado en el repo, viaja con el equipo, sobrevive a updates del plugin"]
+        ST["sdd/steering/ · TUS reglas:<br/>visión, arquitectura, seguridad, testing…"]
+        PM["sdd/project.md · stack y comandos"]
+        SP["sdd/specs/ · verdad viva"]
+        CH["sdd/changes/ + archive/ ·<br/>trabajo en curso y memoria"]
+        RM["sdd/roadmap.md · metrics.md"]
+        CFG["CLAUDE.md · .mcp.json ·<br/>.claude/settings.json"]
+    end
+    subgraph MAQ["💻 MÁQUINA — local y gitignorado"]
+        RT[".sdd-usage/ (snapshots de uso) ·<br/>binarios: rtk, mmdc, language servers"]
+    end
+    TPL -- "/sdd:init copia el esqueleto UNA vez<br/>y lo rellena con contenido real" --> ST
+    SK -- "las fases leen y escriben" --> CH
+    ST -- "referentes que el panel verifica" --> AG
+    SCR -- "snapshots" --> RT
+```
+
+| Componente | Capa | Quién lo escribe | Cómo cambia |
+|---|---|---|---|
+| `skills/` (fases + modelos) | Plugin | tú, en el repo del plugin | commit + subir versión → llega a todos tus proyectos vía update |
+| `agents/` (panel) | Plugin | ídem | ídem |
+| `templates/` (esqueletos) | Plugin | ídem | solo afecta a documentos que se creen *a partir de ahora* |
+| `references/` (catálogos) | Plugin | ídem | el init los relee en cada re-ejecución |
+| `scripts/` + `hooks/` | Plugin | ídem | commit + versión |
+| `sdd/project.md` | Proyecto | `/sdd:init` lo genera; se edita a mano | cuando cambie stack/comandos |
+| `sdd/steering/` | Proyecto | el init crea el esqueleto; **tú lo llenas de reglas** | editar a mano — efectivo al instante para fases y panel |
+| `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
+| `sdd/changes/` + `archive/` | Proyecto | las fases del ciclo | el ciclo del change |
+| `sdd/roadmap.md` | Proyecto | init lo siembra; **editable a mano** | añadir/reordenar líneas |
+| `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
+| `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
+
+**La frontera interesante son los templates y el steering**: el plugin pone la *forma* (esqueleto + frontmatter + reglas de carga en `references/steering.md`), el proyecto pone el *contenido* (tus reglas concretas). El init copia una vez y rellena; los updates del plugin **jamás tocan lo copiado** — por eso endurecer una regla de seguridad es editar un markdown de tu repo, y cambiar cómo se revisa es editar el plugin. Y el mismo patrón explica el panel: los agentes (plugin) no llevan reglas propias — verifican las tuyas (proyecto).
+
 ## Instalación
 
 ```
