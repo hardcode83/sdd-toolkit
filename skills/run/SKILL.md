@@ -13,7 +13,7 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
 - default — run all remaining tasks sequentially, with the review panel after each section.
 - `next` — run only the next unchecked task, then stop for review.
 - `solo` — skip the review panel entirely (cheap mode for scaffolding-heavy changes).
-- `tournament <task>` — parallel-generation mode for ONE hard task (see below). Never the default.
+- `tournament <task>` — parallel-generation for ONE hard task, where `<task>` is the task's number as written in the change's `tasks.md` (e.g. `2.1`) or enough of its description to identify it unambiguously. It must be a single unchecked task; the rest of the change runs normally. See step 6. Never the default.
 
 ## Steps
 

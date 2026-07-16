@@ -101,7 +101,15 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **El panel insiste en un finding que no compartes** → tras 2 rondas se detiene y decides tú. Si el finding revela que el *documento* está mal (no el código), eso es un `DESIGN-CONFLICT`: se actualiza el design/proposal contigo y se sigue — los documentos mandan, y por eso deben mantenerse verdaderos.
 
-**Sección de puro scaffolding** → `/sdd:run <feature> solo` (sin panel). **Tarea endiablada** (algoritmo, concurrencia) → `/sdd:run <feature> tournament <tarea>`: 3 implementaciones paralelas en worktrees y el panel como juez (~3× coste — excepción, no norma).
+**Sección de puro scaffolding** → `/sdd:run <feature> solo` (sin panel).
+
+**Una tarea endiablada dentro del change** (algoritmo, state machine, concurrencia — donde dos implementaciones correctas pueden diferir mucho en calidad) → tournament, señalando la tarea por su número en `tasks.md`:
+
+```
+/sdd:run timeline-state-machine tournament 2.1
+```
+
+Solo esa tarea compite: 3 agentes la implementan en paralelo en worktrees aislados con ángulos distintos (simple-correcto / performance / defensivo), el panel juzga los 3 diffs contra los mismos referentes, el ganador se aplica y se injertan las ideas buenas de los perdedores. ~3× el coste de *esa tarea*; el resto del change va por run normal. No lo uses para CRUD — el panel normal ya cubre eso.
 
 **Ir tarea a tarea con revisión tuya entre medias** → `/sdd:run <feature> next`.
 
