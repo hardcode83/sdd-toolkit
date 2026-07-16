@@ -109,6 +109,8 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Auditar que specs y código siguen de acuerdo** → `/sdd:review` sin argumento: drift check con findings Broken/Undocumented/Stale.
 
+**¿Por qué esto es así? / ¿Qué se ha hecho ya?** → `/sdd:history`: sin argumento, timeline de lo archivado (fecha, qué, coste); con feature, su ficha completa (decisiones con alternativas rechazadas, tareas, commits); con una pregunta libre ("¿por qué infra va por entorno?"), busca en el archivo y responde **con cita** (change, fecha, D#) y chequeo de vigencia — te dice si la decisión sigue en pie o la superó un change posterior. El archivo es tu registro de decisiones (ADRs gratis); esta es la forma de consultarlo.
+
 ## Mantenimiento del plugin
 
 - **Actualizar**: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit`. Tus `sdd/` no se tocan — son datos del proyecto.
