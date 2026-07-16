@@ -27,7 +27,11 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
    - Implement it following the design decisions and the conventions in `project.md`.
    - Verify it (run the relevant tests/lint from `project.md` — don't wait for the final section to find breakage).
    - Only then mark it `[x]` in `tasks.md`. Never check off unverified work.
-3. **Review panel — after each completed section.** When the last task of a numbered section is checked and the section touched production code (skip it for pure scaffolding/docs/config sections, and in `solo` mode), launch the three reviewer agents **in parallel** (one message, three Agent calls — types `sdd-architect`, `sdd-security`, `sdd-qa`). Give each: the feature name, the requirement IDs (R#) the section covers, and the exact scope (files changed / git diff range since the section started).
+3. **Review panel — after each completed section.** When the last task of a numbered section is checked and the section touched production code (skip it for pure scaffolding/docs/config sections, and in `solo` mode), launch the review panel **in parallel** (one message, one Agent call per reviewer):
+   - **Core reviewers (always)**: types `sdd-architect`, `sdd-security`, `sdd-qa`.
+   - **Project reviewers (additive)**: every agent the project defines at `.claude/agents/sdd-review-*.md` (agent type = the file's `name`; discover with a glob before launching). They extend the panel with project-specific lenses (performance, i18n, compliance…) and follow the same contract.
+
+   Give each reviewer: the feature name, the requirement IDs (R#) the section covers, and the exact scope (files changed / git diff range since the section started).
    - **Referent filter**: discard any finding that doesn't cite its referent (R#, design decision D#, or a quoted steering rule) — the agents are instructed this way, enforce it when synthesizing.
    - Fix the accepted findings, then re-run **only the reviewer(s) whose findings you fixed**, scoped to the fix. Maximum 2 fix rounds per section; if findings persist after that, stop and present them to the user.
    - A `DESIGN-CONFLICT` from the architect is not a code fix — it goes through the deviation rule (step 4).

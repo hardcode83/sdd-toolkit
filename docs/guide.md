@@ -103,6 +103,13 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Endurecer una regla** (p. ej. seguridad) → edítala en `sdd/steering/security.md`. Automáticamente guiará la generación en las fases donde carga *y* la exigirá sdd-security en el panel. Regla concreta = panel afilado; regla vaga = panel débil.
 
+**Añadir un revisor propio al panel** (performance, i18n, compliance…) → dos archivos en *tu repo*, cero cambios al plugin:
+
+1. `sdd/steering/<lente>.md` — las reglas que hará cumplir (frontmatter `phases: [run]` o el que toque).
+2. `.claude/agents/sdd-review-<lente>.md` — copia el `templates/reviewer-template.md` del plugin y rellena los huecos (referente, checks concretos, modelo: haiku si es mecánico, opus si el criterio es el producto).
+
+El panel lo descubre por el nombre y lo lanza junto a los 3 core en `/sdd:run` y `/sdd:review`. Al estar versionado, todo el equipo lo recibe al clonar. Los core no se desactivan por proyecto (son el suelo de calidad; para secciones triviales está `solo`).
+
 **El panel insiste en un finding que no compartes** → tras 2 rondas se detiene y decides tú. Si el finding revela que el *documento* está mal (no el código), eso es un `DESIGN-CONFLICT`: se actualiza el design/proposal contigo y se sigue — los documentos mandan, y por eso deben mantenerse verdaderos.
 
 **Sección de puro scaffolding** → `/sdd:run <feature> solo` (sin panel).

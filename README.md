@@ -65,6 +65,7 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
 | `sdd/changes/` + `archive/` | Proyecto | las fases del ciclo | el ciclo del change |
 | `sdd/roadmap.md` | Proyecto | init lo siembra; **editable a mano** | añadir/reordenar líneas |
+| `.claude/agents/sdd-review-*.md` | Proyecto | tú, desde `templates/reviewer-template.md` | revisores custom del panel — versionados con el repo |
 | `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
 | `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
 
@@ -122,6 +123,7 @@ Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
 | `sdd-architect` | sonnet | `design.md` (D#) + `steering/architecture.md` | Desviación del design = finding aunque funcione; design obsoleto = `DESIGN-CONFLICT`, nunca parche |
 | `sdd-security` | **opus** | `steering/security.md` regla a regla; sin ese doc, solo clases objetivas con evidencia | Cita la regla o el input→sink; sin evidencia no reporta |
 | `sdd-qa` | sonnet | criterios EARS del proposal + `steering/testing.md` | Por cada R#: ¿implementado? ¿testeado de verdad? ¿aguanta? — ejecuta tests, intenta romper |
+| `sdd-review-*` (del proyecto) | el que declare | su `steering/<lente>.md` | Revisores custom por repo (`.claude/agents/`), descubiertos por convención — mismo contrato |
 
 **Cómo cambiar la configuración**: el modelo de una fase se edita en el frontmatter `model:` de `skills/<fase>/SKILL.md`; el de un agente, en `agents/sdd-*.md`. Es configuración del plugin (no por proyecto): editar, commitear y subir versión aplica a todos tus proyectos. El override de modelo dura solo esa invocación — la sesión vuelve a tu modelo al terminar.
 
@@ -167,6 +169,17 @@ Un cambio de FE nunca carga la guía de infra; la visión pesa al proponer/dise�
 `/sdd:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
 
 `/sdd:review <feature>` usa el mismo panel a escala feature antes de archivar. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
+
+### Composición del panel: core + revisores del proyecto
+
+El panel es **aditivo en dos capas**:
+
+- **Core (plugin, siempre corren)**: architect, security, qa — el suelo de calidad. Sin referente rico se auto-limitan (security sin `security.md` solo reporta vulnerabilidades objetivas con evidencia), así que nunca estorban. No se desactivan por proyecto — para saltarse el panel entero en secciones triviales está `solo`.
+- **Del proyecto (opcionales, aditivos)**: cualquier agente en `.claude/agents/sdd-review-*.md` del repo se descubre por convención y se lanza junto a los core, con el mismo contrato. Versionados con el proyecto — el equipo los recibe al clonar.
+
+Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/agents/sdd-review-<lente>.md`, rellena los huecos (referente, checks, modelo) y normalmente crea su `sdd/steering/<lente>.md` con las reglas que hará cumplir. Ejemplo: un revisor de performance para un proyecto con hot paths, o de i18n para uno multi-idioma.
+
+**Nota sobre tournament**: los 3 *implementadores* del tournament no viven en `agents/` — son agentes genéricos efímeros lanzados con un ángulo distinto cada uno (simple-correcto / performance / defensivo) en worktrees aislados. `agents/` contiene solo *revisores*: identidades persistentes, read-only, con contrato de findings. En tournament, esos revisores hacen de juez de los 3 diffs.
 
 ## Modo autónomo (`/sdd:auto`)
 
