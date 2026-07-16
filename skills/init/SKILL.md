@@ -69,6 +69,12 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/steering.md` for the format and loading r
 
 Create the chosen ones in `sdd/steering/` from `${CLAUDE_PLUGIN_ROOT}/templates/steering/`, filling them with real content (repo analysis, planning doc, interview) — never leave placeholder-only files. Give each a correct frontmatter (`applies_to`, `phases`) per the reference doc.
 
+**Project reviewers for the panel.** The review panel's core (architect/security/qa) already enforces `architecture.md`/component docs, `security.md`, and `testing.md` + EARS. For each steering lens **not covered by a core reviewer** — whether just created or detected in the plan/codebase (performance, i18n, tenancy, accessibility, compliance…) — offer to create its project reviewer:
+
+- Only offer lenses whose rules are concrete enough to verify (a reviewer without a sharp referent is noise — the finding contract will discard everything).
+- If accepted: create the steering doc if it doesn't exist yet (real content, as above) AND `.claude/agents/sdd-review-<lens>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/reviewer-template.md`, filling referents/checks/model from the project's reality. Both files are versioned with the repo — the team gets the reviewer on clone.
+- Remind that `/sdd:run` and `/sdd:review` will discover it automatically by the filename convention.
+
 Also offer: nested `CLAUDE.md` files per component directory for short always-on rules that apply even outside the SDD flow. If accepted, keep them to ~10 lines each and don't duplicate steering content — link to the steering doc instead.
 
 ### 5. Spec baseline (existing codebases)

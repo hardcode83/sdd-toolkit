@@ -179,6 +179,8 @@ El panel es **aditivo en dos capas**:
 
 Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/agents/sdd-review-<lente>.md`, rellena los huecos (referente, checks, modelo) y normalmente crea su `sdd/steering/<lente>.md` con las reglas que hará cumplir. Ejemplo: un revisor de performance para un proyecto con hot paths, o de i18n para uno multi-idioma.
 
+**`/sdd:init` los sugiere solo**: en el paso de steering, por cada lente detectada en el plan/código con reglas verificables no cubiertas por un core (tenancy, i18n, performance…), ofrece crear el par steering doc + revisor de una vez — y en re-ejecuciones hace diff contra los ya existentes, como con MCPs/LSPs.
+
 **Nota sobre tournament**: los 3 *implementadores* del tournament no viven en `agents/` — son agentes genéricos efímeros lanzados con un ángulo distinto cada uno (simple-correcto / performance / defensivo) en worktrees aislados. `agents/` contiene solo *revisores*: identidades persistentes, read-only, con contrato de findings. En tournament, esos revisores hacen de juez de los 3 diffs.
 
 ## Modo autónomo (`/sdd:auto`)
