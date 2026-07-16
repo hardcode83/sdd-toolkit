@@ -11,6 +11,6 @@
 4. **Context loading**: read `sdd/project.md` at the start of every phase.
    Steering docs in `sdd/steering/` load selectively per
    `${CLAUDE_PLUGIN_ROOT}/references/steering.md`.
-5. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
-   → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`, plus `/sdd:status`
-   (read-only) and `/sdd:review` (drift / pre-archive check).
+5. **Phases**: `/sdd-toolkit:init` → `/sdd-toolkit:new` → `/sdd-toolkit:design` (optional if trivial)
+   → `/sdd-toolkit:tasks` → `/sdd-toolkit:run` → `/sdd-toolkit:archive`, plus `/sdd-toolkit:status`
+   (read-only) and `/sdd-toolkit:review` (drift / pre-archive check).

@@ -1,6 +1,6 @@
 # Project Steering
 
-> Pendiente de generar. Ejecuta `/sdd:init` para rellenar este documento
+> Pendiente de generar. Ejecuta `/sdd-toolkit:init` para rellenar este documento
 > analizando el repositorio, o edítalo a mano.
 
 ## Overview

@@ -1,6 +1,6 @@
 ---
 name: sdd-architect
-description: SDD review-panel agent - verifies a diff against the change's design.md and the project's architecture steering. Launched in parallel with sdd-security and sdd-qa during /sdd:run and /sdd:review. Read-only.
+description: SDD review-panel agent - verifies a diff against the change's design.md and the project's architecture steering. Launched in parallel with sdd-security and sdd-qa during /sdd-toolkit:run and /sdd-toolkit:review. Read-only.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

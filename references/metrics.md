@@ -22,7 +22,7 @@ documented, stable interface for usage (`claude_code.token.usage` and
 `claude_code.cost.usage`, with `type`, `model`, `session.id` and
 `query_source: main|subagent|auxiliary` attributes).
 
-1. `/sdd:init` sets the project env (`.claude/settings.json` → `env`):
+1. `/sdd-toolkit:init` sets the project env (`.claude/settings.json` → `env`):
    telemetry on, OTLP metrics over `http/json` to `http://127.0.0.1:<port>`,
    10 s export interval.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/usage-sink.py` — a ~100-line stdlib-Python

@@ -1,6 +1,6 @@
 ---
 name: sdd-security
-description: SDD review-panel agent - verifies a diff against the project's security steering and objective vulnerability classes. Launched in parallel with sdd-architect and sdd-qa during /sdd:run and /sdd:review. Read-only.
+description: SDD review-panel agent - verifies a diff against the project's security steering and objective vulnerability classes. Launched in parallel with sdd-architect and sdd-qa during /sdd-toolkit:run and /sdd-toolkit:review. Read-only.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---

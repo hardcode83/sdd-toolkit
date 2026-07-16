@@ -15,27 +15,27 @@ Flujo de **Spec-Driven Development** como plugin de Claude Code, inspirado en [O
 
 ```
 /plugin marketplace add <owner>/<repo>        # o ruta local: /plugin marketplace add ~/personal/sdd
-/plugin install sdd@sdd-toolkit
+/plugin install sdd-toolkit@sdd-toolkit
 ```
 
-Después, en cada proyecto: `/sdd:init` (acepta un doc de planificación: `/sdd:init docs/plan.md`).
+Después, en cada proyecto: `/sdd-toolkit:init` (acepta un doc de planificación: `/sdd-toolkit:init docs/plan.md`).
 
-Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit` (con el repo en git, cada commit es una versión; el campo `version` de `plugin.json` marca releases explícitas).
+Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd-toolkit@sdd-toolkit` (con el repo en git, cada commit es una versión; el campo `version` de `plugin.json` marca releases explícitas).
 
 ## Comandos
 
 | Comando | Qué hace | Modelo |
 |---|---|---|
-| `/sdd:init [plan.md]` | Bootstrap: steering docs, scaffold, baseline de specs (brownfield), roadmap desde un plan (greenfield), extras (MCPs, LSPs, métricas). Re-ejecutable: detecta lo ya inicializado y hace merge, no regenera. | sonnet |
-| `/sdd:new [feature]` | Proposal con user stories EARS (3-7 requisitos). Sin argumento, coge la siguiente entrada del roadmap. | opus |
-| `/sdd:design [feature]` | Diseño técnico con decisiones y alternativas. Se salta si el cambio es trivial. | opus |
-| `/sdd:tasks [feature]` | Checklist de tareas pequeñas y verificables que referencian requisitos `[R1]`. | sonnet |
-| `/sdd:run [feature] [next]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. | sonnet |
-| `/sdd:archive [feature]` | Fusiona en las specs vivas (spec on first touch), consolida métricas y archiva. | haiku |
-| `/sdd:status` | Changes activos + roadmap como to-do list. | haiku |
-| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
-| `/sdd:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
-| `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
+| `/sdd-toolkit:init [plan.md]` | Bootstrap: steering docs, scaffold, baseline de specs (brownfield), roadmap desde un plan (greenfield), extras (MCPs, LSPs, métricas). Re-ejecutable: detecta lo ya inicializado y hace merge, no regenera. | sonnet |
+| `/sdd-toolkit:new [feature]` | Proposal con user stories EARS (3-7 requisitos). Sin argumento, coge la siguiente entrada del roadmap. | opus |
+| `/sdd-toolkit:design [feature]` | Diseño técnico con decisiones y alternativas. Se salta si el cambio es trivial. | opus |
+| `/sdd-toolkit:tasks [feature]` | Checklist de tareas pequeñas y verificables que referencian requisitos `[R1]`. | sonnet |
+| `/sdd-toolkit:run [feature] [next]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. | sonnet |
+| `/sdd-toolkit:archive [feature]` | Fusiona en las specs vivas (spec on first touch), consolida métricas y archiva. | haiku |
+| `/sdd-toolkit:status` | Changes activos + roadmap como to-do list. | haiku |
+| `/sdd-toolkit:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
+| `/sdd-toolkit:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
+| `/sdd-toolkit:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
 Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola. El modelo por fase se fija en el frontmatter de cada `skills/*/SKILL.md` (editar aquí y subir versión aplica a todos los proyectos; el override dura solo esa invocación).
 
@@ -43,7 +43,7 @@ Cada fase termina **esperando aprobación** — nunca encadena a la siguiente so
 
 ```
 proyecto/
-├── .mcp.json                   # MCPs opcionales (escrito por /sdd:init)
+├── .mcp.json                   # MCPs opcionales (escrito por /sdd-toolkit:init)
 ├── .claude/settings.json       # env de telemetría si activas métricas
 ├── CLAUDE.md                   # puntero SDD (bloque idempotente)
 └── sdd/                        # ← LA CAPA DE PERSISTENCIA
@@ -72,28 +72,28 @@ Un cambio de FE nunca carga la guía de infra; la visión pesa al proponer/dise�
 
 ## Adopción
 
-- **Brownfield**: `/sdd:init` genera steering desde el código y ofrece baseline de las 3-6 capabilities core; el resto se documenta al tocarlo (`/sdd:archive` → spec on first touch). Trabajo a medias se adopta pre-marcando tareas verificadas.
-- **Greenfield con plan**: `/sdd:init plan.md` triaja: visión → steering, decisiones → project/architecture, features → `roadmap.md`. Los proposals se escriben just-in-time, anclados a las specs ya construidas. Re-ingestas posteriores hacen merge (lo hecho es historia; lo que contradice specs construidas se señala como candidato a `/sdd:new`).
+- **Brownfield**: `/sdd-toolkit:init` genera steering desde el código y ofrece baseline de las 3-6 capabilities core; el resto se documenta al tocarlo (`/sdd-toolkit:archive` → spec on first touch). Trabajo a medias se adopta pre-marcando tareas verificadas.
+- **Greenfield con plan**: `/sdd-toolkit:init plan.md` triaja: visión → steering, decisiones → project/architecture, features → `roadmap.md`. Los proposals se escriben just-in-time, anclados a las specs ya construidas. Re-ingestas posteriores hacen merge (lo hecho es historia; lo que contradice specs construidas se señala como candidato a `/sdd-toolkit:new`).
 
 ## Panel multiagente de calidad
 
-`/sdd:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
+`/sdd-toolkit:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
 
-`/sdd:review <feature>` usa el mismo panel a escala feature antes de archivar. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
+`/sdd-toolkit:review <feature>` usa el mismo panel a escala feature antes de archivar. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
 
-## Modo autónomo (`/sdd:auto`)
+## Modo autónomo (`/sdd-toolkit:auto`)
 
-Ejecuta features del roadmap **sin intervención**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect` antes de codificar, el panel es obligatorio por sección, y `review` debe dar PASS antes de archivar. Tu revisión no desaparece — se mueve: **una rama + PR por feature** (con proposal, veredicto del panel y specs dentro), y todo lo que antes era "pregunta al usuario" se convierte en **BLOCKED** (`changes/<feature>/BLOCKED.md` con la decisión pendiente, rama commiteada, y sigue con la siguiente). `/sdd:status` muestra la cola BLOCKED primero — es tu bandeja de decisiones.
+Ejecuta features del roadmap **sin intervención**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect` antes de codificar, el panel es obligatorio por sección, y `review` debe dar PASS antes de archivar. Tu revisión no desaparece — se mueve: **una rama + PR por feature** (con proposal, veredicto del panel y specs dentro), y todo lo que antes era "pregunta al usuario" se convierte en **BLOCKED** (`changes/<feature>/BLOCKED.md` con la decisión pendiente, rama commiteada, y sigue con la siguiente). `/sdd-toolkit:status` muestra la cola BLOCKED primero — es tu bandeja de decisiones.
 
-Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
+Lanzamiento: `/sdd-toolkit:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd-toolkit:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
 ## Métricas de uso por feature
 
-Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
+Extra opcional de `/sdd-toolkit:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
 
 ## Extras por proyecto
 
-`/sdd:init` ofrece según el stack detectado, con diff contra lo ya activado en re-ejecuciones:
+`/sdd-toolkit:init` ofrece según el stack detectado, con diff contra lo ya activado en re-ejecuciones:
 
 - **MCPs** (`references/mcp-catalog.md`): GitHub, Atlassian, Playwright, Context7, Postgres, Sentry… → `.mcp.json` (merge).
 - **LSPs** (`references/lsp-catalog.md`): instala binarios con aprobación e imprime los `/plugin install` de los plugins LSP oficiales.

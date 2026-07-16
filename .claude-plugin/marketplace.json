@@ -3,7 +3,7 @@
   "owner": { "name": "Jose Gascon" },
   "plugins": [
     {
-      "name": "sdd",
+      "name": "sdd-toolkit",
       "source": "./",
       "description": "Spec-Driven Development workflow (Kiro-style simplicity over OpenSpec conventions)."
     }
