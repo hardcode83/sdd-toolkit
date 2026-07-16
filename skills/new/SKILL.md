@@ -12,6 +12,13 @@ Create a change proposal. Arguments: the feature name — normalize to kebab-cas
 
 **Seed document** (from the argument, or referenced as `fuente:` in the roadmap entry): read it and use it as the source of truth for requirements — but **convert, don't copy**: restate its requirements as numbered user stories with EARS criteria, flag anything ambiguous or untestable as written (those become your questions in step 2, or explicit `ASSUMPTION`s), flag anything that contradicts `product.md`/existing specs, and note what the doc leaves out (error cases, limits). Link the doc from the proposal's Why section. A good seed doc makes step 2 unnecessary — that's what makes it ideal for `/sdd:auto`.
 
+**Plan detection — this skill is for ONE feature.** If the request or seed doc smells like a *plan* rather than a feature — several unrelated capabilities, its own phase/feature list, architecture or stack decisions, vision statements, or requirements that wouldn't fit in 3-7 R# without spanning distinct capabilities — STOP before writing anything. Say what you detected, and offer the two paths (AskUserQuestion):
+
+1. **Treat it as plan ingestion** — with the user's ok, follow the planning-document steps of `${CLAUDE_PLUGIN_ROOT}/skills/init/SKILL.md` right here (triage to steering/roadmap/project.md, with the merge rules if the project is already initialized). Its side effects are much broader than this skill's, which is exactly why it needs the explicit yes.
+2. **Narrow to one feature** — the user picks which slice of the doc becomes *this* proposal; the rest can go to the roadmap as one-line entries (`fuente:` the doc).
+
+Never silently morph into init: the user asked for a proposal, and steering/roadmap rewrites must never be a surprise.
+
 ## Steps
 
 1. **Load context.** Read `sdd/project.md` and skim `sdd/specs/` for capabilities this change touches. If `sdd/` doesn't exist, tell the user to run `/sdd:init` first and stop. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> new` (silent no-op if tracking is disabled).
