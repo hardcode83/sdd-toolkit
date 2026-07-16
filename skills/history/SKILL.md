@@ -1,6 +1,6 @@
 ---
 name: history
-model: sonnet
+model: haiku
 description: Query the project's SDD archive - timeline of completed changes, the full record of one change (decisions, rejected alternatives, cost, commits), or free-form questions about why things are the way they are, answered with citations and a validity check. Use when the user runs /sdd:history or asks why a past decision was made, what a past change did, or what has shipped.
 ---
 

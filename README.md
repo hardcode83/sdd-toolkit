@@ -50,7 +50,7 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:status` | Changes activos + roadmap como to-do list. | haiku |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
-| `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | sonnet |
+| `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
 Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola (excepto `/sdd:auto`, que sustituye los gates por sus equivalentes automáticos).
@@ -68,7 +68,7 @@ Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
 | `run` | sonnet | **panel por sección**: `sdd-architect` + `sdd-security` + `sdd-qa` en paralelo; en `tournament`: 3 implementadores en worktrees + panel como juez |
 | `review` | sonnet | el mismo panel, a escala feature |
 | `archive` | haiku | — |
-| `status` / `history` | haiku / sonnet | — (solo lectura) |
+| `status` / `history` | haiku | — (solo lectura) |
 | `auto` | sonnet (orquestador) | todos los anteriores según la fase que esté ejecutando |
 
 Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
