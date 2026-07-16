@@ -30,30 +30,27 @@ flowchart LR
 
 Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define *cómo* trabaja el flujo → plugin; si define *qué* es tu proyecto y bajo qué reglas → proyecto; si es efímero → máquina.**
 
-```mermaid
-flowchart TB
-    subgraph PLUGIN["🔌 PLUGIN — por usuario, igual en todos tus proyectos, se actualiza con /plugin update"]
-        SK["skills/ · lógica de cada fase<br/>+ modelo por fase"]
-        AG["agents/ · contratos del panel<br/>+ modelo por agente"]
-        TPL["templates/ · esqueletos<br/>de documentos"]
-        REF["references/ · catálogos MCP/LSP,<br/>formato steering, métricas"]
-        SCR["scripts/ + hooks/ ·<br/>métricas OTel, hook rtk"]
-    end
-    subgraph PROYECTO["📁 PROYECTO — versionado en el repo, viaja con el equipo, sobrevive a updates del plugin"]
-        ST["sdd/steering/ · TUS reglas:<br/>visión, arquitectura, seguridad, testing…"]
-        PM["sdd/project.md · stack y comandos"]
-        SP["sdd/specs/ · verdad viva"]
-        CH["sdd/changes/ + archive/ ·<br/>trabajo en curso y memoria"]
-        RM["sdd/roadmap.md · metrics.md"]
-        CFG["CLAUDE.md · .mcp.json ·<br/>.claude/settings.json"]
-    end
-    subgraph MAQ["💻 MÁQUINA — local y gitignorado"]
-        RT[".sdd-usage/ (snapshots de uso) ·<br/>binarios: rtk, mmdc, language servers"]
-    end
-    TPL -- "/sdd:init copia el esqueleto UNA vez<br/>y lo rellena con contenido real" --> ST
-    SK -- "las fases leen y escriben" --> CH
-    ST -- "referentes que el panel verifica" --> AG
-    SCR -- "snapshots" --> RT
+```
+┌─ 🔌 PLUGIN ─────────────── el CÓMO se trabaja ──────────────────┐
+│  fases y sus modelos · agentes del panel · plantillas · catálogos │
+│  vive: instalado por usuario (igual en todos tus proyectos)       │
+│  cambia: /plugin update                                           │
+└──────────────────────────────┬────────────────────────────────────┘
+                               │  /sdd:init copia plantillas UNA vez
+                               │  y las rellena; las fases leen/escriben
+                               ▼
+┌─ 📁 PROYECTO ───────────── el QUÉ construyes y tus REGLAS ──────┐
+│  sdd/: steering (tus reglas) · specs (verdad viva) · changes ·    │
+│  roadmap · métricas  +  CLAUDE.md · .mcp.json · settings.json     │
+│  vive: versionado en el repo (viaja con el equipo)                │
+│  cambia: tú y las fases — sobrevive a updates del plugin          │
+└──────────────────────────────┬────────────────────────────────────┘
+                               │  runtime
+                               ▼
+┌─ 💻 MÁQUINA ────────────── lo EFÍMERO ──────────────────────────┐
+│  .sdd-usage/ (snapshots de uso) · binarios: rtk, mmdc, LSPs       │
+│  vive: local, gitignorado — no viaja                              │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 | Componente | Capa | Quién lo escribe | Cómo cambia |
