@@ -95,6 +95,8 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos).
 
+**Quedó deuda a mitad de un run** (un panel interrumpido por límites, una verificación aplazada, una tarea aparcada) → no depende de que te acuerdes: toda fase que termina dejando algo pendiente lo persiste en el `BLOCKED.md` del change (tipo `decision` si te toca a ti, `deferred` con su comando exacto de reanudación si puede retomarlo el flujo). `/sdd:status` lo enseña como bandeja de entrada, y `/sdd:archive` **se niega a cerrar** un change con entradas sin resolver (salvo override explícito tuyo). Resolver una entrada = ejecutar su comando o decidir, y borrarla.
+
 **Delegar solo el final** → aprueba tú proposal/design/tasks como siempre y luego `/sdd:auto <feature>`: detecta la fase y ejecuta lo mecánico (run→review→archive) sin gates.
 
 **En equipo: ¿quién tiene qué?** → la rama remota `sdd/<feature>` es el candado. `/sdd:new` avisa si la feature ya está cogida y ofrece pushear tu claim; `/sdd:status` enseña las de los demás como "en curso por otros". Si al mergear chocan dos `specs/<capability>.md`, no es ruido: dos features tocaron el mismo comportamiento — resolvedlo hablando, el merge textual es lo de menos.
@@ -102,6 +104,15 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 **Cambió el plan/PRD** → pocos cambios: edita roadmap/steering a mano. Revisión gorda: `/sdd:init plan-v2.md` — hace *merge*, nunca regenera: lo hecho es historia, lo nuevo se inserta, y lo que contradice specs ya construidas te lo señala como candidatos a `/sdd:new` (ahí hay código real que cambiar, no solo texto).
 
 **Endurecer una regla** (p. ej. seguridad) → edítala en `sdd/steering/security.md`. Automáticamente guiará la generación en las fases donde carga *y* la exigirá sdd-security en el panel. Regla concreta = panel afilado; regla vaga = panel débil.
+
+**Añadir un revisor propio al panel** (performance, i18n, compliance…) → dos archivos en *tu repo*, cero cambios al plugin:
+
+1. `sdd/steering/<lente>.md` — las reglas que hará cumplir (frontmatter `phases: [run]` o el que toque).
+2. `.claude/agents/sdd-review-<lente>.md` — copia el `templates/reviewer-template.md` del plugin y rellena los huecos (referente, checks concretos, modelo: haiku si es mecánico, opus si el criterio es el producto).
+
+El panel lo descubre por el nombre y lo lanza junto a los 3 core en `/sdd:run` y `/sdd:review`. Al estar versionado, todo el equipo lo recibe al clonar. Los core no se desactivan por proyecto (son el suelo de calidad; para secciones triviales está `solo`).
+
+No hace falta que se te ocurran a ti: `/sdd:init` (y sus re-ejecuciones) sugiere revisores para las lentes que detecta en tu plan/código sin cobertura core — solo cuando las reglas dan para un referente afilado, porque un revisor con referente vago no encontrará nada que el contrato no descarte.
 
 **El panel insiste en un finding que no compartes** → tras 2 rondas se detiene y decides tú. Si el finding revela que el *documento* está mal (no el código), eso es un `DESIGN-CONFLICT`: se actualiza el design/proposal contigo y se sigue — los documentos mandan, y por eso deben mantenerse verdaderos.
 
