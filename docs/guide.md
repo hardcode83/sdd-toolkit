@@ -93,7 +93,11 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Lanzar features sin intervenir** → `/sdd:auto [N]`: consume las próximas N entradas del roadmap de punta a punta — rama + PR por feature, panel obligatorio, y todo lo que necesitaría tu decisión acaba en `BLOCKED.md` (cola visible en `/sdd:status`) en vez de adivinarse. Tu gate se mueve a revisar las PRs. Empieza con `/sdd:auto 1` en sesión normal; desatendido: `claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron. Requisito real: steering docs concretos y roadmap curado — en auto, basura pre-autorizada sigue siendo basura.
 
-**Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>`.
+**Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos).
+
+**Delegar solo el final** → aprueba tú proposal/design/tasks como siempre y luego `/sdd:auto <feature>`: detecta la fase y ejecuta lo mecánico (run→review→archive) sin gates.
+
+**En equipo: ¿quién tiene qué?** → la rama remota `sdd/<feature>` es el candado. `/sdd:new` avisa si la feature ya está cogida y ofrece pushear tu claim; `/sdd:status` enseña las de los demás como "en curso por otros". Si al mergear chocan dos `specs/<capability>.md`, no es ruido: dos features tocaron el mismo comportamiento — resolvedlo hablando, el merge textual es lo de menos.
 
 **Cambió el plan/PRD** → pocos cambios: edita roadmap/steering a mano. Revisión gorda: `/sdd:init plan-v2.md` — hace *merge*, nunca regenera: lo hecho es historia, lo nuevo se inserta, y lo que contradice specs ya construidas te lo señala como candidatos a `/sdd:new` (ahí hay código real que cambiar, no solo texto).
 

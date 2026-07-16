@@ -42,7 +42,7 @@ substitutes:
 
 Take the next unchecked, un-started roadmap entry. Then:
 
-1. **Branch**: `git checkout -b sdd/<feature>` from BASE.
+1. **Branch + claim**: check `git ls-remote --heads origin "sdd/<feature>"` — if it exists, the feature is claimed by someone else: skip it (report in the final summary) and take the next entry. Otherwise `git checkout -b sdd/<feature>` from BASE and, if a remote exists, **push the branch immediately** — publishing the claim before doing any work, not after.
 2. **new** — follow `${CLAUDE_PLUGIN_ROOT}/skills/new/SKILL.md`. Approval
    substitute: the proposal must trace every requirement to the roadmap
    entry (and its source doc, if referenced) and respect `product.md`.
@@ -69,6 +69,18 @@ Take the next unchecked, un-started roadmap entry. Then:
    with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
    No remote → leave the branch and say so.
 9. `git checkout BASE` and continue with the next entry.
+
+## Resuming a mid-flight feature
+
+`/sdd:auto <feature>` where `sdd/changes/<feature>/` already exists does NOT start over — it resumes from the change's current phase with the same gate substitutes:
+
+- `BLOCKED.md` present → do not resume; tell the user the feature awaits their decision and stop.
+- Only `proposal.md` → continue at design (the existing proposal counts as approved: the user drove it).
+- `proposal.md` + `design.md` → continue at tasks.
+- `tasks.md` with unchecked tasks → continue at run.
+- All tasks checked → continue at review → archive.
+
+Documents already written by the user's manual phases are treated as approved input — never regenerate them. If the change lives on an existing `sdd/<feature>` branch, switch to it instead of branching anew. This enables the hybrid the gates make expensive: the human drives the thinking phases, auto finishes the mechanical ones.
 
 ## The BLOCKED contract
 
