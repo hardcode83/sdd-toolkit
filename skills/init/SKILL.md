@@ -95,7 +95,15 @@ When re-running this step on an already-initialized project, first diff against 
 2. **LSPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/lsp-catalog.md`; offer code intelligence for the languages detected in the repo (or planned in the stack).
 3. **CLAUDE.md pointer** — whether to add the SDD block (below) to the project's `CLAUDE.md`.
 4. **Usage metrics** — per-feature token/cost tracking from conception to archive (see `${CLAUDE_PLUGIN_ROOT}/references/metrics.md`, including its honest limitations). Requires `jq` and `python3`.
-5. **rtk (token savings)** — only if `which rtk` finds nothing. The plugin already ships a PreToolUse hook that rewrites Bash commands through [rtk](https://www.rtk-ai.app) (60-90% token savings on dev operations) and silently no-ops when the binary is absent — so the only thing to set up is the binary itself: offer to install it (`brew install rtk-ai/tap/rtk`, or `cargo install rtk`). If rtk is already installed, skip this item entirely (the hook is already working). If the user's global `~/.claude/settings.json` also wires an rtk hook, mention the duplication is harmless (the second rewrite is a no-op) but they can remove the global one.
+5. **Team distribution** (shared repos): declare the plugin in the project's versioned `.claude/settings.json` so whoever clones and trusts the folder gets the install prompt automatically. BOTH keys are needed — `enabledPlugins` alone says "you need this" without saying where to get it:
+
+   ```json
+   "extraKnownMarketplaces": { "sdd-toolkit": { "source": { "source": "github", "repo": "hardcode83/sdd-toolkit" } } },
+   "enabledPlugins": { "sdd@sdd-toolkit": true }
+   ```
+
+   (Adjust repo if installing from a fork.) Merge into existing settings, never clobber.
+6. **rtk (token savings)** — only if `which rtk` finds nothing. The plugin already ships a PreToolUse hook that rewrites Bash commands through [rtk](https://www.rtk-ai.app) (60-90% token savings on dev operations) and silently no-ops when the binary is absent — so the only thing to set up is the binary itself: offer to install it (`brew install rtk-ai/tap/rtk`, or `cargo install rtk`). If rtk is already installed, skip this item entirely (the hook is already working). If the user's global `~/.claude/settings.json` also wires an rtk hook, mention the duplication is harmless (the second rewrite is a no-op) but they can remove the global one.
 
 ### 7. Apply choices
 
