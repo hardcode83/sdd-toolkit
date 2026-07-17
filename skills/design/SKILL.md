@@ -12,7 +12,7 @@ Write the technical design for a change. Argument: the feature name; if omitted 
 
 ## Steps
 
-1. **Load context.** Read `sdd/project.md`, the change's `proposal.md`, and any `sdd/specs/` files it lists as affected. If there is no proposal, stop and point to `/sdd:new`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> design` (silent no-op if tracking is disabled).
+1. **Load context.** Read `sdd/project.md`, the change's `proposal.md`, and any `sdd/specs/` files it lists as affected. If there is no proposal, stop and point to `/sdd:new`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> design` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
    - **Steering**: if `sdd/steering/` exists, read each doc's frontmatter and fully load those whose `phases` (if present) include `design` and whose `applies_to` (if present) matches the proposal's scope. `architecture.md` and `security.md` rules are binding here — a design that needs to break one must say so explicitly as an open question, never silently.
 2. **Triviality check.** If the change needs no real design decisions (obvious approach, few files, no new dependencies or data changes), say so and recommend skipping straight to `/sdd:tasks` instead of producing a ceremonial document. Only continue if the user insists or the change warrants it.
 3. **Investigate the code** the change touches: current structure, patterns to follow, integration points. Design must fit the existing codebase, not an idealized one.
@@ -23,5 +23,5 @@ Write the technical design for a change. Argument: the feature name; if omitted 
    - Surface **open questions** rather than silently deciding on things the user should weigh in on.
    - No code beyond short illustrative snippets or interface signatures.
    - If a visual would say it better (flows, state machines, component interactions), generate it with the `sdd:diagram` skill and reference the PNG from the design doc.
-5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> design` (silent no-op if tracking is disabled).
+5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> design` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
 6. **Gate.** Summarize the key decisions and open questions, resolve the open questions with the user (AskUserQuestion when they are concrete choices), and wait for approval. Then suggest `/sdd:tasks`.

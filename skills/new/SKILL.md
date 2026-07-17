@@ -21,7 +21,7 @@ Never silently morph into init: the user asked for a proposal, and steering/road
 
 ## Steps
 
-1. **Load context.** Read `sdd/project.md` and skim `sdd/specs/` for capabilities this change touches. If `sdd/` doesn't exist, tell the user to run `/sdd:init` first and stop. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> new` (silent no-op if tracking is disabled).
+1. **Load context.** Read `sdd/project.md` and skim `sdd/specs/` for capabilities this change touches. If `sdd/` doesn't exist, tell the user to run `/sdd:init` first and stop. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> new` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
    - **Claim check** (only if the repo has a git remote): `git ls-remote --heads origin "sdd/<feature>"`. If the branch exists, someone is already working this feature — report it (after `git fetch origin sdd/<feature>`, show `git log -1 --format='%an %ad %s'` of it) and STOP unless the user explicitly says to continue anyway. If it's clear, **offer to create and push the claim branch** `sdd/<feature>` before writing anything — the remote branch IS the team's lock (recommended in shared repos; skip for solo/trunk workflows if the user prefers).
    - **Steering**: if `sdd/steering/` exists, read each doc's frontmatter and fully load those whose `phases` (if present) include `new` and whose `applies_to` (if present) matches the areas the request describes. A proposal must respect `product.md` principles when that doc exists — if the request conflicts with them, raise it before writing.
    - **Roadmap**: if the feature comes from `sdd/roadmap.md`, use its line (and source reference) as the seed, and mark the entry as started by appending ` → changes/<feature>/`.
@@ -34,5 +34,5 @@ Never silently morph into init: the user asked for a proposal, and steering/road
    - An explicit **Out of scope** section — this is what keeps changes small.
    - In **Affected specs**, list the `sdd/specs/` files this change will touch. Flag the ones that don't exist yet with *(no existe aún — se creará al archivar)* — that's expected in adopted/brownfield projects, not a blocker.
    - Do NOT create `design.md` or `tasks.md`, and do not write any code.
-4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> new` (silent no-op if tracking is disabled).
+4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> new` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
 5. **Gate.** Present a short summary and ask the user to review. On approval, suggest the next step: `/sdd:design` — or `/sdd:tasks` directly if the change is trivial (no new architecture, few files, obvious approach).
