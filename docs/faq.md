@@ -23,6 +23,10 @@ El ciclo de vida es una **degradación de autoridad**, no un borrado: fuente de 
 
 Y la regla de granularidad: **documento que describe el producto → `init`; documento que describe una feature → `new`**. Si te equivocas, `new` detecta el olor a plan y te ofrece el camino correcto antes de escribir nada.
 
+## ¿No es tirar tokens panelar dos veces (run por sección + review por feature)?
+
+Era una redundancia real y se eliminó estructuralmente: el panel por sección **persiste su veredicto** (`<!-- panel: PASS <fecha> -->` en el heading de la sección en tasks.md), y `/sdd:review` es **incremental** — las secciones ya en PASS no se re-auditan línea a línea; sobre ellas solo se revisa lo que la escala sección no puede ver (interacciones entre secciones, coherencia global de D#, archivos de una sección tocados por otra posterior). Lo que siempre corre a escala feature: la matriz R#→met/unmet y el scope creep acumulado. Las secciones sin PASS (panel saltado con `solo`, interrumpido por límites) sí reciben review completo — review es también el mecanismo de recuperación. Los dos niveles compran cosas distintas: la sección compra *feedback temprano* (arreglar el bug de la sección 2 antes de construir encima); la feature compra *lo transversal*.
+
 ## ¿Cuándo merece la pena `/sdd:review` antes de archivar?
 
 | Situación | ¿Review? |
