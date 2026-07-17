@@ -209,6 +209,7 @@ Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepci�
 
 - **MCPs** (`references/mcp-catalog.md`): GitHub, Atlassian, Playwright, Context7, Postgres, Sentry… → `.mcp.json` (merge).
 - **LSPs** (`references/lsp-catalog.md`): instala binarios con aprobación e imprime los `/plugin install` de los plugins LSP oficiales.
+- **Plugins oficiales** (`references/plugin-catalog.md`): sugerencias curadas del marketplace `claude-plugins-official` según el stack (security-guidance, pr-review-toolkit, integraciones…), con reglas anti-solape (nunca ofrecer una integración como plugin Y como MCP crudo). El marketplace oficial no es consultable programáticamente — el catálogo curado es la fuente y tú ejecutas los `/plugin install`; la pestaña Discover de `/plugin` es el complemento navegable.
 - **Puntero en CLAUDE.md** y **métricas** (arriba).
 - **rtk** ([Rust Token Killer](https://www.rtk-ai.app)): el plugin trae de serie un hook PreToolUse (`hooks/hooks.json` → `scripts/rtk-rewrite.sh`) que reescribe los comandos Bash vía `rtk rewrite` para ahorrar 60-90% de tokens en operaciones de desarrollo. Sin el binario instalado es un no-op silencioso; el init solo ofrece instalarlo (`brew install rtk-ai/tap/rtk` o `cargo install rtk`) si falta.
 
