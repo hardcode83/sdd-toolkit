@@ -12,12 +12,27 @@ non-default marketplace, install the plugin, and then start a new Codex thread:
 ```bash
 codex plugin marketplace add /absolute/path/to/sdd-toolkit
 codex plugin add sdd-toolkit@sdd-toolkit-experimental
+scripts/codex-adapter-install.sh
 ```
 
 The manifest points directly to the repository's existing `skills/` directory.
 Cloning the repository alone does not activate those skills; the marketplace
-and plugin must be installed. This experiment did not modify or install
-anything in the user's global Codex configuration during validation.
+and plugin must be installed.
+
+The third step is required, not optional. The shared skills and the PreToolUse
+hook reference files through `${CLAUDE_PLUGIN_ROOT}` — a variable Claude Code
+sets but Codex neither substitutes in skill text nor exports to the shell.
+`codex-adapter-install.sh` resolves the *installed* plugin root (the version is
+read at run time, never hardcoded) and writes it into `~/.codex/config.toml`
+under `shell_environment_policy.set`, so Codex's shell resolves the variable for
+both the skills' file reads and the hook. Re-run it after every `codex plugin`
+update so the path tracks the new version. It is idempotent and refuses to
+clobber a pre-existing `[shell_environment_policy]` table.
+
+Verified: with the block in place, `printenv CLAUDE_PLUGIN_ROOT` inside a Codex
+shell returns the installed root, `cat "${CLAUDE_PLUGIN_ROOT}/rules.md"`
+succeeds, and no PreToolUse hook error appears on Bash tool calls. Without it,
+all three fail (the shell expands the unset variable to `/rules.md`).
 
 Claude Code installation and `/sdd:*` commands remain unchanged.
 
@@ -59,13 +74,15 @@ Claude Code.
 | Claude reviewer panel | Unsupported | Claude agent types and project `.claude/agents/` reviewers were not adapted. |
 | Tournament mode | Unsupported | Claude Agent calls, model roles, and isolated-worktree tournament orchestration were not adapted. |
 | Claude telemetry | Unsupported | No Codex equivalent was added for Claude OTel variables or per-phase usage scripts. |
-| Claude hooks and RTK rewrite | Unsupported | The Claude `PreToolUse` hook was neither enabled nor validated in Codex. |
+| Claude `PreToolUse` hook (RTK rewrite) | Non-fatal | Codex ingests `hooks/hooks.json` and enables the hook. The command is now guarded (`[ -x "$h" ] && exec "$h"; exit 0`), so it no-ops instead of failing when the path is unresolved; with the install script it resolves and runs (`rtk` absent → clean no-op). RTK rewrite itself is not exercised under Codex. |
 
 ## Known limitations
 
-- The existing skills resolve shared files through `${CLAUDE_PLUGIN_ROOT}`.
-  Installed-plugin compatibility must provide that value. Repo-local fixture
-  validation supplied it explicitly.
+- The existing skills resolve shared files through `${CLAUDE_PLUGIN_ROOT}`, which
+  Codex does not provide on its own (confirmed: unset in the shell, and not
+  substituted in skill text). `scripts/codex-adapter-install.sh` supplies it via
+  `shell_environment_policy.set` — run it at install and after every update.
+  Without that step the phases fail to read `rules.md` and templates.
 - Claude model names in skill frontmatter do not select Codex models. Codex
   uses the model configured for its session.
 - `AskUserQuestion` has no identical Codex primitive. Normal questions preserve
