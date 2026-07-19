@@ -87,7 +87,7 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Añadir una feature al backlog** → edita `sdd/roadmap.md` a mano (una línea `- [ ] nombre — qué es`) o pídeselo al agente. La posición en la lista es la decisión real: es el orden de ejecución.
 
-**Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje.
+**Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso.
 
 **Tengo los requisitos ya escritos en un doc** → dos vías equivalentes: `/sdd:new mi-feature docs/reqs.md` (el doc como semilla directa), o entrada de roadmap con `(fuente: docs/reqs.md)` para que lo use cuando le llegue el turno. En ambos casos el proposal *convierte* el doc a EARS (no lo copia), señala ambigüedades y huecos, y cuanto mejor esté escrito el doc, menos preguntas te hará — con un doc realmente cerrado, la feature es candidata ideal para `/sdd:auto`.
 
