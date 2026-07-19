@@ -1,0 +1,34 @@
+{
+  "name": "sdd-toolkit",
+  "version": "0.13.0",
+  "description": "Experimental Codex adapter for the existing SDD Toolkit skills and shared artifact workflow.",
+  "author": {
+    "name": "Jose Gascon",
+    "url": "https://github.com/hardcode83"
+  },
+  "homepage": "https://github.com/hardcode83/sdd-toolkit",
+  "repository": "https://github.com/hardcode83/sdd-toolkit",
+  "keywords": [
+    "sdd",
+    "spec-driven-development",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "SDD Toolkit",
+    "shortDescription": "Approval-gated spec-driven development workflows",
+    "longDescription": "Experimental Codex access to the existing SDD Toolkit skills while preserving the Claude Code plugin and shared sdd/ artifacts.",
+    "developerName": "Jose Gascon",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/hardcode83/sdd-toolkit",
+    "defaultPrompt": [
+      "Show the current SDD status.",
+      "Start a new SDD change.",
+      "Continue the active change with its next SDD phase."
+    ]
+  }
+}

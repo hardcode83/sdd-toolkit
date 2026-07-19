@@ -1,0 +1,20 @@
+{
+  "name": "sdd-toolkit-experimental",
+  "interface": {
+    "displayName": "SDD Toolkit Experimental"
+  },
+  "plugins": [
+    {
+      "name": "sdd-toolkit",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

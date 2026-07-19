@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/rtk-rewrite.sh"
+            "command": "sh -c 'h=\"${CLAUDE_PLUGIN_ROOT:-}/scripts/rtk-rewrite.sh\"; [ -x \"$h\" ] && exec \"$h\"; exit 0'"
           }
         ]
       }
