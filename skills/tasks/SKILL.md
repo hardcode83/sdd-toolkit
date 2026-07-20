@@ -22,4 +22,4 @@ Produce the implementation checklist. Argument: the feature name; if omitted and
    - Every requirement must be covered by at least one task; check this before finishing.
    - **Adopted in-flight work**: if part of the change is already implemented, include those tasks anyway and pre-check them `[x]` — but only after verifying each against the actual code (and its tests), noting `(preexistente)`. Never pre-check on the user's word alone.
 3. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> tasks` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
-4. **Gate.** Present the task list summary (sections + count), wait for approval, then suggest `/sdd:run`.
+4. **Gate.** Show the full `tasks.md` you just wrote (every section and task, not just a count — the user is approving the actual checklist, not a summary of it), wait for approval, then suggest `/sdd:run`.
