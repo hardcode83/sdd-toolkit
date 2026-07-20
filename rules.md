@@ -21,7 +21,17 @@
    `/sdd:archive` refuses to close a change with unresolved entries unless
    the user explicitly overrides; resolving an entry deletes it (delete the
    file when empty).
-6. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
+6. **Never silently overwrite an existing phase document.** Before writing
+   `proposal.md`, `design.md`, or `tasks.md`, check whether it already
+   exists. If it does: show it and ask what the user wants —
+   **regenerate** (rewrite from scratch, replacing it), **amend** (adjust
+   it in place for what changed), or **keep** (treat it as already
+   approved and move to the next phase). Default recommendation is
+   *amend* if the user has new input, *keep* otherwise — never
+   regenerate by default. This matters most for `tasks.md`: if any task
+   is already checked `[x]`, regenerating destroys verified progress —
+   call that out explicitly before letting the user pick regenerate.
+7. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
    → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`. Support: `/sdd:status`
    (read-only, includes the BLOCKED queue), `/sdd:review` (drift /
    pre-archive check), `/sdd:history` (read-only queries over the archive),

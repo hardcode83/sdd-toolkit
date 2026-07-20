@@ -14,7 +14,7 @@ Produce the implementation checklist. Argument: the feature name; if omitted and
 
 1. **Load context.** Read `sdd/project.md`, the change's `proposal.md`, and `design.md` if it exists. If there is no proposal, stop and point to `/sdd:new`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> tasks` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
    - **Steering**: if `sdd/steering/` exists, read each doc's frontmatter and fully load those whose `phases` (if present) include `tasks` and whose `applies_to` (if present) matches the change's scope.
-2. **Write** `sdd/changes/<feature>/tasks.md` using `${CLAUDE_PLUGIN_ROOT}/templates/tasks-template.md`. Rules:
+2. **Write** `sdd/changes/<feature>/tasks.md` using `${CLAUDE_PLUGIN_ROOT}/templates/tasks-template.md` — but first apply shared rule 6 (never silently overwrite an existing document; if `tasks.md` already exists, show it and ask regenerate/amend/keep — extra caution if any task is already `[x]`, since run may already be underway). Rules for the content:
    - Tasks are grouped in numbered sections, ordered so the system stays working after each section when possible.
    - Each task is a checkbox, small enough to complete and verify in one sitting, and states **which files** it touches and **which requirement(s)** it satisfies (`[R1]`).
    - Testing is part of the task that introduces the behavior, not a separate "write tests" section at the end. A final section covers integration/verification using the exact commands from `sdd/project.md`.
