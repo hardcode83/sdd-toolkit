@@ -128,6 +128,18 @@ No hace falta que se te ocurran a ti: `/sdd:init` (y sus re-ejecuciones) sugiere
 
 Solo esa tarea compite: 3 agentes la implementan en paralelo en worktrees aislados con ángulos distintos (simple-correcto / performance / defensivo), el panel juzga los 3 diffs contra los mismos referentes, el ganador se aplica y se injertan las ideas buenas de los perdedores. ~3× el coste de *esa tarea*; el resto del change va por run normal. No lo uses para CRUD — el panel normal ya cubre eso.
 
+**Ver el plan de tareas de una feature grande, para navegarlo quirúrgicamente** → `/sdd:status <feature> [filtro]` — lectura pura del `tasks.md`, sin regenerarlo ni tocarlo:
+
+```
+/sdd:status cleaning           # el plan completo, con su numeración
+/sdd:status cleaning 4         # solo la sección 4
+/sdd:status cleaning 2.3       # solo esa tarea (con su sección de contexto)
+/sdd:status cleaning pending   # todo lo que falta, numerado — para copiar el número y pasarlo a /sdd:run
+/sdd:status cleaning R5        # todas las tareas que implementan el requisito R5
+```
+
+Es el complemento de lectura de los scopes de `run`: primero localizas el número exacto con `status`, luego lo ejecutas con `run <feature> <n.n>`.
+
 **Ejecutar solo una parte del tasks.md** → el scope de `run` usa la numeración del propio archivo:
 
 ```

@@ -1,16 +1,16 @@
 ---
 name: status
 model: haiku
-description: Show the state of SDD changes - active changes, phase, task progress, and the roadmap as a to-do view. Use when the user runs /sdd:status or asks where a change or the roadmap stands.
+description: Show the state of SDD changes - active changes, phase, task progress, and the roadmap as a to-do view. With a feature name, drills into that change's tasks.md - full plan, or filtered by section/pending/done/requirement, for surgical navigation of large task lists. Use when the user runs /sdd:status or asks where a change/the roadmap/a specific task stands.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Status
 
-Report the state of the SDD workflow. Read-only — change nothing.
+Report the state of the SDD workflow. Read-only — change nothing. Arguments: none (overview, below), or `<feature> [filter]` (task plan view, see "Task plan view").
 
-## Steps
+## Overview (no arguments) — Steps
 
 1. List non-archived directories in `sdd/changes/`. For each, determine:
    - **Phase**: which of `proposal.md` / `design.md` / `tasks.md` exist.
@@ -22,3 +22,18 @@ Report the state of the SDD workflow. Read-only — change nothing.
 5. Present a compact table: change · phase · tasks done/total · suggested next command (`/sdd:design`, `/sdd:tasks`, `/sdd:run`, or `/sdd:archive`). Below it, the roadmap to-do view with a progress count (e.g. `2/13`).
 
 If `sdd/` doesn't exist, say so and point to `/sdd:init`. If there are no active changes, say so and point to `/sdd:new` (suggesting the next roadmap entry if there is one).
+
+## Task plan view (`<feature> [filter]`)
+
+For navigating a large `tasks.md` surgically — finding the exact task number to target with `/sdd:run <feature> <task>`, or checking what's left, without regenerating or editing anything.
+
+1. Locate the change (active in `sdd/changes/<feature>/`, or archived under `sdd/changes/archive/*-<feature>/`) and read its `tasks.md`. No `tasks.md` → say so and point to `/sdd:tasks <feature>`.
+2. Apply the filter, if given:
+   - No filter → the full plan: every section heading (with its `<!-- panel: PASS ... -->` annotation if present) and every task/subtask with its `[x]`/`[ ]` state and `[R#]` tags.
+   - A section number (e.g. `4`) → only that section's tasks.
+   - A task/subtask number (e.g. `2.3`) → just that task, its subtasks if any, and one line of surrounding context (its section heading).
+   - `pending` / `done` → only unchecked / only checked tasks, across all sections, each still labeled with its number so it can be fed straight into `/sdd:run <feature> <n.n>`.
+   - `R<n>` (e.g. `R5`) → only tasks tagged `[R5]` — useful to see everything implementing one requirement.
+3. Render as a checklist (not prose), preserving numbering — the point is a scannable, copy-pasteable view, not a summary.
+
+This is purely mechanical parsing of an existing file — never write to `tasks.md`, never mark anything, never regenerate it (that's `/sdd:tasks`'s job, which now guards existing content per shared rule 6).
