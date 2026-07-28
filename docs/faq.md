@@ -27,14 +27,14 @@ Y la regla de granularidad: **documento que describe el producto → `init`; doc
 
 Era una redundancia real y se eliminó estructuralmente: el panel por sección **persiste su veredicto** (`<!-- panel: PASS <fecha> -->` en el heading de la sección en tasks.md), y `/sdd:review` es **incremental** — las secciones ya en PASS no se re-auditan línea a línea; sobre ellas solo se revisa lo que la escala sección no puede ver (interacciones entre secciones, coherencia global de D#, archivos de una sección tocados por otra posterior). Lo que siempre corre a escala feature: la matriz R#→met/unmet y el scope creep acumulado. Las secciones sin PASS (panel saltado con `solo`, interrumpido por límites) sí reciben review completo — review es también el mecanismo de recuperación. Los dos niveles compran cosas distintas: la sección compra *feedback temprano* (arreglar el bug de la sección 2 antes de construir encima); la feature compra *lo transversal*.
 
-## ¿Cuándo merece la pena `/sdd:review` antes de archivar?
+## ¿Cuándo corre `/sdd:review` antes del PR?
 
 | Situación | ¿Review? |
 |---|---|
-| Run interactivo con panel completado en todas las secciones | Opcional — añade solo la vista transversal (interacciones entre secciones, scope creep). En changes grandes sí; en uno de 2 secciones, sobra |
+| Run interactivo con panel completado en todas las secciones | **Obligatorio pero incremental** — valida lo transversal y persiste `READY_FOR_PR` sin volver a pagar la revisión línea a línea |
 | Panel incompleto o saltado (`solo`, límites de sesión) | **Obligatorio** — review a escala feature es el mecanismo de recuperación |
 | Modo auto | Siempre (cableado): nadie humano miró durante la ejecución |
-| Cambio trivial sin design | Innecesario |
+| Cambio trivial sin design | Obligatorio para registrar aprobación local; el scope del panel puede ser mínimo |
 
 El drift check (`/sdd:review` sin argumento) es otra cosa: mantenimiento periódico specs↔código, fuera del ciclo de cualquier change.
 
@@ -52,7 +52,17 @@ Si el marketplace se registró **desde git** (`/plugin marketplace add hardcode8
 
 ## ¿Dónde queda lo que se interrumpe a medias (un panel cortado, una duda, una tarea aparcada)?
 
-En la **cola de pendientes** del change: `sdd/changes/<feature>/BLOCKED.md`. Regla compartida nº 5: ninguna fase puede terminar dejando deuda solo en la conversación — la persiste con tipo (`decision`: te toca a ti / `deferred`: reanudable, con su comando exacto). `/sdd:status` la muestra como bandeja de entrada; `/sdd:archive` se niega a cerrar con entradas vivas (salvo override explícito). Un panel interrumpido se reanuda como `/sdd:review <feature>` — cubre lo pendiente y las interacciones.
+En la **cola de pendientes** del change: `sdd/changes/<feature>/BLOCKED.md`. Regla compartida nº 5: ninguna fase puede terminar dejando deuda solo en la conversación — la persiste con tipo (`decision`: te toca a ti / `deferred`: reanudable, con su comando exacto). `/sdd:status` la muestra como bandeja de entrada; `/sdd:archive` se niega a cerrar con entradas vivas. Un panel interrumpido se reanuda como `/sdd:review <feature>` — cubre lo pendiente y las interacciones.
+
+## ¿Por qué auto ya no archiva antes de abrir el PR?
+
+Porque implementación local, revisión remota, merge y archive son hechos
+distintos. El flujo anterior podía actualizar specs vivas y roadmap antes de
+tener CI o merge. Ahora `STATE.md` distingue `READY_FOR_PR`, `PR_OPEN`,
+`MERGED` y `ARCHIVED`: auto termina en PR, y archive consulta `gh` para exigir
+repositorio/ramas/SHA revisado, estado `MERGED` y merge commit. Los archives
+históricos sin metadata se conservan; a un change activo legacy se le exige
+asociar evidencia real, nunca inventarla.
 
 ## ¿Por qué los modelos por fase son del plugin y no por proyecto?
 

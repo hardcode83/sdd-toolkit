@@ -35,5 +35,13 @@ Never silently morph into init: the user asked for a proposal, and steering/road
    - An explicit **Out of scope** section — this is what keeps changes small.
    - In **Affected specs**, list the `sdd/specs/` files this change will touch. Flag the ones that don't exist yet with *(no existe aún — se creará al archivar)* — that's expected in adopted/brownfield projects, not a blocker.
    - Do NOT create `design.md` or `tasks.md`, and do not write any code.
-4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> new` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
-5. **Gate.** Present a short summary and ask the user to review. On approval, suggest the next step: `/sdd:design` — or `/sdd:tasks` directly if the change is trivial (no new architecture, few files, obvious approach).
+4. **Initialize lifecycle.** For a newly created change, run once:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . start <feature>
+   ```
+
+   This creates `STATE.md` with `state: ACTIVE`. Existing legacy changes are
+   never backfilled silently.
+5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> new` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
+6. **Gate.** Present a short summary and ask the user to review. On approval, suggest the next step: `/sdd:design` — or `/sdd:tasks` directly if the change is trivial (no new architecture, few files, obvious approach).

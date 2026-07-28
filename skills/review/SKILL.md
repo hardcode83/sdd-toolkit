@@ -1,7 +1,7 @@
 ---
 name: review
 model: sonnet
-description: Detect drift between sdd/specs/ and the code, or review an implemented change against its proposal before archiving. Use when the user runs /sdd:review, asks whether specs are up to date, or wants a spec-vs-implementation check.
+description: Detect drift between sdd/specs/ and code, or validate an implemented change locally and mark it READY_FOR_PR. Use when the user runs /sdd:review, asks whether specs are up to date, or wants a spec-vs-implementation check.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
@@ -36,6 +36,19 @@ Two modes, chosen by argument:
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).
 3. **Synthesize**: merge the three reports, dedupe, and drop any finding without a referent (R#, D#, or quoted steering rule). Present per requirement: **met / partially met / unmet** with `file:line` of implementation and test (from the QA report), then the surviving findings most severe first, then scope creep.
 4. If a panel agent type isn't available, do its dimension yourself inline (degraded but complete).
-5. Conclude with a verdict: ready to `/sdd:archive`, or list what's missing.
+5. Conclude with a verdict: locally verified or list what's missing. If the
+   verdict passes, persist the two explicit lifecycle milestones:
 
-Do not fix anything in either mode — report only, and let the user decide.
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
+   ```
+
+   Determine the target base from the current workflow/remote; if it is
+   ambiguous, ask rather than guessing. The resulting `STATE.md` has
+   `state: READY_FOR_PR`, `local_review: APPROVED`, repository, branches, and
+   the reviewed implementation SHA. This is not remote review, merge, spec
+   fusion, roadmap completion, or archive.
+
+Do not fix findings in either mode. A passing change review may write only the
+lifecycle metadata above; all other review behavior remains report-only.

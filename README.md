@@ -12,16 +12,20 @@ flowchart LR
     D -->|apruebas| T["/sdd:tasks<br/>checklist"]
     T -->|apruebas| RU["/sdd:run<br/>implementa"]
     RU <--> P{{"panel por sección<br/>architect·security·qa"}}
-    RU --> A["/sdd:archive"]
+    RU --> V["/sdd:review<br/>LOCAL_VERIFIED"]
+    V --> RP["READY_FOR_PR"]
+    RP --> PR["PR_OPEN"]
+    PR --> M["MERGED"]
+    M --> A["/sdd:archive"]
     A --> S[("specs/ vivas")]
     A --> H[("archive/ = memoria<br/>consultable con /sdd:history")]
-    AUTO["/sdd:auto"] -. "todo el ciclo sin gates,<br/>PR por feature, BLOCKED si duda" .-> N
+    AUTO["/sdd:auto"] -. "hasta PR_OPEN;<br/>nunca archiva antes del merge" .-> N
 ```
 
 ## Filosofía
 
 1. **Specs antes que código.** Cada cambio nace como propuesta con requisitos verificables (EARS), pasa por diseño y se descompone en tareas antes de tocar código.
-2. **Dos espacios:** `sdd/specs/` (verdad viva: qué hace el sistema hoy) y `sdd/changes/` (propuestas en curso que, al completarse, actualizan las specs y se archivan).
+2. **Dos espacios:** `sdd/specs/` (verdad viva: qué hace el sistema hoy) y `sdd/changes/` (propuestas en curso que solo actualizan las specs y se archivan después de un merge verificable).
 3. **Simple estilo Kiro.** `proposal.md` + `design.md` (opcional si trivial) + `tasks.md`, con aprobación explícita entre fases.
 4. **El proyecto guarda los datos; el plugin, la lógica.** `sdd/` en cada repo es pura persistencia (specs, changes, steering, roadmap, métricas) — sobrevive a actualizaciones del plugin y a cambios de máquina.
 5. **Los documentos son referentes ejecutables.** Las reglas de steering guían la generación *y* las verifica el panel; el archivo de changes es un registro de decisiones con citas (`/sdd:history`). Nada se revisa ni se recuerda "de memoria".
@@ -64,6 +68,7 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `sdd/steering/` | Proyecto | el init crea el esqueleto; **tú lo llenas de reglas** | editar a mano — efectivo al instante para fases y panel |
 | `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
 | `sdd/changes/` + `archive/` | Proyecto | las fases del ciclo | el ciclo del change |
+| `sdd/changes/<feature>/STATE.md` | Proyecto | review, auto y archive mediante `sdd_lifecycle.py` | estado local + evidencia objetiva de PR/merge |
 | `sdd/roadmap.md` | Proyecto | init lo siembra; **editable a mano** | añadir/reordenar líneas |
 | `.claude/agents/sdd-review-*.md` | Proyecto | tú, desde `templates/reviewer-template.md` | revisores custom del panel — versionados con el repo |
 | `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
@@ -91,15 +96,148 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:design [feature]` | Diseño técnico con decisiones y alternativas. Se salta si el cambio es trivial. | opus |
 | `/sdd:tasks [feature]` | Checklist de tareas pequeñas y verificables que referencian requisitos `[R1]`. | sonnet |
 | `/sdd:run [feature] [scope]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. Scope opcional: `next [N]`, una sección (`2`), una tarea (`2.3`), `solo` (sin panel), `tournament <tarea>`. | sonnet |
-| `/sdd:archive [feature]` | Fusiona en las specs vivas (spec on first touch), consolida métricas y archiva. | haiku |
-| `/sdd:status [feature] [filtro]` | Sin argumento: changes activos + roadmap como to-do list. Con feature: vista quirúrgica de su `tasks.md` — todo, o filtrado por sección (`4`), tarea (`2.3`), `pending`/`done`, o `R5`. | haiku |
+| `/sdd:archive [feature]` | Exige PR mergeado verificable; después fusiona specs vivas, consolida métricas, finaliza roadmap y archiva. | haiku |
+| `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y roadmap. Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
-| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
-| `/sdd:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
+| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR`. | sonnet |
+| `/sdd:auto [N\|feature]` | Modo autónomo hasta PR: implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
 Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola (excepto `/sdd:auto`, que sustituye los gates por sus equivalentes automáticos).
+
+## Lifecycle: implementación, PR, merge y archive
+
+### Por qué cambió
+
+El flujo anterior de `/sdd:auto` podía ejecutar `review → archive → PR`. Eso
+permitía fusionar las specs vivas, completar el roadmap y mover el change a
+archive antes de que existieran CI remoto, revisión del PR o evidencia de merge.
+El repositorio podía describir como integrado un cambio que todavía estaba solo
+en una rama.
+
+Terminar código local no significa que el cambio esté integrado. El lifecycle
+separa ahora explícitamente:
+
+`ACTIVE → LOCAL_VERIFIED → READY_FOR_PR → PR_OPEN → MERGED → ARCHIVED`
+
+`BLOCKED` y `CANCELLED` son estados laterales: `BLOCKED` conserva un
+`BLOCKED.md` accionable y permite reanudar el flujo cuando se resuelva;
+`CANCELLED` termina un change descartado sin presentarlo como entregado. Este
+incremento no añade un comando público de cancelación ni archiva
+automáticamente ninguno de los dos.
+
+### Estados y transiciones
+
+| Estado resultante | Comando o acción | Qué acredita |
+|---|---|---|
+| `ACTIVE` | `/sdd:new <feature>` inicia el change. | Existe trabajo local en curso; todavía no ha superado revisión. |
+| `LOCAL_VERIFIED` | `/sdd:review <feature>` termina con tests y panel aprobados. | La implementación cumple localmente proposal, design y tareas. |
+| `READY_FOR_PR` | La misma review registra la identidad Git revisada. | El change está completo localmente y listo para abrir PR; no implica CI, aprobación remota ni merge. |
+| `PR_OPEN` | `/sdd:auto` —o el flujo manual equivalente— crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
+| `MERGED` | `/sdd:archive <feature>` consulta GitHub y `verify-merge` valida la evidencia. | GitHub confirma el merge y su commit; aún pueden faltar la actualización documental y el movimiento físico. |
+| `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap y finaliza el archive. | El merge ya está reflejado en todas las fuentes de verdad SDD. |
+
+`/sdd:review` persiste primero `LOCAL_VERIFIED` y después `READY_FOR_PR`; así
+ambos hitos son inequívocos aunque normalmente ocurran en una misma invocación.
+`/sdd:auto` ejecuta implementación y review como antes, abre o reutiliza el PR,
+registra `PR_OPEN` y se detiene. No mueve el change, no actualiza specs vivas y
+no marca definitivamente el roadmap.
+
+### Estado y evidencia
+
+El estado principal y la evidencia viven en una única fuente de verdad:
+`sdd/changes/<feature>/STATE.md`. Su frontmatter estable contiene:
+
+- `state` y `local_review`;
+- `repository`, `base_branch`, `head_branch` e `implementation_sha` de la
+  implementación revisada;
+- `pr_url`, `pr_number`, `pr_state` y `merge_sha`.
+
+`READY_FOR_PR` significa exactamente «implementación local completa, revisión
+local aprobada e identidad Git capturada». No significa que exista un PR ni que
+el cambio haya pasado CI. Cuando se crea el PR, `record-pr` valida y guarda su
+URL, número, estado y correspondencia con repositorio y ramas; no mantiene una
+segunda fuente de estado.
+
+### Gate de archive
+
+Después del merge se ejecuta `/sdd:archive <feature>`. Antes de escribir specs
+o roadmap, el comando exige evidencia objetiva de GitHub: PR asociado, estado
+`MERGED`, merge commit, repositorio y ramas coincidentes, y que el SHA revisado
+forme parte de los commits del PR. También exige todas las tareas completas,
+revisión local aprobada y ausencia de `BLOCKED.md`. Un PR abierto, cerrado sin
+merge, inaccesible o inconsistente detiene el archive con la acción necesaria.
+No existe override basado únicamente en una afirmación del agente:
+
+- si el PR sigue `OPEN`, archive se detiene y pide mergearlo antes de reintentar;
+- si está `CLOSED` sin merge, se detiene y pide reabrirlo o asociar el PR
+  sustituto correcto;
+- si GitHub no puede verificarse por autenticación, red o respuesta incompleta,
+  se detiene y pide restaurar esa verificación; no degrada a confianza manual.
+
+Solo después de ese gate `/sdd:archive` fusiona las specs vivas, consolida
+métricas, registra PR/merge SHA, marca el roadmap y mueve el change. Esto deja
+una ventana explícita y visible entre `MERGED` y `ARCHIVED`, en vez de hacer
+que la documentación afirme un merge que todavía no ocurrió.
+
+### Ejemplos prácticos
+
+1. Flujo normal desde auto hasta archive:
+
+   ```bash
+   /sdd:auto billing
+   # Resultado: PR_OPEN · https://github.com/acme/app/pull/42
+   # Tras CI, revisión remota y merge del PR:
+   /sdd:archive billing
+   # Resultado: MERGED → specs/roadmap actualizados → ARCHIVED
+   ```
+
+2. Intento de archive con el PR abierto:
+
+   ```bash
+   /sdd:archive billing
+   # ERROR: PR #42 is still OPEN. Merge it, then rerun /sdd:archive billing.
+   ```
+
+   No se modifican specs, roadmap, métricas ni ubicación del change.
+
+3. Archive después de un merge confirmado:
+
+   ```bash
+   gh pr view 42 --json state,mergedAt,mergeCommit
+   # {"state":"MERGED", ...}
+   /sdd:archive billing
+   # Verifica nuevamente GitHub, registra merge_sha y finaliza el archive.
+   ```
+
+4. Registro conservador de un change histórico cuyo PR ya fue mergeado:
+
+   ```bash
+   /sdd:review legacy-feature
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" \
+     --root . record-pr legacy-feature \
+     --url https://github.com/acme/app/pull/123
+   /sdd:archive legacy-feature
+   ```
+
+   `record-pr` consulta el PR real y puede registrar directamente `MERGED`; no
+   inventa evidencia para compatibilizar el historial.
+
+### Compatibilidad y límites actuales
+
+- Los archives históricos sin `STATE.md` siguen siendo válidos y no se
+  reescriben ni generan diagnósticos retroactivos de merge.
+- Un change activo legacy debe pasar review y asociarse a su PR real antes de
+  archivarse. La migración es explícita y conservadora.
+- La verificación remota admite únicamente URLs públicas de `github.com`.
+  GitHub Enterprise queda fuera de este incremento.
+- `/sdd:doctor` no consulta GitHub: valida determinísticamente la metadata local.
+  La comprobación remota autoritativa pertenece a `/sdd:archive`.
+- La validación end-to-end del workflow en Codex sigue pendiente; las rutas
+  Claude Code, helpers y contratos documentales sí están cubiertos por tests.
+- El PR #10 está apilado sobre el PR #9 (`feat/sdd-doctor`): el #9 debe
+  mergearse primero y la rama/base del #10 deberá actualizarse después.
 
 ## Diagnóstico de coherencia (`/sdd:doctor`)
 
@@ -149,6 +287,12 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD007` | warning | Un archive conserva un `BLOCKED.md` no vacío. |
 | `SDD008` | warning | Una referencia local explícita apunta a una ruta inexistente. |
 | `SDD009` | error | Un mismo change aparece simultáneamente activo y archivado. |
+| `SDD010` | error | Un archive gestionado por el lifecycle carece de review aprobada, identidad Git, PR `MERGED` o `merge_sha`. Los archives legacy sin `STATE.md` se excluyen. |
+| `SDD011` | error | Un change situado en archive conserva `state: READY_FOR_PR`; fue movido antes de acreditar merge. |
+| `SDD012` | error | Un change aún activo aparece marcado `[x]` en el roadmap, que solo puede completarse definitivamente al archivar. |
+| `SDD013` | error | La referencia de PR es parcial o inválida: URL/número/estado requeridos no existen, no concuerdan o no pueden parsearse como `github.com/<owner>/<repo>/pull/<n>`. |
+| `SDD014` | error | El estado, su ubicación o sus campos obligatorios forman una combinación incompatible con el lifecycle. |
+| `SDD015` | error | La metadata local ya contiene evidencia de merge pero conserva `state: PR_OPEN`; debe reanudarse `/sdd:archive`. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -218,8 +362,8 @@ proyecto/
     ├── steering/               # reglas ricas de carga selectiva (frontmatter applies_to/phases)
     ├── specs/                  # verdad viva, una capability por .md
     └── changes/
-        ├── <feature>/          # proposal.md · design.md · tasks.md · metrics.md
-        │                       # (+ BLOCKED.md si el modo auto necesita tu decisión)
+        ├── <feature>/          # proposal · design · tasks · STATE.md · metrics
+        │                       # (+ BLOCKED.md si hay una decisión pendiente)
         └── archive/2026-07-15-<feature>/   # memoria del proyecto → /sdd:history
 ```
 
@@ -245,7 +389,7 @@ Un cambio de FE nunca carga la guía de infra; la visión pesa al proponer/dise�
 
 `/sdd:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
 
-`/sdd:review <feature>` usa el mismo panel a escala feature antes de archivar. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
+`/sdd:review <feature>` usa el mismo panel a escala feature y, si pasa, deja el change en `READY_FOR_PR`; no lo archiva. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
 
 ### Composición del panel: core + revisores del proyecto
 
@@ -262,15 +406,15 @@ Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/age
 
 ## Modo autónomo (`/sdd:auto`)
 
-Ejecuta features del roadmap **sin intervención**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect` antes de codificar, el panel es obligatorio por sección, y `review` debe dar PASS antes de archivar. Tu revisión no desaparece — se mueve: **una rama + PR por feature** (con proposal, veredicto del panel y specs dentro), y todo lo que antes era "pregunta al usuario" se convierte en **BLOCKED** (`changes/<feature>/BLOCKED.md` con la decisión pendiente, rama commiteada, y sigue con la siguiente). `/sdd:status` muestra la cola BLOCKED primero — es tu bandeja de decisiones.
+Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect`, el panel es obligatorio por sección y `review` debe dar PASS. Tu revisión se mueve a **una rama + PR por feature**; lo que necesita decisión se convierte en **BLOCKED**. Auto registra `PR_OPEN` y se detiene: las specs vivas, el tick definitivo del roadmap y el archive esperan a que GitHub confirme el merge y se ejecute `/sdd:archive`.
 
 Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
-**Reanudación parcial**: `/sdd:auto <feature>` sobre un change ya empezado no regenera nada — detecta la fase actual y continúa desde ahí (tus documentos manuales cuentan como aprobados). El híbrido natural: tú conduces las fases de pensamiento (proposal, design), auto remata las mecánicas (run→review→archive).
+**Reanudación parcial**: `/sdd:auto <feature>` sobre un change ya empezado no regenera nada — detecta documentos y `STATE.md`. Continúa trabajo local, abre un PR para `READY_FOR_PR`, reporta y espera si está `PR_OPEN`, y remite a `/sdd:archive` si está `MERGED`. El híbrido natural: tú conduces proposal/design y auto remata run→review→PR.
 
 ## Trabajo en equipo
 
-**Una feature = una rama `sdd/<feature>` = un dueño.** El código y su carpeta `sdd/changes/<feature>/` viajan juntos en la rama; la PR mergea código + specs + change archivado + tick del roadmap en un solo diff revisable (el revisor ve porqué, decisiones y verificación al lado del código).
+**Una feature = una rama `sdd/<feature>` = un dueño.** El código, los documentos del change y `STATE.md` viajan juntos en el PR. El merge integra la implementación y su evidencia local; el archive posterior actualiza specs/roadmap y convierte el change en historia solo cuando ese merge ya es objetivo.
 
 - **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros".
 - **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `roadmap.md`/`metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
@@ -300,7 +444,7 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · usage-{mark,phase,sink} · rtk-rewrite.sh
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · usage-* · rtk-rewrite.sh
 docs/guide.md       # guía de uso narrativa
 ```
 

@@ -10,6 +10,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
+from sdd_lifecycle import (
+    PR_FIELDS,
+    PR_URL_RE,
+    SHA_RE,
+    STATES,
+    LifecycleError,
+    read_state,
+)
+
 
 ROADMAP_ENTRY_RE = re.compile(r"^\s*-\s+\[([ xX])\]\s+(.+?)\s*$")
 CHANGE_POINTER_RE = re.compile(
@@ -392,6 +401,200 @@ def duplicate_checks(
     return diagnostics
 
 
+def metadata_line(change: Path, key: str) -> int:
+    for line_number, line in enumerate(read_lines(change / "STATE.md"), start=1):
+        if line.startswith(f"{key}:"):
+            return line_number
+    return 1
+
+
+def lifecycle_checks(
+    root: Path,
+    entries: list[RoadmapEntry],
+    active_changes: list[Path],
+    archived_changes: list[Path],
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    checked_features = {entry.feature: entry for entry in entries if entry.checked}
+
+    for change in active_changes:
+        state_file = change / "STATE.md"
+        if change.name in checked_features:
+            entry = checked_features[change.name]
+            diagnostics.append(
+                Diagnostic(
+                    "SDD012",
+                    "ERROR",
+                    "sdd/roadmap.md",
+                    entry.line,
+                    (
+                        f"Active change '{change.name}' is marked definitively "
+                        "complete in the roadmap."
+                    ),
+                    "Leave the roadmap unchecked until merge-gated archive completes.",
+                )
+            )
+        if not state_file.is_file():
+            continue
+        try:
+            data = read_state(change) or {}
+        except LifecycleError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "SDD013",
+                    "ERROR",
+                    relative(state_file, root),
+                    1,
+                    f"Lifecycle metadata cannot be parsed: {error}",
+                    "Repair STATE.md using the documented lifecycle fields.",
+                )
+            )
+            continue
+
+        state = data.get("state", "")
+        if state not in STATES or state == "ARCHIVED":
+            diagnostics.append(
+                Diagnostic(
+                    "SDD014",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "state"),
+                    f"Lifecycle state '{state}' is incompatible with an active change.",
+                    "Use a valid active state or complete the merge-gated archive.",
+                )
+            )
+
+        requires_pr = state in {"PR_OPEN", "MERGED", "ARCHIVED"}
+        missing = [field for field in PR_FIELDS if not data.get(field)]
+        valid_url = bool(PR_URL_RE.match(data.get("pr_url", "")))
+        valid_number = data.get("pr_number", "").isdigit()
+        if requires_pr and (missing or not valid_url or not valid_number):
+            detail = f"missing {', '.join(missing)}" if missing else "invalid PR URL/number"
+            diagnostics.append(
+                Diagnostic(
+                    "SDD013",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "pr_url"),
+                    f"PR evidence is incomplete or invalid ({detail}).",
+                    "Record the PR again from objective gh output.",
+                )
+            )
+
+        has_pr_evidence = any(
+            data.get(field) for field in ("pr_url", "pr_number", "pr_state", "merge_sha")
+        )
+        ready_identity_missing = (
+            state == "READY_FOR_PR"
+            and any(not data.get(field) for field in PR_FIELDS[:4])
+        )
+        incompatible = (
+            data.get("schema") != "1"
+            or (
+                state in {"ACTIVE", "LOCAL_VERIFIED", "READY_FOR_PR"}
+                and has_pr_evidence
+            )
+            or ready_identity_missing
+            or (state == "ACTIVE" and data.get("local_review") != "PENDING")
+            or (state == "LOCAL_VERIFIED" and data.get("local_review") != "APPROVED")
+            or (state == "READY_FOR_PR" and data.get("local_review") != "APPROVED")
+            or (state == "PR_OPEN" and data.get("pr_state") not in {"", "OPEN"})
+            or (
+                state == "MERGED"
+                and (
+                    data.get("pr_state") != "MERGED"
+                    or not SHA_RE.match(data.get("merge_sha", ""))
+                )
+            )
+        )
+        if incompatible:
+            diagnostics.append(
+                Diagnostic(
+                    "SDD014",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "state"),
+                    f"Lifecycle fields are incompatible with state '{state}'.",
+                    "Re-run the appropriate lifecycle command; do not edit remote evidence by hand.",
+                )
+            )
+        if state == "PR_OPEN" and (
+            data.get("pr_state") == "MERGED" or data.get("merge_sha")
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "SDD015",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "state"),
+                    "Merge evidence exists while the change remains PR_OPEN.",
+                    "Run /sdd:archive to verify merge and advance the lifecycle.",
+                )
+            )
+
+    for change in archived_changes:
+        state_file = change / "STATE.md"
+        if not state_file.is_file():
+            continue
+        try:
+            data = read_state(change) or {}
+        except LifecycleError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "SDD013",
+                    "ERROR",
+                    relative(state_file, root),
+                    1,
+                    f"Lifecycle metadata cannot be parsed: {error}",
+                    "Repair STATE.md without inventing merge evidence.",
+                )
+            )
+            continue
+        state = data.get("state", "")
+        if state == "READY_FOR_PR":
+            diagnostics.append(
+                Diagnostic(
+                    "SDD011",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "state"),
+                    "READY_FOR_PR change is already located in archive.",
+                    "Restore it to active changes until its PR is merged.",
+                )
+            )
+        elif state != "ARCHIVED":
+            diagnostics.append(
+                Diagnostic(
+                    "SDD014",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "state"),
+                    f"Archived change has incompatible lifecycle state '{state}'.",
+                    "Restore the active change or record a verified ARCHIVED state.",
+                )
+            )
+        missing = [field for field in PR_FIELDS if not data.get(field)]
+        complete_merge = (
+            data.get("local_review") == "APPROVED"
+            and data.get("pr_state") == "MERGED"
+            and bool(SHA_RE.match(data.get("merge_sha", "")))
+            and not missing
+            and bool(PR_URL_RE.match(data.get("pr_url", "")))
+        )
+        if state_file.is_file() and not complete_merge:
+            diagnostics.append(
+                Diagnostic(
+                    "SDD010",
+                    "ERROR",
+                    relative(state_file, root),
+                    metadata_line(change, "merge_sha"),
+                    "Archived lifecycle-managed change lacks complete merge evidence.",
+                    "Restore it and complete merge-gated archive; never invent evidence.",
+                )
+            )
+    return diagnostics
+
+
 def diagnose(root: Path) -> list[Diagnostic]:
     root = root.resolve()
     sdd = root / "sdd"
@@ -431,15 +634,19 @@ def diagnose(root: Path) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     roadmap = sdd / "roadmap.md"
-    if roadmap.is_file():
+    roadmap_entries = parse_roadmap(roadmap) if roadmap.is_file() else []
+    if roadmap_entries:
         diagnostics.extend(
-            pointer_checks(root, roadmap, parse_roadmap(roadmap), archives_by_feature)
+            pointer_checks(root, roadmap, roadmap_entries, archives_by_feature)
         )
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))
     diagnostics.extend(archive_checks(root, archived_changes))
     diagnostics.extend(reference_checks(root, sdd))
     diagnostics.extend(duplicate_checks(root, active_changes, archives_by_feature))
+    diagnostics.extend(
+        lifecycle_checks(root, roadmap_entries, active_changes, archived_changes)
+    )
 
     severity_order = {"ERROR": 0, "WARNING": 1}
     return sorted(

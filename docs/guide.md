@@ -11,7 +11,9 @@ Todo el estado vive en `sdd/` dentro de tu repo — **specs** (qué hace el sist
 /sdd:design ──► decisiones técnicas          ── tú apruebas ──►   (se salta si es trivial)
 /sdd:tasks ──► checklist verificable         ── tú apruebas ──►
 /sdd:run ──► implementa + panel de revisores por sección
-/sdd:archive ──► fusiona en specs/ y archiva el change
+/sdd:review ──► valida localmente y deja READY_FOR_PR
+Pull Request ──► revisión remota + CI ──► MERGED
+/sdd:archive ──► verifica el merge, fusiona specs/ y archiva
 ```
 
 Ninguna fase encadena con la siguiente sola: cada una termina esperándote.
@@ -62,12 +64,17 @@ Investiga el código, escribe decisiones con sus alternativas rechazadas y te pl
 
 Durante el run: cada tarea se verifica (tests/lint del proyecto) antes de marcarse `[x]`; al cerrar cada **sección** que tocó código de producción, se lanza el **panel** — sdd-architect, sdd-security y sdd-qa en paralelo, revisando el diff contra *tus* documentos (design, security.md, criterios EARS). Los findings sin referente citado se descartan; los aceptados se arreglan y se re-revisa (máx. 2 rondas, luego te los presenta a ti).
 
-**5. Cierre:**
+**5. PR y cierre:**
 
 ```
-/sdd:review    # opcional: el panel a escala feature, veredicto "listo para archivar o falta X"
-/sdd:archive   # fusiona los requisitos en sdd/specs/, consolida métricas, mueve a archive/, tacha el roadmap
+/sdd:review    # panel a escala feature; si pasa, registra READY_FOR_PR
+# abre y mergea el PR; STATE.md conserva URL, ramas y SHA revisado
+/sdd:archive   # exige MERGED verificable; entonces actualiza specs/roadmap/archive
 ```
+
+Un PR abierto o cerrado sin merge no se puede archivar. Las specs vivas y el
+tick definitivo del roadmap esperan al merge; una afirmación del agente no
+sustituye `gh pr view`.
 
 Y vuelta al paso 2 con la siguiente entrada del roadmap.
 
@@ -93,13 +100,13 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **¿Doc de una feature o plan entero?** → regla: *documento que describe una feature → `new`; documento que describe el producto/plan → `init`*. Y si te equivocas de comando, no pasa nada: `new` detecta el olor a plan (varias capabilities, decisiones de stack, lista de fases…) y se para antes de escribir, ofreciéndote tratarlo como ingesta de plan ahí mismo (con tu ok — nunca reescribe steering/roadmap por sorpresa) o acotar a una sola feature del doc.
 
-**Lanzar features sin intervenir** → `/sdd:auto [N]`: consume las próximas N entradas del roadmap de punta a punta — rama + PR por feature, panel obligatorio, y todo lo que necesitaría tu decisión acaba en `BLOCKED.md` (cola visible en `/sdd:status`) en vez de adivinarse. Tu gate se mueve a revisar las PRs. Empieza con `/sdd:auto 1` en sesión normal; desatendido: `claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron. Requisito real: steering docs concretos y roadmap curado — en auto, basura pre-autorizada sigue siendo basura.
+**Lanzar features sin intervenir** → `/sdd:auto [N]`: consume las próximas N entradas hasta abrir una rama + PR por feature, con panel obligatorio. Registra `PR_OPEN` y se detiene: no toca specs vivas, archive ni el tick definitivo del roadmap. Tu gate se mueve a revisar/mergear las PRs; después ejecutas `/sdd:archive <feature>`. Todo lo que necesita tu decisión acaba en `BLOCKED.md`.
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos).
 
-**Quedó deuda a mitad de un run** (un panel interrumpido por límites, una verificación aplazada, una tarea aparcada) → no depende de que te acuerdes: toda fase que termina dejando algo pendiente lo persiste en el `BLOCKED.md` del change (tipo `decision` si te toca a ti, `deferred` con su comando exacto de reanudación si puede retomarlo el flujo). `/sdd:status` lo enseña como bandeja de entrada, y `/sdd:archive` **se niega a cerrar** un change con entradas sin resolver (salvo override explícito tuyo). Resolver una entrada = ejecutar su comando o decidir, y borrarla.
+**Quedó deuda a mitad de un run** (un panel interrumpido por límites, una verificación aplazada, una tarea aparcada) → no depende de que te acuerdes: toda fase que termina dejando algo pendiente lo persiste en el `BLOCKED.md` del change. `/sdd:status` lo enseña como bandeja de entrada, y `/sdd:archive` **se niega a cerrar** un change con entradas sin resolver. Resolver una entrada = ejecutar su comando o decidir, y borrarla.
 
-**Delegar solo el final** → aprueba tú proposal/design/tasks como siempre y luego `/sdd:auto <feature>`: detecta la fase y ejecuta lo mecánico (run→review→archive) sin gates.
+**Delegar solo el final** → aprueba tú proposal/design/tasks como siempre y luego `/sdd:auto <feature>`: detecta la fase y ejecuta run→review→PR. El archive queda explícitamente después del merge.
 
 **En equipo: ¿quién tiene qué?** → la rama remota `sdd/<feature>` es el candado. `/sdd:new` avisa si la feature ya está cogida y ofrece pushear tu claim; `/sdd:status` enseña las de los demás como "en curso por otros". Si al mergear chocan dos `specs/<capability>.md`, no es ruido: dos features tocaron el mismo comportamiento — resolvedlo hablando, el merge textual es lo de menos.
 

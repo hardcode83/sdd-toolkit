@@ -1,7 +1,7 @@
 ---
 name: auto
 model: sonnet
-description: Run SDD features end-to-end without human intervention - consumes roadmap entries through new/design/tasks/run/review/archive with automated gate substitutes, one branch+PR per feature, and a BLOCKED queue for anything needing a human decision. Use when the user runs /sdd:auto, optionally with a count or feature name.
+description: Run SDD features through local implementation, review, READY_FOR_PR, and Pull Request creation without archiving before merge. Uses one branch+PR per feature and a BLOCKED queue for human decisions. Use when the user runs /sdd:auto, optionally with a count or feature name.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first. This skill **overrides rule 3
@@ -59,18 +59,34 @@ Take the next unchecked, un-started roadmap entry. Then:
    is forbidden in auto; `tournament` only if the roadmap entry explicitly
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.
-6. **review** — follow the review skill at feature scale. Verdict must be
-   ready-to-archive; otherwise BLOCK.
-7. **archive** — follow the archive skill (specs merge, metrics
-   consolidation, roadmap tick). Commit: `sdd(<feature>): archive`.
-8. **Publish**: if a remote and `gh` are available, push and open a PR from
-   `sdd/<feature>` to BASE — title `SDD: <feature>`, body = the proposal's
-   Why/What + panel verdict + link to the archived change. **Attribution
+6. **review + READY_FOR_PR** — follow the review skill at feature scale.
+   Verdict must pass; otherwise BLOCK. The review skill records
+   `LOCAL_VERIFIED` and then `READY_FOR_PR` in the change's single
+   `STATE.md`, including BASE, head branch, repository, and reviewed
+   implementation SHA. Commit: `sdd(<feature>): ready for PR`.
+7. **Publish**: if a remote exists, push; if both a remote and `gh` are
+   available, open a PR from `sdd/<feature>` to BASE — title
+   `SDD: <feature>`, body = the proposal's
+   Why/What + panel verdict + link to the **active** change. **Attribution
    follows the project's settings**: only append the Claude Code attribution
    line (and co-author trailers in commits) if `includeCoAuthoredBy` is not
    disabled in the effective settings — never hardcode signatures against
-   the user's configuration. No remote → leave the branch and say so.
-9. `git checkout BASE` and continue with the next entry.
+   the user's configuration.
+8. **Record PR evidence**: take the URL returned by `gh pr create` and run:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-pr <feature> --url <PR-URL>
+   ```
+
+   This re-queries `gh`, validates repository/base/head/implementation SHA,
+   records `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is
+   idempotent. No remote or no `gh` → leave `READY_FOR_PR` and report the
+   exact manual PR action; never fabricate a URL.
+9. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
+   check off the roadmap, consolidate archive metrics, or move the change.
+   Those final effects are permitted only after GitHub reports the associated
+   PR as `MERGED`.
+10. `git checkout BASE` and continue with the next entry.
 
 ## Resuming a mid-flight feature
 
@@ -80,7 +96,10 @@ Take the next unchecked, un-started roadmap entry. Then:
 - Only `proposal.md` → continue at design (the existing proposal counts as approved: the user drove it).
 - `proposal.md` + `design.md` → continue at tasks.
 - `tasks.md` with unchecked tasks → continue at run.
-- All tasks checked → continue at review → archive.
+- All tasks checked, no lifecycle metadata → continue at review.
+- `state: READY_FOR_PR` → push/open the PR and record it; do not re-review.
+- `state: PR_OPEN` → report the PR and wait for remote review/merge.
+- `state: MERGED` → point to `/sdd:archive <feature>`; auto does not archive.
 
 Documents already written by the user's manual phases are treated as approved input — never regenerate them. If the change lives on an existing `sdd/<feature>` branch, switch to it instead of branching anew. This enables the hybrid the gates make expensive: the human drives the thinking phases, auto finishes the mechanical ones.
 
@@ -102,8 +121,12 @@ file, and resumes with the normal phase skills on that branch.
 
 ## Final report (always, even if everything blocked)
 
-- Per feature: **shipped** (PR link) / **blocked** (phase + one-line reason)
-  / **skipped**.
+- Per feature: **PR open** (link; archive pending merge) /
+  **ready for PR** (exact next action) / **blocked** (phase + one-line reason)
+  / **skipped**. Never call a PR-open change shipped or archived.
+- Always state that living specs and the definitive roadmap tick remain
+  pending until merge, and that the next command after merge is
+  `/sdd:archive <feature>`.
 - Cost per feature from `sdd/changes/<feature>/metrics.md` if tracking is on.
 - Anything the run revealed about steering docs being too vague to enforce —
   that's the user's lever for making the next auto run better.

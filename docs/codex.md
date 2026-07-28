@@ -50,7 +50,7 @@ same skill in their picker as `sdd-toolkit:<skill>`.
 | History | `$history [feature or question]` | Read-only archive query with source citations. |
 | Init | `$init [plan.md]` | Core scaffold is validated; decline unsupported Claude extras when using Codex. |
 | Run | `$run <feature> solo` | Basic sequential execution is validated only in explicit `solo` mode. |
-| Archive | `$archive <feature>` | Validated for a completed, unblocked change without metrics or roadmap updates. |
+| Archive | `$archive <feature>` | Requires objective merged-PR evidence; the new merge-gated path is not yet validated under Codex. |
 
 The approval gates remain part of the workflow. Do not chain `new`, `design`,
 `tasks`, `run`, or `archive` without the same explicit approvals required by
@@ -69,7 +69,7 @@ Claude Code.
 | `history` | Verified | Read an archived change and current spec, cited the record, and reported current validity without writes. |
 | `init` core scaffold | Partially supported | Created `sdd/project.md`, `sdd/README.md`, specs/archive directories, and selected steering docs. Planning ingestion, re-init/merge, baselines, and extras remain unverified. |
 | `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven `unittest` tests, and checked tasks only after verification. The Claude review panel was deliberately skipped. |
-| `archive` basic path | Partially supported | Re-verified tests, created a living spec, and moved the change to the dated archive. Metrics, roadmap, BLOCKED override, and existing-spec merge paths remain unverified. |
+| `archive` merge-gated path | Unverified | The former pre-merge basic path is obsolete. Shared skills now require `STATE.md` plus objective `gh` merge evidence before specs, roadmap, and archive writes. |
 | `review`, `auto`, `diagram` | Unverified | Outside this experiment. |
 | Claude reviewer panel | Unsupported | Claude agent types and project `.claude/agents/` reviewers were not adapted. |
 | Tournament mode | Unsupported | Claude Agent calls, model roles, and isolated-worktree tournament orchestration were not adapted. |
@@ -95,8 +95,8 @@ Claude Code.
 - Use `$run <feature> solo` for the validated path. Default `run` expects the
   Claude architect/security/QA panel. Silent substitution with a different
   review policy would change the methodology and is not part of this adapter.
-- Basic archive interoperability is established, but archive edge cases and
-  team policies still require human review.
+- Merge-gated archive interoperability has not yet been exercised end-to-end
+  under Codex; use Claude Code for this lifecycle until that validation exists.
 - The local marketplace installation commands are documented from the Codex
   CLI contract, but global installation was intentionally not performed during
   the experiment.
@@ -149,7 +149,7 @@ remain readable by Claude Code.
 ## Readiness verdict
 
 The adapter is usable for controlled daily work with `status`, `new`, `design`,
-`tasks`, `history`, core-only `init`, sequential `run ... solo`, and the basic
-archive path. It is not yet a full daily-use replacement for the Claude Code
-workflow when reviewer panels, tournament mode, telemetry, hooks, automatic
-mode, init extras, or archive edge cases are required.
+`tasks`, `history`, core-only `init`, and sequential `run ... solo`. It is not
+yet a full daily-use replacement for the Claude Code workflow when merge-gated
+archive, reviewer panels, tournament mode, telemetry, hooks, automatic mode,
+or init extras are required.

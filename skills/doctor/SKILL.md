@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Validate SDD state consistency without modifying files. Use when the user runs /sdd:doctor, asks to diagnose the SDD workspace, or wants deterministic checks for roadmap, changes, requirements, tasks, archives, blockers, and local references.
+description: Validate SDD state consistency without modifying files. Checks roadmap, changes, requirements, tasks, archives, blockers, local references, lifecycle metadata, and PR/merge evidence. Use when the user runs /sdd:doctor or asks to diagnose the SDD workspace.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
