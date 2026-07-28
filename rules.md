@@ -33,7 +33,8 @@
    call that out explicitly before letting the user pick regenerate.
 7. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
    → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`. Support: `/sdd:status`
-   (read-only, includes the BLOCKED queue), `/sdd:review` (drift /
+   (read-only, includes the BLOCKED queue), `/sdd:doctor` (read-only,
+   deterministic state consistency checks), `/sdd:review` (drift /
    pre-archive check), `/sdd:history` (read-only queries over the archive),
    `/sdd:auto` (the whole cycle with automated gate substitutes), and
    `/sdd:diagram` (visuals for design docs).
