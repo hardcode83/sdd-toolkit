@@ -49,3 +49,8 @@
    verify it through `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py`.
    Historical archives without `STATE.md` are legacy records: do not rewrite
    them and do not invent merge evidence.
+9. **Project validation is project-owned**: build, test, lint, typecheck and CI
+   commands come from the consumer project's `sdd/project.md`,
+   `sdd/steering/` or existing configuration. Never infer them from the
+   toolkit's implementation language, and never copy the toolkit's internal
+   tests or CI into a consumer repository.

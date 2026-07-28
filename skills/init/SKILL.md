@@ -8,6 +8,11 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Init
 
+The repository being initialized is the consumer project, not the toolkit
+checkout. Never copy the toolkit's tests, CI workflows, validation scripts,
+Python configuration, or internal fixtures into it. Only the selected project
+templates and generated SDD documents belong in the consumer repository.
+
 Bootstrap SDD in the current project. Optional argument: path to an initial planning document (markdown) — used to seed steering docs and the roadmap.
 
 ## Steps
@@ -24,7 +29,7 @@ Bootstrap SDD in the current project. Optional argument: path to an initial plan
 - What the project is (read README, package manifests).
 - Stack: languages, frameworks, versions, infra (Dockerfiles, terraform, CI config).
 - Components present: frontend, backend, infra, CLI, etc. — this drives which steering docs, MCPs and LSPs to offer.
-- Exact commands for build, test, lint, and running locally (from package.json scripts, Makefile, justfile, CI workflows). Verify they exist; never invent commands.
+- Exact commands for build, test, lint, typecheck, and running locally (from package.json scripts, Makefile, justfile, CI workflows, or equivalent project configuration). Verify they exist; never invent commands or infer them from the plugin's implementation language. If no stack or command is identifiable, leave it pending and ask.
 - Conventions: folder structure, notable patterns, existing CLAUDE.md rules.
 
 Keep exploration proportional — this is a steering summary, not an audit.
@@ -94,7 +99,7 @@ When re-running this step on an already-initialized project, first diff against 
 1. **MCPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/mcp-catalog.md`; offer only the entries relevant to the detected stack (e.g. don't offer Postgres to a project with no database).
 2. **LSPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/lsp-catalog.md`; offer code intelligence for the languages detected in the repo (or planned in the stack).
 3. **CLAUDE.md pointer** — whether to add the SDD block (below) to the project's `CLAUDE.md`.
-4. **Usage metrics** — per-feature token/cost tracking from conception to archive (see `${CLAUDE_PLUGIN_ROOT}/references/metrics.md`, including its honest limitations). Requires `jq` and `python3`.
+4. **Usage metrics** — optional plugin-side per-feature token/cost tracking from conception to archive (see `${CLAUDE_PLUGIN_ROOT}/references/metrics.md`, including its honest limitations). Its helper runtime may use `jq` and Python 3 on the machine; this does not define the consumer project's stack or validation commands.
 5. **Team distribution** (shared repos): declare the plugin in the project's versioned `.claude/settings.json` so whoever clones and trusts the folder gets the install prompt automatically. BOTH keys are needed — `enabledPlugins` alone says "you need this" without saying where to get it:
 
    ```json
@@ -123,7 +128,7 @@ Current system behavior is documented in `sdd/specs/`; in-flight changes live in
 ```
 
 - **rtk**: if chosen, install the binary with user approval and verify with `rtk --version`.
-- **Usage metrics**: verify `jq` and `python3` are available. Merge into the `env` object of the project's `.claude/settings.json` (preserving existing keys): `CLAUDE_CODE_ENABLE_TELEMETRY: "1"`, `OTEL_METRICS_EXPORTER: "otlp"`, `OTEL_EXPORTER_OTLP_PROTOCOL: "http/json"`, `OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318"` (pick another port if 4318 is taken — check with `lsof -i :4318`), `OTEL_METRIC_EXPORT_INTERVAL: "10000"`. Add `.sdd-usage/` to `.gitignore`. Tell the user telemetry starts on the **next session** (env applies at session start); the sink autostarts when the first phase runs.
+- **Usage metrics**: if selected, verify the plugin's helper prerequisites (`jq` and Python 3) on the machine. Merge its environment into the project's `.claude/settings.json` (preserving existing keys): `CLAUDE_CODE_ENABLE_TELEMETRY: "1"`, `OTEL_METRICS_EXPORTER: "otlp"`, `OTEL_EXPORTER_OTLP_PROTOCOL: "http/json"`, `OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318"` (pick another port if 4318 is taken — check with `lsof -i :4318`), `OTEL_METRIC_EXPORT_INTERVAL: "10000"`. Add `.sdd-usage/` to `.gitignore`. Tell the user telemetry starts on the **next session** (env applies at session start); the sink autostarts when the first phase runs. This optional helper is plugin infrastructure, not a project test requirement.
 - Record enabled MCPs/LSPs/metrics in the **Context** section of `sdd/project.md`.
 
 ### 8. Summarize

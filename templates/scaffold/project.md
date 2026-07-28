@@ -13,7 +13,8 @@
 
 ## Commands
 
-<!-- Comandos exactos que el agente debe usar: -->
+<!-- Comandos exactos que el agente debe usar, descubiertos en este proyecto.
+     No copies defaults from the toolkit: -->
 <!-- build: -->
 <!-- test: -->
 <!-- lint: -->

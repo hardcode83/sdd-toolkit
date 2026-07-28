@@ -29,5 +29,6 @@ phases: [tasks, run]
 
 ## Commands
 
-<!-- Only if beyond project.md: run one file, run by marker/tag, update -->
-<!-- snapshots, run integration suite locally (docker-compose etc.). -->
+<!-- Only if beyond project.md: run one file, run by marker/tag, update
+     snapshots, run integration suite locally (docker-compose etc.). These
+     are project-specific commands; never assume a language or framework. -->

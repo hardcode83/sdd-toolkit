@@ -12,6 +12,7 @@ Este directorio es la **capa de persistencia** del proyecto para el flujo SDD (p
 Convenciones para humanos y agentes:
 
 - `project.md` — steering core: stack, comandos de build/test/lint, convenciones. Generado por `/sdd:init`, editable a mano. Se lee al inicio de toda fase SDD.
+- Los comandos de validación son los de este proyecto, no los tests o scripts internos del plugin. Si el stack aún no está definido, déjalo pendiente en `project.md` hasta descubrirlo o decidirlo.
 - `steering/` — reglas permanentes ricas: `product.md` (visión), `architecture.md`, `security.md`, `testing.md`, `documentation.md`, docs por componente/lenguaje. Cada doc declara en su frontmatter (`applies_to`, `phases`) cuándo se carga — las fases SDD solo leen los que aplican al cambio en curso.
 - `specs/` — **verdad viva**: qué hace el sistema hoy. Una capability por archivo, en presente, con requisitos EARS. Solo se actualiza al archivar un cambio completado (`/sdd:archive`). En proyectos que adoptaron SDD con código existente, la cobertura crece por "spec on first touch".
 - `changes/` — cambios en curso. Cada carpeta es un cambio con `proposal.md` (por qué + requisitos), `design.md` (opcional, decisiones técnicas), `tasks.md` (checklist), `STATE.md` (lifecycle/PR/merge) y `metrics.md` (uso, si está activado). `BLOCKED.md` sigue siendo la cola lateral de bloqueos.

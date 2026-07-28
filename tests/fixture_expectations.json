@@ -1,0 +1,63 @@
+{
+  "active-missing-proposal": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD003"]
+  },
+  "archive-blocked": {
+    "exit_code": 0,
+    "diagnostics": ["WARNING SDD007"]
+  },
+  "archive-missing-merge": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD010"]
+  },
+  "archive-pending-tasks": {
+    "exit_code": 0,
+    "diagnostics": ["WARNING SDD006"]
+  },
+  "archived-pending-roadmap": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD001"]
+  },
+  "duplicate-change": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD009"]
+  },
+  "lifecycle-invalid": {
+    "exit_code": 1,
+    "diagnostics": [
+      "ERROR SDD012",
+      "ERROR SDD013",
+      "ERROR SDD014",
+      "ERROR SDD015"
+    ]
+  },
+  "lifecycle-valid": {
+    "exit_code": 0,
+    "diagnostics": []
+  },
+  "missing-local-reference": {
+    "exit_code": 0,
+    "diagnostics": ["WARNING SDD008"]
+  },
+  "ready-in-archive": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD010", "ERROR SDD011"]
+  },
+  "requirement-without-task": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD005"]
+  },
+  "roadmap-missing-change": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD002"]
+  },
+  "task-unknown-requirement": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD004"]
+  },
+  "valid": {
+    "exit_code": 0,
+    "diagnostics": []
+  }
+}
