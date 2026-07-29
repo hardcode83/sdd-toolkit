@@ -127,8 +127,11 @@ class LifecycleTests(unittest.TestCase):
             runner=self.gh_runner(self.pr_payload("OPEN")),
         )
 
-    def test_local_review_advances_to_ready_for_pr(self) -> None:
+    def test_complete_permitted_transition_sequence(self) -> None:
+        self.assertEqual("ACTIVE recorded.", start_change(self.root, FEATURE))
+        self.assertEqual("ACTIVE", read_state(self.change)["state"])
         self.assertEqual("LOCAL_VERIFIED recorded.", mark_local_verified(self.root, FEATURE))
+        self.assertEqual("LOCAL_VERIFIED", read_state(self.change)["state"])
         self.assertEqual(
             "READY_FOR_PR recorded.", mark_ready(self.root, FEATURE, "main")
         )
@@ -137,6 +140,29 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("APPROVED", state["local_review"])
         self.assertEqual(self.implementation_sha, state["implementation_sha"])
         self.assertEqual("", state["pr_url"])
+        record_pr(
+            self.root,
+            FEATURE,
+            PR_URL,
+            runner=self.gh_runner(self.pr_payload("OPEN")),
+        )
+        self.assertEqual("PR_OPEN", read_state(self.change)["state"])
+        merge_payload = self.pr_payload(
+            "MERGED",
+            merged_at="2026-07-28T12:00:00Z",
+            merge_sha="a" * 40,
+        )
+        require_merge(self.root, FEATURE, runner=self.gh_runner(merge_payload))
+        self.assertEqual("MERGED", read_state(self.change)["state"])
+        finalize_archive(
+            self.root,
+            FEATURE,
+            specs_confirmed=True,
+            runner=self.gh_runner(merge_payload),
+            today=date(2026, 7, 28),
+        )
+        archive = self.root / "sdd/changes/archive/2026-07-28-example"
+        self.assertEqual("ARCHIVED", read_state(archive)["state"])
 
     def test_start_is_idempotent(self) -> None:
         self.assertEqual("ACTIVE recorded.", start_change(self.root, FEATURE))
@@ -147,7 +173,7 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(first, (self.change / "STATE.md").read_bytes())
 
-    def test_ready_sequence_is_idempotent(self) -> None:
+    def test_review_contract_is_idempotent(self) -> None:
         self.ready()
         first = (self.change / "STATE.md").read_bytes()
         self.assertIn("already recorded", mark_local_verified(self.root, FEATURE))
@@ -188,25 +214,6 @@ class LifecycleTests(unittest.TestCase):
                 runner=self.gh_runner(self.pr_payload("CLOSED")),
             )
         self.assertEqual("PR_OPEN", read_state(self.change)["state"])
-
-    def test_merged_pr_allows_merge_evidence(self) -> None:
-        self.record_open()
-        merge_sha = "a" * 40
-        _, _, changed = require_merge(
-            self.root,
-            FEATURE,
-            runner=self.gh_runner(
-                self.pr_payload(
-                    "MERGED",
-                    merged_at="2026-07-28T12:00:00Z",
-                    merge_sha=merge_sha,
-                )
-            ),
-        )
-        self.assertTrue(changed)
-        state = read_state(self.change)
-        self.assertEqual("MERGED", state["state"])
-        self.assertEqual(merge_sha, state["merge_sha"])
 
     def test_legacy_change_can_record_real_already_merged_pr(self) -> None:
         self.ready()
@@ -268,10 +275,34 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("changes/archive/2026-07-28-example/", roadmap)
         self.assertEqual("# Example\n\nMerged behavior.\n", spec.read_text())
 
-    def test_blocked_change_cannot_advance(self) -> None:
+    def test_blocked_change_cannot_advance_local_pr_or_archive_gates(self) -> None:
         (self.change / "BLOCKED.md").write_text("# Blocked\n\nDecision needed.\n")
         with self.assertRaisesRegex(LifecycleError, "unresolved"):
             mark_local_verified(self.root, FEATURE)
+        (self.change / "BLOCKED.md").unlink()
+        self.ready()
+        (self.change / "BLOCKED.md").write_text("# Blocked\n\nDecision needed.\n")
+        with self.assertRaisesRegex(LifecycleError, "unresolved"):
+            record_pr(
+                self.root,
+                FEATURE,
+                PR_URL,
+                runner=self.gh_runner(self.pr_payload("OPEN")),
+            )
+        (self.change / "BLOCKED.md").unlink()
+        record_pr(
+            self.root,
+            FEATURE,
+            PR_URL,
+            runner=self.gh_runner(self.pr_payload("OPEN")),
+        )
+        (self.change / "BLOCKED.md").write_text("# Blocked\n\nDecision needed.\n")
+        with self.assertRaisesRegex(LifecycleError, "unresolved"):
+            require_merge(
+                self.root,
+                FEATURE,
+                runner=self.gh_runner(self.pr_payload("MERGED")),
+            )
 
     def test_incomplete_tasks_cannot_advance(self) -> None:
         (self.change / "tasks.md").write_text("# Tasks\n\n- [ ] 1.1 Pending [R1]\n")
@@ -327,7 +358,127 @@ class LifecycleTests(unittest.TestCase):
             )
         self.assertFalse((self.change / "STATE.md").exists())
 
-    def test_repeated_commands_do_not_duplicate_metadata_or_archive(self) -> None:
+    def test_legacy_minimal_metadata_remains_readable_and_unchanged(self) -> None:
+        legacy = (
+            "---\n"
+            "schema: 1\n"
+            "state: ACTIVE\n"
+            "local_review: PENDING\n"
+            "---\n\n"
+            "# Legacy lifecycle\n"
+        )
+        state_file = self.change / "STATE.md"
+        state_file.write_text(legacy, encoding="utf-8")
+        self.assertEqual("ACTIVE", read_state(self.change)["state"])
+        self.assertEqual(
+            "Lifecycle already initialized at state ACTIVE.",
+            start_change(self.root, FEATURE),
+        )
+        self.assertEqual(legacy, state_file.read_text(encoding="utf-8"))
+
+    def test_lifecycle_preserves_project_specific_validation_commands(self) -> None:
+        project = self.root / "sdd" / "project.md"
+        commands = (
+            ("package.json", "npm test"),
+            ("go.mod", "go test ./..."),
+            ("pom.xml", "mvn test"),
+        )
+        for marker, command in commands:
+            with self.subTest(marker=marker):
+                (self.root / marker).write_text("", encoding="utf-8")
+                project.write_text(
+                    "# Project\n\n## Commands\n\n"
+                    f"- test: {command}\n",
+                    encoding="utf-8",
+                )
+                original = project.read_bytes()
+                start_change(self.root, FEATURE)
+                self.assertEqual(original, project.read_bytes())
+
+    def test_cancelled_is_a_terminal_lateral_state(self) -> None:
+        write_state(
+            self.change,
+            {
+                "schema": "1",
+                "state": "CANCELLED",
+                "local_review": "PENDING",
+            },
+        )
+        original = (self.change / "STATE.md").read_bytes()
+        operations = (
+            lambda: mark_local_verified(self.root, FEATURE),
+            lambda: mark_ready(self.root, FEATURE, "main"),
+            lambda: record_pr(
+                self.root,
+                FEATURE,
+                PR_URL,
+                runner=self.gh_runner(self.pr_payload("OPEN")),
+            ),
+            lambda: require_merge(
+                self.root,
+                FEATURE,
+                runner=self.gh_runner(self.pr_payload("MERGED")),
+            ),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(LifecycleError):
+                    operation()
+                self.assertEqual(original, (self.change / "STATE.md").read_bytes())
+
+    def test_illegal_transition_sources_are_rejected(self) -> None:
+        operations = {
+            "mark-local-verified": (
+                lambda: mark_local_verified(self.root, FEATURE),
+                {"ARCHIVED", "CANCELLED"},
+            ),
+            "mark-ready": (
+                lambda: mark_ready(self.root, FEATURE, "main"),
+                {"ACTIVE", "ARCHIVED", "CANCELLED"},
+            ),
+            "record-pr": (
+                lambda: record_pr(
+                    self.root,
+                    FEATURE,
+                    PR_URL,
+                    runner=self.gh_runner(self.pr_payload("OPEN")),
+                ),
+                {"ACTIVE", "LOCAL_VERIFIED", "ARCHIVED", "CANCELLED"},
+            ),
+            "verify-merge": (
+                lambda: require_merge(
+                    self.root,
+                    FEATURE,
+                    runner=self.gh_runner(self.pr_payload("MERGED")),
+                ),
+                {
+                    "ACTIVE",
+                    "LOCAL_VERIFIED",
+                    "READY_FOR_PR",
+                    "ARCHIVED",
+                    "CANCELLED",
+                },
+            ),
+        }
+        for command, (operation, illegal_states) in operations.items():
+            for state in sorted(illegal_states):
+                with self.subTest(command=command, state=state):
+                    write_state(
+                        self.change,
+                        {
+                            "schema": "1",
+                            "state": state,
+                            "local_review": (
+                                "PENDING" if state == "ACTIVE" else "APPROVED"
+                            ),
+                        },
+                    )
+                    before = (self.change / "STATE.md").read_bytes()
+                    with self.assertRaises(LifecycleError):
+                        operation()
+                    self.assertEqual(before, (self.change / "STATE.md").read_bytes())
+
+    def test_auto_and_archive_contracts_are_idempotent(self) -> None:
         self.record_open()
         state_once = (self.change / "STATE.md").read_bytes()
         result = record_pr(

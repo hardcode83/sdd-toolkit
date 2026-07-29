@@ -1,0 +1,30 @@
+name: Validate toolkit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run executable specification
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v
+      - name: Validate manifests
+        run: python3 scripts/validate_toolkit.py manifests
+      - name: Validate skills
+        run: python3 scripts/validate_toolkit.py skills
+      - name: Validate plugin and project boundary
+        run: python3 scripts/validate_toolkit.py boundary
+      - name: Validate doctor fixtures
+        run: python3 scripts/validate_toolkit.py fixtures
+      - name: Confirm validation is read-only
+        run: git diff --exit-code

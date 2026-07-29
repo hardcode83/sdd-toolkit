@@ -32,6 +32,12 @@ flowchart LR
 
 ## ¿Qué vive dónde? — arquitectura de capas
 
+| Capa | Qué contiene | Quién la escribe | Cómo cambia | Distribución / copia | ¿Depende del stack? |
+|---|---|---|---|---|---|
+| Plugin | skills/, agents/, templates/, references/, scripts/, hooks/, tests internos y CI | Mantenedores de este repositorio | Commit, revisión y actualización del plugin | Se instala por usuario; /sdd:init solo lee y copia los templates elegidos, nunca tests/ ni .github/workflows/ | No: su implementación puede usar Python, pero no define el stack del producto |
+| Proyecto | sdd/project.md, steering/, specs/, changes/, archive/, roadmap.md, CLAUDE.md, .mcp.json, configuración y agentes del proyecto | /sdd:init, las fases SDD y el equipo | Cambios versionados en el repositorio consumidor | Viaja con el producto; los templates se materializan aquí y después son propiedad del proyecto | Sí: el proyecto declara su lenguaje, framework y comandos reales |
+| Máquina | Snapshots, cachés, binarios, logs y estado local no versionado | Runtime e instaladores | Se crea y rota localmente | No se distribuye ni se copia al proyecto | Solo por disponibilidad local, nunca como fuente de verdad |
+
 Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define *cómo* trabaja el flujo → plugin; si define *qué* es tu proyecto y bajo qué reglas → proyecto; si es efímero → máquina.**
 
 ```
@@ -75,6 +81,32 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
 
 **La frontera interesante son los templates y el steering**: el plugin pone la *forma* (esqueleto + frontmatter + reglas de carga en `references/steering.md`), el proyecto pone el *contenido* (tus reglas concretas). El init copia una vez y rellena; los updates del plugin **jamás tocan lo copiado** — por eso endurecer una regla de seguridad es editar un markdown de tu repo, y cambiar cómo se revisa es editar el plugin. Y el mismo patrón explica el panel: los agentes (plugin) no llevan reglas propias — verifican las tuyas (proyecto).
+
+## Neutralidad tecnológica
+
+El toolkit funciona con cualquier stack. Python aparece en algunos scripts,
+tests y workflows de este repositorio porque es una implementación interna
+pequeña y sin dependencias del plugin; no es un requisito del proyecto
+consumidor. Los tests en tests/ validan sdd-toolkit, no son specs del producto,
+no se instalan y no se copian mediante /sdd:init.
+
+El proyecto consumidor declara sus decisiones en sdd/project.md y
+sdd/steering/: lenguaje, framework, arquitectura, build, lint, typecheck,
+tests, cobertura y CI. /sdd:init descubre comandos existentes en manifests,
+Makefiles, justfiles y workflows, verifica que existan y los registra; si no
+puede identificar el stack, deja la configuración pendiente y pregunta. Nunca
+inventa python, pytest, unittest, npm, go ni otro comando universal.
+
+Ejemplos de configuración válida —solo ejemplos, no defaults—:
+
+    Python:       test = pytest; lint = ruff check .
+    TypeScript:   test = npm test; build = npm run build
+    Go:           test = go test ./...; build = go build ./...
+
+La workflow .github/workflows/validate-toolkit.yml y la suite Python son CI
+interna de este repositorio. No se distribuyen como workflow obligatorio, no se
+copian al proyecto y no sustituyen la CI ni las specs del producto.
+No se copian al proyecto los tests internos ni la configuración Python.
 
 ## Instalación
 
@@ -320,6 +352,63 @@ Esta estructura mantiene separadas detección, presentación y política de sali
 una futura reparación, si se diseña, deberá seguir siendo una operación explícita
 y distinta del diagnóstico.
 
+## Validación para mantenedores
+
+La suite de este repositorio especifica y valida el comportamiento del toolkit:
+los textos explican la intención, pero tests y fixtures fijan el comportamiento
+que un cambio del plugin no puede alterar accidentalmente. No es una
+especificación ni una plantilla de tests para los proyectos consumidores. Todo
+PR del toolkit ejecuta la misma validación, sin dependencias Python externas ni
+llamadas reales a GitHub:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v
+python3 scripts/validate_toolkit.py manifests
+python3 scripts/validate_toolkit.py skills
+python3 scripts/validate_toolkit.py boundary
+python3 scripts/validate_toolkit.py fixtures
+```
+
+El primer comando cubre doctor, lifecycle, contratos de auto/review/archive,
+compatibilidad e idempotencia. Los tres siguientes son gates independientes:
+parsean manifests y hooks, validan frontmatter y referencias locales de todas
+las skills, y ejecutan doctor dos veces sobre cada fixture comprobando exit
+code, diagnósticos ordenados, ausencia de escrituras y determinismo. `all`
+permite ejecutar juntos esos tres gates:
+
+```bash
+python3 scripts/validate_toolkit.py all
+```
+
+### Añadir o cambiar cobertura
+
+- **Test nuevo:** añádelo cuando la regla pueda expresarse sobre un repositorio
+  temporal o una API determinista. Prueba el comportamiento observable y el
+  estado persistido, no detalles internos ni frases incidentales del prompt.
+- **Fixture nuevo:** úsalo cuando doctor necesite una topología de Markdown o
+  directorios que no existe todavía. Debe ser el árbol mínimo que produzca el
+  diagnóstico y registrarse en `tests/fixture_expectations.json`; los fixtures
+  sin expectativa —y las expectativas sin fixture— fallan.
+- **Modificar un fixture:** hazlo solo si la semántica de ese mismo escenario
+  cambia. Si se añade una contradicción independiente, crea otro fixture para
+  que un fallo conserve una causa clara.
+- **Nueva regla de doctor:** asigna un código estable, implementa el check
+  read-only, añade el fixture mínimo y su expectativa de severidad/exit code, y
+  documenta el código en la tabla anterior. Un warning no puede convertirse en
+  error sin que el contrato lo muestre explícitamente.
+- **Nueva skill o referencia:** su directorio, frontmatter y rutas
+  `${CLAUDE_PLUGIN_ROOT}` quedan cubiertos automáticamente. Si introduce una
+  obligación entre fases, añade además un test de contrato en
+  `tests/test_lifecycle_contract.py`.
+
+La filosofía es mantener pocos escenarios ortogonales: reutilizar helpers para
+preparar estados, reservar fixtures para estructuras que doctor debe recorrer y
+mockear únicamente el límite inevitable de `gh pr view`. No se ejecutan agentes
+ni evals con LLM; auto y review se verifican mediante sus contratos documentales
+y los helpers deterministas que persisten su estado. Las reglas sobre cómo
+validar un producto concreto pertenecen a su sdd/steering/testing.md, no a
+esta suite.
+
 ## Modelos y agentes por fase
 
 Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
@@ -444,7 +533,9 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · sdd_lifecycle.py · usage-* · rtk-rewrite.sh
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-*
+tests/              # especificación ejecutable + fixtures mínimos de doctor
+.github/workflows/  # misma validación en cada PR y push a main
 docs/guide.md       # guía de uso narrativa
 ```
 

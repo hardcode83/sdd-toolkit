@@ -68,7 +68,7 @@ Claude Code.
 | `tasks` | Verified | Resumed from persisted proposal/design files and covered all requirement IDs. |
 | `history` | Verified | Read an archived change and current spec, cited the record, and reported current validity without writes. |
 | `init` core scaffold | Partially supported | Created `sdd/project.md`, `sdd/README.md`, specs/archive directories, and selected steering docs. Planning ingestion, re-init/merge, baselines, and extras remain unverified. |
-| `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven `unittest` tests, and checked tasks only after verification. The Claude review panel was deliberately skipped. |
+| `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven internal adapter tests (Python `unittest` in the toolkit checkout), and checked tasks only after verification. The Claude review panel was deliberately skipped. This does not prescribe a test runner to consumer projects. |
 | `archive` merge-gated path | Unverified | The former pre-merge basic path is obsolete. Shared skills now require `STATE.md` plus objective `gh` merge evidence before specs, roadmap, and archive writes. |
 | `review`, `auto`, `diagram` | Unverified | Outside this experiment. |
 | Claude reviewer panel | Unsupported | Claude agent types and project `.claude/agents/` reviewers were not adapted. |

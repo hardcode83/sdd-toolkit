@@ -39,6 +39,11 @@ El init lee el plan y te propone un **triaje** (confirmas antes de que escriba n
 
 Importante: el init **no** convierte el plan en proposals. Los proposals se escriben uno a uno, cuando les llega el turno — así el proposal de la feature 5 se escribe contra las specs reales de las features 1-4, no contra lo que el plan imaginaba.
 
+El init analiza y registra los comandos reales del proyecto, pero no instala los
+tests del repositorio sdd-toolkit ni su workflow de CI. El proyecto mantiene sus
+propios criterios de validación en project.md y steering/testing.md, cualquiera
+que sea su lenguaje o framework.
+
 **2. Primer change:**
 
 ```

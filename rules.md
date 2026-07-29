@@ -53,3 +53,8 @@
    associated Pull Request MERGED) or `ancestor` (git proves the reviewed
    commit is contained in the base branch — for workflows without PRs). Both
    are facts; neither is ever a claim.
+9. **Project validation is project-owned**: build, test, lint, typecheck and CI
+   commands come from the consumer project's `sdd/project.md`,
+   `sdd/steering/` or existing configuration. Never infer them from the
+   toolkit's implementation language, and never copy the toolkit's internal
+   tests or CI into a consumer repository.

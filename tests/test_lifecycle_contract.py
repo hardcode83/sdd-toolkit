@@ -17,6 +17,8 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("record-pr <feature>", auto)
         self.assertNotIn("**archive** — follow the archive skill", auto)
         self.assertIn("Do not call `/sdd:archive`", auto)
+        self.assertIn("Re-running is", auto)
+        self.assertIn("No remote or no `gh` → leave `READY_FOR_PR`", auto)
 
     def test_archive_checks_merge_before_specs(self) -> None:
         archive = self.read_skill("archive")
@@ -37,6 +39,19 @@ class LifecycleSkillContractTests(unittest.TestCase):
         new = self.read_skill("new")
         self.assertIn("start <feature>", new)
         self.assertIn("state: ACTIVE", new)
+
+    def test_status_exposes_every_non_archived_state(self) -> None:
+        status = self.read_skill("status")
+        for state in (
+            "ACTIVE",
+            "LOCAL_VERIFIED",
+            "READY_FOR_PR",
+            "PR_OPEN",
+            "MERGED",
+            "CANCELLED",
+        ):
+            self.assertIn(state, status)
+        self.assertIn("BLOCKED.md", status)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@
 
 ## N. Verification
 
+<!-- Use the commands recorded in the consumer project's project.md; this
+     template does not prescribe a language, framework, or test runner. -->
 - [ ] N.1 Full test suite passes: `<exact command from project.md>`
 - [ ] N.2 Lint/typecheck passes: `<exact command>`
 - [ ] N.3 Manual check of the end-to-end flow: <how>
