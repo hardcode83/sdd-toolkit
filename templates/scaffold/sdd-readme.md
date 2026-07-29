@@ -19,4 +19,4 @@ Convenciones para humanos y agentes:
 - `roadmap.md` — (opcional) backlog ordenado de futuros changes, una línea por feature. `/sdd:new` coge la siguiente entrada y la convierte en proposal just-in-time. Editable a mano.
 - `metrics.md` — (opcional) resumen de tokens/coste por feature archivada.
 
-Flujo: `/sdd:new` → `/sdd:design` (opcional si trivial) → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`, con `/sdd:status` y `/sdd:review` como apoyo. Cada fase requiere aprobación humana antes de la siguiente.
+Flujo: `/sdd:new` → `/sdd:design` (opcional si trivial) → `/sdd:tasks` → `/sdd:run` → `/sdd:archive`, con `/sdd:status`, `/sdd:doctor` y `/sdd:review` como apoyo. `doctor` valida el estado de forma determinista y read-only. Cada fase requiere aprobación humana antes de la siguiente.

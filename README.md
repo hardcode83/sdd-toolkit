@@ -93,12 +93,88 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:run [feature] [scope]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. Scope opcional: `next [N]`, una sección (`2`), una tarea (`2.3`), `solo` (sin panel), `tournament <tarea>`. | sonnet |
 | `/sdd:archive [feature]` | Fusiona en las specs vivas (spec on first touch), consolida métricas y archiva. | haiku |
 | `/sdd:status [feature] [filtro]` | Sin argumento: changes activos + roadmap como to-do list. Con feature: vista quirúrgica de su `tasks.md` — todo, o filtrado por sección (`4`), tarea (`2.3`), `pending`/`done`, o `R5`. | haiku |
+| `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida implementación vs proposal. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo: ejecuta las próximas N entradas del roadmap de punta a punta, una rama+PR por feature, cola BLOCKED para lo que necesite decisión humana. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
 Cada fase termina **esperando aprobación** — nunca encadena a la siguiente sola (excepto `/sdd:auto`, que sustituye los gates por sus equivalentes automáticos).
+
+## Diagnóstico de coherencia (`/sdd:doctor`)
+
+El estado SDD está repartido entre Markdown y directorios que evolucionan en fases
+distintas. Una interrupción, un archive manual o un merge pueden dejar el roadmap,
+los changes, las tareas y las specs contando historias diferentes sin que ninguna
+fase lo advierta. `/sdd:doctor` ofrece una comprobación única, determinista y
+repetible para detectar esa deriva antes de continuar el lifecycle o revisar un PR.
+Así evita trabajar sobre punteros obsoletos, perder trazabilidad R#→tarea y dar por
+cerrado trabajo que todavía conserva deuda o bloqueos.
+
+Es deliberadamente **read-only**: observa el Markdown que ya es fuente de verdad,
+emite diagnósticos y no reescribe nada. Esta primera versión no incluye `--fix`
+porque reparar exige decisiones de producto o de historial que no son mecánicas
+(por ejemplo, completar una tarea, aceptar deuda o escoger qué copia de un change
+es válida). Separar detección de reparación mantiene el comando seguro, auditable
+e idempotente. El alcance inicial se limita a invariantes locales, objetivas y
+comprobables sin introducir una base de datos, una máquina de estados ni un nuevo
+formato de persistencia.
+
+Ejecuta el comando desde la raíz de un proyecto inicializado:
+
+```bash
+/sdd:doctor
+```
+
+La skill delega la comprobación en un script sin dependencias externas. Para
+desarrollo o diagnóstico directo del plugin:
+
+```bash
+python3 /ruta/al/plugin/scripts/sdd-doctor.py --root /ruta/al/proyecto
+```
+
+Cada mensaje tiene el formato
+`SEVERITY SDD### archivo[:línea] — explicación Suggested action: ...`.
+Los códigos son estables y permiten identificar la regla sin depender del texto:
+
+| Código | Severidad | Invariante |
+|---|---|---|
+| `SDD000` | error | El proyecto debe contener un directorio `sdd/`. |
+| `SDD001` | error | Un change archivado no puede seguir pendiente en el roadmap. |
+| `SDD002` | error | Un puntero explícito del roadmap debe resolver a un change existente. |
+| `SDD003` | error | Todo change activo debe contener el `proposal.md` obligatorio. |
+| `SDD004` | error | Toda referencia R# de una tarea debe existir en el proposal. |
+| `SDD005` | error | Todo requisito R# debe estar asociado al menos a una tarea. |
+| `SDD006` | warning | Un archive contiene tareas sin completar. |
+| `SDD007` | warning | Un archive conserva un `BLOCKED.md` no vacío. |
+| `SDD008` | warning | Una referencia local explícita apunta a una ruta inexistente. |
+| `SDD009` | error | Un mismo change aparece simultáneamente activo y archivado. |
+
+Los **errores** representan contradicciones estructurales que impiden confiar en
+el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
+señalan deuda o referencias que requieren revisión humana, pero pueden ser
+intencionales y por sí solos mantienen exit code `0`. Sin errores, el exit code
+siempre es `0`; la salida se ordena de forma estable para que dos ejecuciones sobre
+el mismo árbol produzcan el mismo resultado.
+
+### Añadir una regla
+
+El validador está organizado como funciones de comprobación independientes en
+`scripts/sdd-doctor.py`. Para extenderlo:
+
+1. Asigna el siguiente código `SDD###` sin reutilizar ni cambiar el significado de
+   códigos publicados.
+2. Implementa una función read-only que reciba paths/estado ya descubierto y
+   devuelva objetos `Diagnostic`; regístrala en `diagnose()`.
+3. Clasifica como error solo una contradicción inequívoca. Usa warning si el estado
+   puede representar una excepción deliberada o si la detección es heurística.
+4. Añade un fixture mínimo y verifica código, severidad, ubicación, exit code y
+   ausencia de modificaciones.
+5. Documenta el nuevo código en esta tabla.
+
+Esta estructura mantiene separadas detección, presentación y política de salida;
+una futura reparación, si se diseña, deberá seguir siendo una operación explícita
+y distinta del diagnóstico.
 
 ## Modelos y agentes por fase
 
@@ -114,6 +190,7 @@ Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
 | `review` | sonnet | el mismo panel, a escala feature |
 | `archive` | haiku | — |
 | `status` / `history` | haiku | — (solo lectura) |
+| `doctor` | — | — (script determinista, solo lectura) |
 | `auto` | sonnet (orquestador) | todos los anteriores según la fase que esté ejecutando |
 
 Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
@@ -218,12 +295,12 @@ Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepci�
 ```
 .claude-plugin/{plugin,marketplace}.json
 rules.md            # reglas compartidas que toda fase lee primero
-skills/<fase>/      # init·new·design·tasks·run·archive·status·review·auto·history·diagram
+skills/<fase>/      # init·new·design·tasks·run·archive·status·doctor·review·auto·history·diagram
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # usage-{mark,phase,sink} · rtk-rewrite.sh
+scripts/            # sdd-doctor.py · usage-{mark,phase,sink} · rtk-rewrite.sh
 docs/guide.md       # guía de uso narrativa
 ```
 
