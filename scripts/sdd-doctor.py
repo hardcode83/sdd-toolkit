@@ -23,6 +23,9 @@ INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 ARCHIVE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
 URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 LINE_SUFFIX_RE = re.compile(r":\d+(?::\d+)?$")
+# Absolute paths worth checking: local checkouts. System paths (/var, /etc, /opt)
+# usually describe a remote host or runtime, not a file this repository owns.
+ABSOLUTE_REFERENCE_PREFIXES = ("/Users/", "/home/", "/private/")
 
 
 @dataclass(frozen=True)
@@ -292,7 +295,7 @@ def clean_reference(raw: str) -> str | None:
     ):
         return None
     if candidate.startswith("/") and not candidate.startswith(
-        ("/Users/", "/home/", "/private/", "/var/")
+        ABSOLUTE_REFERENCE_PREFIXES
     ):
         return None
     return candidate
@@ -307,19 +310,22 @@ def resolve_reference(candidate: str, source: Path, root: Path, markdown: bool) 
     return root / path
 
 
+def is_archived_document(source: Path, root: Path) -> bool:
+    """Archived changes are frozen history, so their references are frozen too."""
+    return relative(source, root).startswith("sdd/changes/archive/")
+
+
 def should_scan_inline(source: Path, root: Path) -> bool:
     relative_source = relative(source, root)
-    return (
-        relative_source == "sdd/project.md"
-        or relative_source.startswith("sdd/specs/")
-        or relative_source.startswith("sdd/changes/archive/")
+    return relative_source == "sdd/project.md" or relative_source.startswith(
+        "sdd/specs/"
     )
 
 
 def is_explicit_inline_path(candidate: str, root: Path) -> bool:
     if candidate.startswith("sdd/"):
         return True
-    if candidate.startswith(("/Users/", "/home/", "/private/", "/var/")):
+    if candidate.startswith(ABSOLUTE_REFERENCE_PREFIXES):
         return True
     first_component = candidate.removeprefix("./").split("/", 1)[0]
     return "/" in candidate and (root / first_component).exists()
@@ -330,6 +336,11 @@ def reference_checks(root: Path, sdd: Path) -> list[Diagnostic]:
     seen: set[tuple[str, int, str]] = set()
     for source in sorted(sdd.rglob("*.md")):
         if source == sdd / "roadmap.md":
+            continue
+        if is_archived_document(source, root):
+            # An archived change is history and must not be rewritten, so a
+            # reference that rotted after archiving has no available fix: the
+            # suggested action would contradict the lifecycle rules.
             continue
         for line_number, line in enumerate(read_lines(source), start=1):
             if re.search(r"no existe|se crear[áa]|will be created", line, re.IGNORECASE):
