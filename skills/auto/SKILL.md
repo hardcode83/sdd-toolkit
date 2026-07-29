@@ -81,11 +81,13 @@ Take the next unchecked, un-started roadmap entry. Then:
    This re-queries `gh`, validates repository/base/head/implementation SHA,
    records `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is
    idempotent. No remote or no `gh` → leave `READY_FOR_PR` and report the
-   exact manual PR action; never fabricate a URL.
+   exact manual action (open the PR, or merge into the base branch yourself);
+   never fabricate a URL. Such a change is archived later through ancestry
+   evidence once its commit is in the base.
 9. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
    check off the roadmap, consolidate archive metrics, or move the change.
-   Those final effects are permitted only after GitHub reports the associated
-   PR as `MERGED`.
+   Those final effects are permitted only once the merge is objectively proven
+   — a `MERGED` PR, or the reviewed commit contained in the base branch.
 10. `git checkout BASE` and continue with the next entry.
 
 ## Resuming a mid-flight feature
