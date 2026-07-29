@@ -502,7 +502,13 @@ def lifecycle_checks(
             or (
                 state == "MERGED"
                 and (
-                    data.get("pr_state") != "MERGED"
+                    # Merge is proven either by a MERGED PR or by git ancestry
+                    # (merge_evidence: ancestor), which has no PR fields at all.
+                    (
+                        data.get("pr_state") != "MERGED"
+                        if data.get("merge_evidence") != "ancestor"
+                        else bool(data.get("pr_url") or data.get("pr_state"))
+                    )
                     or not SHA_RE.match(data.get("merge_sha", ""))
                 )
             )

@@ -365,6 +365,51 @@ class LifecycleTests(unittest.TestCase):
             len(list((self.root / "sdd/changes/archive").iterdir())),
         )
 
+    def implement_beyond_base(self) -> None:
+        """Leave `main` behind the reviewed commit, as an unmerged branch does."""
+        self.git("branch", "main")
+        (self.change / "notes.md").write_text("implementation\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "implementation")
+        self.implementation_sha = self.git("rev-parse", "HEAD").stdout.strip()
+        self.ready()
+
+    def test_unmerged_work_without_pr_cannot_be_archived(self) -> None:
+        self.implement_beyond_base()
+        with self.assertRaises(LifecycleError) as error:
+            require_merge(self.root, FEATURE)
+        self.assertIn("is not contained in", str(error.exception))
+        self.assertEqual("READY_FOR_PR", read_state(self.change)["state"])
+
+    def test_base_ancestry_proves_merge_without_a_pull_request(self) -> None:
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        data, evidence, changed = require_merge(self.root, FEATURE)
+        self.assertTrue(changed)
+        self.assertEqual("MERGED", data["state"])
+        self.assertEqual("ancestor", data["merge_evidence"])
+        self.assertEqual("ancestor", evidence["evidence"])
+        self.assertEqual("", data["pr_url"])
+        self.assertEqual("", data["pr_state"])
+        self.assertRegex(data["merge_sha"], r"^[0-9a-f]{40}$")
+
+    def test_repository_without_remote_completes_the_lifecycle(self) -> None:
+        self.git("remote", "remove", "origin")
+        self.implement_beyond_base()
+        self.assertEqual("", read_state(self.change)["repository"])
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        message = finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 29)
+        )
+        self.assertIn("2026-07-29-example", message)
+        archived = self.root / "sdd/changes/archive/2026-07-29-example"
+        self.assertEqual("ARCHIVED", read_state(archived)["state"])
+        self.assertIn(
+            "- [x] example", (self.root / "sdd/roadmap.md").read_text(encoding="utf-8")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

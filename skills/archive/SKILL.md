@@ -20,12 +20,23 @@ Write spec updates in the same language as the existing specs (or the user's lan
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . verify-merge <feature>
    ```
 
-   The helper requires all tasks checked, no active `BLOCKED.md`, local review
-   approved, complete PR metadata, matching GitHub repository/base/head and
-   reviewed implementation SHA, plus GitHub state `MERGED`, `mergedAt`, and
-   merge commit SHA from `gh pr view`. STOP on every failure and return its
-   actionable message verbatim. An open PR, closed-unmerged PR, unverifiable
-   PR, mismatched branch/commit, incomplete task, or blocker has no override.
+   The helper requires all tasks checked, no active `BLOCKED.md`, and local
+   review approved. It then proves the merge through one of two objective
+   paths, picked from the recorded state — never from anyone's claim:
+
+   - **PR evidence** (`merge_evidence: pr`), when a PR is recorded: complete PR
+     metadata, matching GitHub repository/base/head and reviewed implementation
+     SHA, plus GitHub state `MERGED`, `mergedAt`, and merge commit SHA from
+     `gh pr view`.
+   - **Ancestry evidence** (`merge_evidence: ancestor`), when there is no PR:
+     git proves the reviewed `implementation_sha` is contained in the base
+     branch (`origin/<base>` when published, otherwise the local base). This is
+     what lets workflows without GitHub PRs — no remote, trunk-based, GitLab,
+     manual merges — close the loop instead of stalling at `READY_FOR_PR`.
+
+   STOP on every failure and return its actionable message verbatim. An open PR,
+   closed-unmerged PR, unverifiable PR, mismatched branch/commit, work missing
+   from the base branch, incomplete task, or blocker has no override.
    A legacy active change without `STATE.md` must be reviewed and associated
    with its real PR; never invent evidence. Historical archives are untouched.
 2. **Start archive accounting.** Mark the phase for usage attribution:

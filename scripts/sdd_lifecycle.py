@@ -34,8 +34,14 @@ STATE_FIELDS = (
     "pr_number",
     "pr_url",
     "pr_state",
+    "merge_evidence",
     "merge_sha",
 )
+# How a merge was proven. Both are objective facts, never agent narrative:
+#   pr       — GitHub reports the associated Pull Request as MERGED.
+#   ancestor — git proves the reviewed implementation SHA is contained in the
+#              base branch (trunk-based, local merges, non-GitHub remotes).
+MERGE_EVIDENCE_KINDS = {"pr", "ancestor"}
 PR_FIELDS = (
     "repository",
     "base_branch",
@@ -184,6 +190,73 @@ def run_command(
     return result
 
 
+def try_command(
+    args: list[str], root: Path, runner: Runner = subprocess.run
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a command, returning None instead of raising when it fails."""
+    try:
+        result = runner(args, cwd=root, check=False, capture_output=True, text=True)
+    except OSError:
+        return None
+    return None if result.returncode else result
+
+
+def resolve_base_ref(root: Path, base_branch: str, runner: Runner) -> str:
+    """Prefer the published base branch: shared history is the real evidence."""
+    for candidate in (f"origin/{base_branch}", base_branch):
+        if try_command(
+            ["git", "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+            root,
+            runner,
+        ):
+            return candidate
+    raise LifecycleError(
+        f"Base branch '{base_branch}' does not exist locally or on origin. "
+        "Fetch it or record the correct base with /sdd:review."
+    )
+
+
+def verify_ancestor_merge(
+    root: Path, state: dict[str, str], runner: Runner = subprocess.run
+) -> tuple[str, str]:
+    """Prove the reviewed implementation is contained in the base branch.
+
+    Returns (base_ref, base_sha). Raises when the SHA is not an ancestor: that
+    means the work is not merged, whatever anyone claims.
+    """
+    for field in ("base_branch", "head_branch", "implementation_sha"):
+        if not state.get(field):
+            raise LifecycleError(
+                f"Incomplete local evidence in STATE.md: missing {field}. "
+                "Run /sdd:review to record it."
+            )
+    implementation_sha = state["implementation_sha"]
+    if not SHA_RE.match(implementation_sha):
+        raise LifecycleError("Recorded implementation_sha is not a valid Git SHA.")
+    if not try_command(
+        ["git", "cat-file", "-e", f"{implementation_sha}^{{commit}}"], root, runner
+    ):
+        raise LifecycleError(
+            f"Reviewed commit {implementation_sha[:12]} is unknown to this repository. "
+            "Fetch the branch that contains it and retry."
+        )
+    base_ref = resolve_base_ref(root, state["base_branch"], runner)
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", implementation_sha, base_ref],
+        root,
+        runner,
+    ):
+        raise LifecycleError(
+            f"Reviewed commit {implementation_sha[:12]} is not contained in "
+            f"'{base_ref}'. Merge the change into its base branch (or open and "
+            "record a PR), then rerun /sdd:archive."
+        )
+    base_sha = run_command(
+        ["git", "rev-parse", f"{base_ref}^{{commit}}"], root, runner
+    ).stdout.strip()
+    return base_ref, base_sha
+
+
 def normalize_repository(remote: str) -> str:
     value = remote.strip().removesuffix(".git").rstrip("/")
     if value.startswith("git@github.com:"):
@@ -205,9 +278,14 @@ def git_context(root: Path, base_branch: str, runner: Runner = subprocess.run) -
     implementation_sha = run_command(
         ["git", "rev-parse", "HEAD"], root, runner
     ).stdout.strip()
-    repository = normalize_repository(
-        run_command(["git", "remote", "get-url", "origin"], root, runner).stdout
-    )
+    # A GitHub remote is what makes PR evidence possible, but its absence is a
+    # legitimate workflow (no remote, trunk-based, GitLab...), not an error:
+    # those changes prove their merge through git ancestry instead.
+    remote = try_command(["git", "remote", "get-url", "origin"], root, runner)
+    try:
+        repository = normalize_repository(remote.stdout) if remote else ""
+    except LifecycleError:
+        repository = ""
     if not base_branch.strip():
         raise LifecycleError("The target base branch must be explicit.")
     return {
@@ -393,6 +471,7 @@ def record_pr(
             raise LifecycleError("Merged PR has incomplete merge evidence.")
         prospective["state"] = "MERGED"
         prospective["pr_state"] = "MERGED"
+        prospective["merge_evidence"] = "pr"
         prospective["merge_sha"] = merge_sha
     elif github_state == "OPEN":
         prospective["state"] = "PR_OPEN"
@@ -421,6 +500,27 @@ def require_merge(
         )
     if data.get("local_review") != "APPROVED":
         raise LifecycleError("Local review is not approved in STATE.md.")
+
+    # Two evidence paths, both objective. A recorded PR is the authority when it
+    # exists; otherwise git ancestry proves the merge, so workflows without
+    # GitHub PRs (no remote, trunk-based, GitLab, local merges) can still close
+    # the loop instead of being stuck at READY_FOR_PR forever.
+    # PR_OPEN asserts a Pull Request exists, so it is always judged on PR
+    # evidence — missing metadata there is an error, not a fallback.
+    use_ancestor = (
+        not data.get("pr_url")
+        and data.get("state") in {"READY_FOR_PR", "MERGED"}
+        and data.get("merge_evidence", "") in {"", "ancestor"}
+    )
+    if use_ancestor:
+        base_ref, base_sha = verify_ancestor_merge(root, data, runner)
+        data["state"] = "MERGED"
+        data["pr_state"] = ""
+        data["merge_evidence"] = "ancestor"
+        data["merge_sha"] = base_sha
+        changed = write_state(change, data) if write else False
+        return data, {"evidence": "ancestor", "base_ref": base_ref}, changed
+
     if data.get("state") not in {"PR_OPEN", "MERGED"}:
         raise LifecycleError(
             f"Change must be PR_OPEN or MERGED before archive; found '{data.get('state')}'."
@@ -450,6 +550,7 @@ def require_merge(
         )
     data["state"] = "MERGED"
     data["pr_state"] = "MERGED"
+    data["merge_evidence"] = "pr"
     data["merge_sha"] = merge_sha
     changed = write_state(change, data) if write else False
     return data, payload, changed
