@@ -52,6 +52,13 @@ class DoctorFixtureTests(unittest.TestCase):
         self.assertEqual("sdd doctor: 0 error(s), 0 warning(s)\n", first.stdout)
         self.assertEqual(first.stdout, second.stdout)
 
+    def test_valid_lifecycle_managed_repository(self) -> None:
+        first = self.run_doctor("lifecycle-valid")
+        second = self.run_doctor("lifecycle-valid")
+        self.assertEqual(0, first.returncode, first.stdout)
+        self.assertEqual("sdd doctor: 0 error(s), 0 warning(s)\n", first.stdout)
+        self.assertEqual(first.stdout, second.stdout)
+
     def test_roadmap_desynchronized(self) -> None:
         output = self.assert_diagnostic(
             "roadmap-missing-change", 1, "SDD002", "ERROR"
@@ -105,6 +112,24 @@ class DoctorFixtureTests(unittest.TestCase):
             "duplicate-change", 1, "SDD009", "ERROR"
         )
         self.assertIn("exists as both active and archived", output)
+
+    def test_managed_archive_without_merge_evidence(self) -> None:
+        output = self.assert_diagnostic(
+            "archive-missing-merge", 1, "SDD010", "ERROR"
+        )
+        self.assertIn("lacks complete merge evidence", output)
+
+    def test_ready_for_pr_cannot_live_in_archive(self) -> None:
+        output = self.assert_diagnostic(
+            "ready-in-archive", 1, "SDD011", "ERROR"
+        )
+        self.assertIn("READY_FOR_PR change is already located in archive", output)
+
+    def test_incompatible_lifecycle_fields(self) -> None:
+        result = self.run_doctor("lifecycle-invalid")
+        self.assertEqual(1, result.returncode, result.stdout)
+        for code in ("SDD012", "SDD013", "SDD014", "SDD015"):
+            self.assertIn(f"ERROR {code} ", result.stdout)
 
 
 if __name__ == "__main__":

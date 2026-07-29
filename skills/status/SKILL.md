@@ -13,13 +13,17 @@ Report the state of the SDD workflow. Read-only — change nothing. Arguments: n
 ## Overview (no arguments) — Steps
 
 1. List non-archived directories in `sdd/changes/`. For each, determine:
+   - **Lifecycle**: read `STATE.md` when present and show `ACTIVE`,
+     `LOCAL_VERIFIED`, `READY_FOR_PR`, `PR_OPEN`, `MERGED`, or `CANCELLED`.
+     No `STATE.md` means a legacy active change; derive only its document
+     phase and never infer PR/merge state.
    - **Phase**: which of `proposal.md` / `design.md` / `tasks.md` exist.
    - **Progress**: if `tasks.md` exists, count `- [x]` vs `- [ ]` (e.g. `grep -c '^\s*- \[x\]'`).
    - **Pending queue**: if `BLOCKED.md` exists, this change has unresolved entries — show these FIRST, each with its type (`decision`: needs the user / `deferred`: resumable — show its resume command) and one-line reason. This is the user's inbox: decisions to make and deferred work to pick up.
 2. **In progress by others** (only if the repo has a git remote): `git ls-remote --heads origin "sdd/*"` — list remote SDD branches that don't correspond to a local active change, as "en curso por otros" (branch name; add author/date via `git log -1` on the fetched ref if cheap). This completes the picture: claims live as remote branches before they're merged.
 3. Count capability specs in `sdd/specs/` and recent entries in `sdd/changes/archive/`.
-4. If `sdd/roadmap.md` exists, render it as a to-do view preserving order — one line per entry with its state: `✔` done (checked off), `▶` in progress (annotated with `→ changes/<feature>/` and not yet archived, or claimed by a remote `sdd/*` branch), `·` pending. Keep each line to the feature name + a few words; mark which pending entry is next.
-5. Present a compact table: change · phase · tasks done/total · suggested next command (`/sdd:design`, `/sdd:tasks`, `/sdd:run`, or `/sdd:archive`). Below it, the roadmap to-do view with a progress count (e.g. `2/13`).
+4. If `sdd/roadmap.md` exists, render it as a to-do view preserving order — one line per entry with its state: `✔` done only when archived, `PR` remote review (`PR_OPEN`), `✓` ready (`READY_FOR_PR`), `▶` in progress, `⛔` blocked, `·` pending. A checked roadmap entry whose change is still active is inconsistent, not done.
+5. Present a compact table: change · lifecycle · document phase · tasks done/total · PR · suggested next action. Use `/sdd:design`, `/sdd:tasks`, or `/sdd:run` for active work; open/record a PR for `READY_FOR_PR`; wait for merge then `/sdd:archive` for `PR_OPEN`; `/sdd:archive` for `MERGED`. Never suggest archive merely because all local tasks are checked.
 
 If `sdd/` doesn't exist, say so and point to `/sdd:init`. If there are no active changes, say so and point to `/sdd:new` (suggesting the next roadmap entry if there is one).
 
