@@ -45,7 +45,9 @@ Two modes, chosen by argument:
    ```
 
    Determine the target base from the current workflow/remote; if it is
-   ambiguous, ask rather than guessing. The resulting `STATE.md` has
+   ambiguous, ask rather than guessing — **except under `/sdd:auto`**, which
+   passes its recorded BASE explicitly and must never be interrupted with this
+   question. The resulting `STATE.md` has
    `state: READY_FOR_PR`, `local_review: APPROVED`, repository, branches, and
    the reviewed implementation SHA. This is not remote review, merge, spec
    fusion, roadmap completion, or archive.

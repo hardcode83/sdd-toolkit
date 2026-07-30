@@ -545,6 +545,70 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("", data["pr_state"])
         self.assertRegex(data["merge_sha"], r"^[0-9a-f]{40}$")
 
+    def test_squash_merge_proves_equivalence_without_a_pull_request(self) -> None:
+        """A squash rewrites the SHA; the change is merged all the same."""
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--squash", "sdd/example")
+        self.git("commit", "-m", "squashed implementation")
+        squash_sha = self.git("rev-parse", "HEAD").stdout.strip()
+        data, evidence, changed = require_merge(self.root, FEATURE)
+        self.assertTrue(changed)
+        self.assertEqual("MERGED", data["state"])
+        self.assertEqual("equivalent", data["merge_evidence"])
+        self.assertEqual("equivalent", evidence["evidence"])
+        self.assertEqual(squash_sha, data["merge_sha"])
+        self.assertEqual("", data["pr_url"])
+        self.assertEqual("", data["pr_state"])
+
+    def test_rebase_merge_proves_equivalence_commit_by_commit(self) -> None:
+        self.git("branch", "main")
+        for step in ("first", "second"):
+            (self.change / f"{step}.md").write_text(f"{step}\n", encoding="utf-8")
+            self.git("add", ".")
+            self.git("commit", "-m", step)
+        self.implementation_sha = self.git("rev-parse", "HEAD").stdout.strip()
+        self.ready()
+        # Base moves on, then takes the branch by rebase: every commit is copied
+        # under a new SHA, so ancestry can never hold.
+        self.git("checkout", "main")
+        (self.root / "unrelated.md").write_text("meanwhile\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "unrelated base work")
+        self.git("rebase", "main", "sdd/example")
+        self.git("checkout", "main")
+        self.git("merge", "--ff-only", "sdd/example")
+        data, evidence, _ = require_merge(self.root, FEATURE)
+        self.assertEqual("MERGED", data["state"])
+        self.assertEqual("equivalent", data["merge_evidence"])
+        self.assertEqual("equivalent", evidence["evidence"])
+        self.assertRegex(data["merge_sha"], r"^[0-9a-f]{40}$")
+
+    def test_unrelated_base_work_is_not_equivalence_evidence(self) -> None:
+        """Only the reviewed change counts — activity in the base is not a merge."""
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        (self.root / "unrelated.md").write_text("other work\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "unrelated base work")
+        with self.assertRaises(LifecycleError) as error:
+            require_merge(self.root, FEATURE)
+        self.assertIn("carries the same change", str(error.exception))
+        self.assertEqual("READY_FOR_PR", read_state(self.change)["state"])
+
+    def test_equivalence_evidence_archives_and_stays_idempotent(self) -> None:
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--squash", "sdd/example")
+        self.git("commit", "-m", "squashed implementation")
+        message = finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 30)
+        )
+        self.assertIn("2026-07-30-example", message)
+        archived = self.root / "sdd/changes/archive/2026-07-30-example"
+        self.assertEqual("ARCHIVED", read_state(archived)["state"])
+        self.assertEqual("equivalent", read_state(archived)["merge_evidence"])
+
     def test_repository_without_remote_completes_the_lifecycle(self) -> None:
         self.git("remote", "remove", "origin")
         self.implement_beyond_base()

@@ -36,6 +36,10 @@
     "exit_code": 0,
     "diagnostics": []
   },
+  "local-evidence-valid": {
+    "exit_code": 0,
+    "diagnostics": []
+  },
   "missing-local-reference": {
     "exit_code": 0,
     "diagnostics": ["WARNING SDD008"]

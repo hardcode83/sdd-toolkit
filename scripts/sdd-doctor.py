@@ -20,6 +20,11 @@ from sdd_lifecycle import (
 )
 
 
+# Merges proven by git itself, not by a Pull Request: these changes legitimately
+# carry no PR fields, so PR-shaped checks must not fire on them.
+LOCAL_MERGE_EVIDENCE = {"ancestor", "equivalent"}
+# What a local-evidence merge must record instead of PR metadata.
+LOCAL_EVIDENCE_FIELDS = ("base_branch", "head_branch", "implementation_sha")
 ROADMAP_ENTRY_RE = re.compile(r"^\s*-\s+\[([ xX])\]\s+(.+?)\s*$")
 CHANGE_POINTER_RE = re.compile(
     r"(?P<path>(?:sdd/)?changes/(?:archive/)?[A-Za-z0-9._-]+/?)"
@@ -475,7 +480,12 @@ def lifecycle_checks(
                 )
             )
 
-        requires_pr = state in {"PR_OPEN", "MERGED", "ARCHIVED"}
+        # PR_OPEN asserts a Pull Request exists, so it always needs PR metadata.
+        # MERGED/ARCHIVED may instead be proven by local git evidence.
+        requires_pr = state == "PR_OPEN" or (
+            state in {"MERGED", "ARCHIVED"}
+            and data.get("merge_evidence") not in LOCAL_MERGE_EVIDENCE
+        )
         missing = [field for field in PR_FIELDS if not data.get(field)]
         valid_url = bool(PR_URL_RE.match(data.get("pr_url", "")))
         valid_number = data.get("pr_number", "").isdigit()
@@ -491,13 +501,35 @@ def lifecycle_checks(
                     "Record the PR again from objective gh output.",
                 )
             )
+        elif state in {"MERGED", "ARCHIVED"} and data.get(
+            "merge_evidence"
+        ) in LOCAL_MERGE_EVIDENCE:
+            absent = [
+                field for field in LOCAL_EVIDENCE_FIELDS if not data.get(field)
+            ]
+            if absent:
+                diagnostics.append(
+                    Diagnostic(
+                        "SDD013",
+                        "ERROR",
+                        relative(state_file, root),
+                        metadata_line(change, "implementation_sha"),
+                        (
+                            "Local merge evidence is incomplete "
+                            f"(missing {', '.join(absent)})."
+                        ),
+                        "Re-verify the merge with /sdd:archive; never fill it in by hand.",
+                    )
+                )
 
         has_pr_evidence = any(
             data.get(field) for field in ("pr_url", "pr_number", "pr_state", "merge_sha")
         )
-        ready_identity_missing = (
-            state == "READY_FOR_PR"
-            and any(not data.get(field) for field in PR_FIELDS[:4])
+        # A GitHub repository is not required to be ready: repos with no remote,
+        # or a non-GitHub one, prove their merge through git instead. What must
+        # always be recorded is the branch identity and the reviewed commit.
+        ready_identity_missing = state == "READY_FOR_PR" and any(
+            not data.get(field) for field in LOCAL_EVIDENCE_FIELDS
         )
         incompatible = (
             data.get("schema") != "1"
@@ -513,12 +545,13 @@ def lifecycle_checks(
             or (
                 state == "MERGED"
                 and (
-                    # Merge is proven either by a MERGED PR or by git ancestry
-                    # (merge_evidence: ancestor), which has no PR fields at all.
+                    # Merge is proven either by a MERGED PR or by local git
+                    # evidence (merge_evidence: ancestor / equivalent), which
+                    # has no PR fields at all.
                     (
-                        data.get("pr_state") != "MERGED"
-                        if data.get("merge_evidence") != "ancestor"
-                        else bool(data.get("pr_url") or data.get("pr_state"))
+                        bool(data.get("pr_url") or data.get("pr_state"))
+                        if data.get("merge_evidence") in {"ancestor", "equivalent"}
+                        else data.get("pr_state") != "MERGED"
                     )
                     or not SHA_RE.match(data.get("merge_sha", ""))
                 )
@@ -591,12 +624,22 @@ def lifecycle_checks(
                 )
             )
         missing = [field for field in PR_FIELDS if not data.get(field)]
+        if data.get("merge_evidence") in LOCAL_MERGE_EVIDENCE:
+            # Archived through git evidence: the proof is the recorded base/head/
+            # implementation SHA plus the base commit that carried the change.
+            proven = all(data.get(field) for field in LOCAL_EVIDENCE_FIELDS) and not (
+                data.get("pr_url") or data.get("pr_state")
+            )
+        else:
+            proven = (
+                data.get("pr_state") == "MERGED"
+                and not missing
+                and bool(PR_URL_RE.match(data.get("pr_url", "")))
+            )
         complete_merge = (
             data.get("local_review") == "APPROVED"
-            and data.get("pr_state") == "MERGED"
             and bool(SHA_RE.match(data.get("merge_sha", "")))
-            and not missing
-            and bool(PR_URL_RE.match(data.get("pr_url", "")))
+            and proven
         )
         if state_file.is_file() and not complete_merge:
             diagnostics.append(

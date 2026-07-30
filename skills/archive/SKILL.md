@@ -21,7 +21,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    ```
 
    The helper requires all tasks checked, no active `BLOCKED.md`, and local
-   review approved. It then proves the merge through one of two objective
+   review approved. It then proves the merge through one of three objective
    paths, picked from the recorded state — never from anyone's claim:
 
    - **PR evidence** (`merge_evidence: pr`), when a PR is recorded: complete PR
@@ -30,9 +30,18 @@ Write spec updates in the same language as the existing specs (or the user's lan
      `gh pr view`.
    - **Ancestry evidence** (`merge_evidence: ancestor`), when there is no PR:
      git proves the reviewed `implementation_sha` is contained in the base
-     branch (`origin/<base>` when published, otherwise the local base). This is
-     what lets workflows without GitHub PRs — no remote, trunk-based, GitLab,
-     manual merges — close the loop instead of stalling at `READY_FOR_PR`.
+     branch (`origin/<base>` when published, otherwise the local base).
+   - **Equivalence evidence** (`merge_evidence: equivalent`), when there is no
+     PR and the merge rewrote history: git proves a base commit introduces the
+     same change as the reviewed one (patch identity, ignoring blob hashes and
+     line numbers, as `git patch-id` does), covering squash and rebase merges
+     where the reviewed SHA can never be an ancestor. `merge_sha` is that base
+     commit. Only the newest 200 base commits since the branch point are
+     scanned; a change merged further back must be archived through its PR.
+
+   The last two are what let workflows without GitHub PRs — no remote,
+   trunk-based, GitLab, manual or squashed merges — close the loop instead of
+   stalling at `READY_FOR_PR`.
 
    STOP on every failure and return its actionable message verbatim. An open PR,
    closed-unmerged PR, unverifiable PR, mismatched branch/commit, work missing

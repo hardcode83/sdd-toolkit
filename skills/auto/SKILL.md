@@ -40,9 +40,25 @@ substitutes:
 
 ## Per-feature pipeline
 
-Take the next unchecked, un-started roadmap entry. Then:
+Take the next unchecked, un-started roadmap entry — un-started means no
+`sdd/changes/<feature>/` at all (a change sitting at `READY_FOR_PR`, `PR_OPEN`
+or `MERGED` is started, and awaits merge/archive, not a fresh run). Then:
 
-1. **Branch + claim**: check `git ls-remote --heads origin "sdd/<feature>"` — if it exists, the feature is claimed by someone else: skip it (report in the final summary) and take the next entry. Otherwise `git checkout -b sdd/<feature>` from BASE and, if a remote exists, **push the branch immediately** — publishing the claim before doing any work, not after.
+1. **Branch + claim**: check `git ls-remote --heads origin "sdd/<feature>"`. If
+   the branch exists, establish **whose** it is before calling it a claim —
+   auto's own earlier runs leave branches behind, since a change stays open
+   until it merges:
+   - `sdd/changes/<feature>/` exists locally → this is **our own in-flight
+     change**, not someone else's claim. Resume it per "Resuming a mid-flight
+     feature", and report it by its lifecycle state (`ready for PR` /
+     `PR open` / `awaiting archive`) — never as `skipped`.
+   - no local change directory → the feature is genuinely claimed by someone
+     else: skip it (report it as claimed in the final summary) and take the
+     next entry.
+
+   No remote branch → `git checkout -b sdd/<feature>` from BASE and, if a remote
+   exists, **push the branch immediately** — publishing the claim before doing
+   any work, not after.
 2. **new** — follow `${CLAUDE_PLUGIN_ROOT}/skills/new/SKILL.md`. Approval
    substitute: the proposal must trace every requirement to the roadmap
    entry (and its source doc, if referenced) and respect `product.md`.
@@ -60,10 +76,18 @@ Take the next unchecked, un-started roadmap entry. Then:
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.
 6. **review + READY_FOR_PR** — follow the review skill at feature scale.
-   Verdict must pass; otherwise BLOCK. The review skill records
-   `LOCAL_VERIFIED` and then `READY_FOR_PR` in the change's single
-   `STATE.md`, including BASE, head branch, repository, and reviewed
-   implementation SHA. Commit: `sdd(<feature>): ready for PR`.
+   Verdict must pass; otherwise BLOCK. Record the two lifecycle milestones
+   yourself, passing BASE explicitly — auto recorded it in the preconditions,
+   so the base is **never** ambiguous here and must never be asked:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <BASE>
+   ```
+
+   The change's single `STATE.md` then holds `READY_FOR_PR` with BASE, head
+   branch, repository, and reviewed implementation SHA. Commit:
+   `sdd(<feature>): ready for PR`.
 7. **Publish**: if a remote exists, push; if both a remote and `gh` are
    available, open a PR from `sdd/<feature>` to BASE — title
    `SDD: <feature>`, body = the proposal's
@@ -82,8 +106,9 @@ Take the next unchecked, un-started roadmap entry. Then:
    records `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is
    idempotent. No remote or no `gh` → leave `READY_FOR_PR` and report the
    exact manual action (open the PR, or merge into the base branch yourself);
-   never fabricate a URL. Such a change is archived later through ancestry
-   evidence once its commit is in the base.
+   never fabricate a URL. Such a change is archived later through local git
+   evidence — the reviewed commit contained in the base, or a base commit
+   carrying the same change after a squash or rebase.
 9. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
    check off the roadmap, consolidate archive metrics, or move the change.
    Those final effects are permitted only once the merge is objectively proven
@@ -124,8 +149,11 @@ file, and resumes with the normal phase skills on that branch.
 ## Final report (always, even if everything blocked)
 
 - Per feature: **PR open** (link; archive pending merge) /
-  **ready for PR** (exact next action) / **blocked** (phase + one-line reason)
-  / **skipped**. Never call a PR-open change shipped or archived.
+  **ready for PR** (exact next action) / **awaiting archive** (already merged →
+  `/sdd:archive <feature>`) / **blocked** (phase + one-line reason) /
+  **claimed by someone else** (remote branch, no local change) / **skipped**
+  (with the reason). Never call a PR-open change shipped or archived, and never
+  report one of our own in-flight changes as claimed.
 - Always state that living specs and the definitive roadmap tick remain
   pending until merge, and that the next command after merge is
   `/sdd:archive <feature>`.
