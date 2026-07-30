@@ -184,7 +184,7 @@ El estado principal y la evidencia viven en una única fuente de verdad:
 - `state` y `local_review`;
 - `repository`, `base_branch`, `head_branch` e `implementation_sha` de la
   implementación revisada;
-- `pr_url`, `pr_number`, `pr_state` y `merge_sha`.
+- `pr_url`, `pr_number`, `pr_state`, `merge_evidence` y `merge_sha`.
 
 `READY_FOR_PR` significa exactamente «implementación local completa, revisión
 local aprobada e identidad Git capturada». No significa que exista un PR ni que
@@ -207,6 +207,19 @@ No existe override basado únicamente en una afirmación del agente:
   sustituto correcto;
 - si GitHub no puede verificarse por autenticación, red o respuesta incompleta,
   se detiene y pide restaurar esa verificación; no degrada a confianza manual.
+
+Cuando no hay PR registrado —sin remoto, trunk-based, GitLab, merges manuales—
+el merge se prueba con git en lugar de GitHub, y el tipo de prueba queda
+registrado en `merge_evidence`:
+
+| `merge_evidence` | Qué prueba |
+|---|---|
+| `pr` | GitHub reporta el PR asociado como `MERGED`, con `mergedAt` y merge commit. |
+| `ancestor` | El `implementation_sha` revisado está contenido en la rama base. |
+| `equivalent` | Un commit de la base introduce el mismo cambio bajo otro SHA: cubre merges por squash y rebase, donde el SHA revisado nunca puede ser ancestro. La identidad se calcula como `git patch-id` (ignorando hashes de blob y números de línea) sobre los 200 commits más recientes de la base desde el punto de rama. |
+
+Ninguna de las tres es una afirmación del agente: las tres son hechos
+verificables con `verify-merge`, que además nombra la evidencia usada.
 
 Solo después de ese gate `/sdd:archive` fusiona las specs vivas, consolida
 métricas, registra PR/merge SHA, marca el roadmap y mueve el change. Esto deja
@@ -505,7 +518,7 @@ Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía hea
 
 **Una feature = una rama `sdd/<feature>` = un dueño.** El código, los documentos del change y `STATE.md` viajan juntos en el PR. El merge integra la implementación y su evidencia local; el archive posterior actualiza specs/roadmap y convierte el change en historia solo cuando ese merge ya es objetivo.
 
-- **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros".
+- **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros". Con el gate de merge, una rama remota ya no implica un dueño ajeno: si existe `sdd/changes/<feature>/` en local, es un change propio esperando merge o archive, y auto lo reanuda o lo reporta por su estado en vez de saltarlo como "cogido por otro".
 - **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `roadmap.md`/`metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
 - **Distribución**: `.claude/settings.json` versionado con `extraKnownMarketplaces` + `enabledPlugins` hace que quien clone reciba el prompt de instalar el plugin al confiar en la carpeta.
 

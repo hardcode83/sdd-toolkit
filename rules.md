@@ -48,11 +48,12 @@
    state. Never infer PR or merge state from conversation text. Record and
    verify it through `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py`.
    Historical archives without `STATE.md` are legacy records: do not rewrite
-   them and do not invent merge evidence. A merge is proven in one of two
+   them and do not invent merge evidence. A merge is proven in one of three
    objective ways, recorded in `merge_evidence`: `pr` (GitHub reports the
-   associated Pull Request MERGED) or `ancestor` (git proves the reviewed
-   commit is contained in the base branch — for workflows without PRs). Both
-   are facts; neither is ever a claim.
+   associated Pull Request MERGED), `ancestor` (git proves the reviewed commit
+   is contained in the base branch) or `equivalent` (the base carries the same
+   change under another SHA, because it was squashed or rebased in). The last
+   two serve workflows without PRs. All three are facts; none is ever a claim.
 9. **Project validation is project-owned**: build, test, lint, typecheck and CI
    commands come from the consumer project's `sdd/project.md`,
    `sdd/steering/` or existing configuration. Never infer them from the

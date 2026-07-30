@@ -20,6 +20,24 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("Re-running is", auto)
         self.assertIn("No remote or no `gh` → leave `READY_FOR_PR`", auto)
 
+    def test_auto_never_asks_for_the_base_branch(self) -> None:
+        """The base is a precondition of the run, not a question mid-flight."""
+        auto = self.read_skill("auto")
+        self.assertIn("mark-ready <feature> --base <BASE>", auto)
+        self.assertIn("mark-local-verified <feature>", auto)
+        review = self.read_skill("review")
+        self.assertIn("except under `/sdd:auto`", review)
+
+    def test_auto_distinguishes_own_change_from_a_foreign_claim(self) -> None:
+        auto = self.read_skill("auto")
+        self.assertIn("our own in-flight\n     change", auto)
+        self.assertIn("no local change directory", auto)
+
+    def test_archive_accepts_history_rewriting_merges(self) -> None:
+        archive = self.read_skill("archive")
+        self.assertIn("merge_evidence: equivalent", archive)
+        self.assertIn("squash and rebase merges", archive)
+
     def test_archive_checks_merge_before_specs(self) -> None:
         archive = self.read_skill("archive")
         gate = archive.index("verify-merge <feature>")

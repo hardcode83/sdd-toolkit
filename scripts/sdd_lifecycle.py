@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -37,11 +38,15 @@ STATE_FIELDS = (
     "merge_evidence",
     "merge_sha",
 )
-# How a merge was proven. Both are objective facts, never agent narrative:
-#   pr       — GitHub reports the associated Pull Request as MERGED.
-#   ancestor — git proves the reviewed implementation SHA is contained in the
-#              base branch (trunk-based, local merges, non-GitHub remotes).
-MERGE_EVIDENCE_KINDS = {"pr", "ancestor"}
+# How a merge was proven. All three are objective facts, never agent narrative:
+#   pr         — GitHub reports the associated Pull Request as MERGED.
+#   ancestor   — git proves the reviewed implementation SHA is contained in the
+#                base branch (trunk-based, local merges, non-GitHub remotes).
+#   equivalent — the base carries the same change under a different SHA, because
+#                it was squashed or rebased in. `merge_sha` is the base commit
+#                that matched; for the other kinds it is the merge commit /
+#                base tip.
+MERGE_EVIDENCE_KINDS = {"pr", "ancestor", "equivalent"}
 PR_FIELDS = (
     "repository",
     "base_branch",
@@ -58,6 +63,14 @@ CHANGE_POINTER_RE = re.compile(
 PR_URL_RE = re.compile(
     r"^https://github\.com/(?P<repository>[^/]+/[^/]+)/pull/(?P<number>\d+)/?$"
 )
+# Fixed diff rendering so the same change fingerprints identically wherever it
+# landed: no color/external drivers, no rename detection, and zero context so
+# unrelated edits near the change cannot alter the result.
+DIFF_OPTIONS = ("--no-color", "--no-ext-diff", "--no-renames", "--unified=0")
+# A squash or rebase lands among the commits that reached the base after the
+# branch point. Scanning all of history would be unbounded; this cap keeps the
+# check cheap, and a miss says explicitly how far back it looked.
+EQUIVALENCE_SCAN_LIMIT = 200
 SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -216,13 +229,124 @@ def resolve_base_ref(root: Path, base_branch: str, runner: Runner) -> str:
     )
 
 
-def verify_ancestor_merge(
-    root: Path, state: dict[str, str], runner: Runner = subprocess.run
-) -> tuple[str, str]:
-    """Prove the reviewed implementation is contained in the base branch.
+def patch_fingerprint(diff: str) -> str:
+    """Content identity of a diff, independent of where it landed.
 
-    Returns (base_ref, base_sha). Raises when the SHA is not an ancestor: that
-    means the work is not merged, whatever anyone claims.
+    Mirrors what `git patch-id` does — drop blob hashes and hunk line numbers —
+    so a squashed or rebased copy of the same change fingerprints identically.
+    Done here instead of shelling out because `git patch-id` only reads stdin.
+    """
+    kept: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("index ") or line.startswith("similarity index "):
+            continue
+        kept.append("@@" if line.startswith("@@") else line)
+    body = "\n".join(kept).strip()
+    if not body:
+        return ""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def range_fingerprint(root: Path, first: str, second: str, runner: Runner) -> str:
+    diff = run_command(
+        ["git", "diff", *DIFF_OPTIONS, first, second], root, runner
+    ).stdout
+    return patch_fingerprint(diff)
+
+
+def commit_fingerprint(root: Path, commit: str, runner: Runner) -> str:
+    """Fingerprint of what a single commit introduced; empty for root commits."""
+    if not try_command(["git", "rev-parse", "--verify", "--quiet", f"{commit}^"], root, runner):
+        return ""
+    return range_fingerprint(root, f"{commit}^", commit, runner)
+
+
+def base_fingerprints(
+    root: Path, merge_base: str, base_ref: str, runner: Runner
+) -> tuple[dict[str, str], bool]:
+    """Map fingerprint → base commit for the commits base gained since branching.
+
+    Returns the map and whether the scan hit `EQUIVALENCE_SCAN_LIMIT` (newest
+    first), so a failure can state how far back it actually looked.
+    """
+    listed = run_command(
+        [
+            "git",
+            "rev-list",
+            "--no-merges",
+            f"--max-count={EQUIVALENCE_SCAN_LIMIT}",
+            f"{merge_base}..{base_ref}",
+        ],
+        root,
+        runner,
+    ).stdout.split()
+    fingerprints: dict[str, str] = {}
+    for commit in listed:
+        fingerprint = commit_fingerprint(root, commit, runner)
+        # First writer wins: with duplicates, the oldest landing is the merge.
+        if fingerprint and fingerprint not in fingerprints:
+            fingerprints[fingerprint] = commit
+    return fingerprints, len(listed) == EQUIVALENCE_SCAN_LIMIT
+
+
+def verify_equivalent_merge(
+    root: Path,
+    state: dict[str, str],
+    base_ref: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Find the base commit carrying the reviewed change under a different SHA.
+
+    Squash and rebase merges rewrite history, so the reviewed commit is never an
+    ancestor of the base even though its content is fully merged. Returns the
+    matching base commit SHA, or "" when the base carries no such change.
+    """
+    implementation_sha = state["implementation_sha"]
+    merge_base = run_command(
+        ["git", "merge-base", base_ref, implementation_sha], root, runner
+    ).stdout.strip()
+    branch_total = range_fingerprint(root, merge_base, implementation_sha, runner)
+    if not branch_total:
+        raise LifecycleError(
+            f"Reviewed commit {implementation_sha[:12]} changes nothing relative to "
+            f"'{base_ref}', so nothing can be proven merged. Record the correct "
+            "implementation SHA with /sdd:review."
+        )
+    candidates, truncated = base_fingerprints(root, merge_base, base_ref, runner)
+    # A squash collapses the branch into one commit: its diff is the whole branch.
+    if branch_total in candidates:
+        return candidates[branch_total]
+    # A rebase copies each commit: every one of them must be present in the base.
+    branch_commits = run_command(
+        ["git", "rev-list", "--no-merges", f"{merge_base}..{implementation_sha}"],
+        root,
+        runner,
+    ).stdout.split()
+    matches = [
+        candidates.get(commit_fingerprint(root, commit, runner), "")
+        for commit in branch_commits
+    ]
+    if branch_commits and all(matches):
+        return matches[0]
+    if truncated:
+        raise LifecycleError(
+            f"Reviewed commit {implementation_sha[:12]} is not in '{base_ref}', and "
+            f"the newest {EQUIVALENCE_SCAN_LIMIT} commits there carry no equivalent "
+            "change. If it was merged further back, archive it through its PR "
+            "(/sdd:review to record one) rather than local evidence."
+        )
+    return ""
+
+
+def verify_local_merge(
+    root: Path, state: dict[str, str], runner: Runner = subprocess.run
+) -> tuple[str, str, str]:
+    """Prove the reviewed implementation reached the base branch, without a PR.
+
+    Returns (evidence_kind, base_ref, merge_sha): `ancestor` when the reviewed
+    commit itself is contained in the base, `equivalent` when the base carries
+    the same change squashed or rebased under another SHA. Raises when neither
+    holds — that means the work is not merged, whatever anyone claims.
     """
     for field in ("base_branch", "head_branch", "implementation_sha"):
         if not state.get(field):
@@ -241,20 +365,24 @@ def verify_ancestor_merge(
             "Fetch the branch that contains it and retry."
         )
     base_ref = resolve_base_ref(root, state["base_branch"], runner)
-    if not try_command(
+    if try_command(
         ["git", "merge-base", "--is-ancestor", implementation_sha, base_ref],
         root,
         runner,
     ):
-        raise LifecycleError(
-            f"Reviewed commit {implementation_sha[:12]} is not contained in "
-            f"'{base_ref}'. Merge the change into its base branch (or open and "
-            "record a PR), then rerun /sdd:archive."
-        )
-    base_sha = run_command(
-        ["git", "rev-parse", f"{base_ref}^{{commit}}"], root, runner
-    ).stdout.strip()
-    return base_ref, base_sha
+        base_sha = run_command(
+            ["git", "rev-parse", f"{base_ref}^{{commit}}"], root, runner
+        ).stdout.strip()
+        return "ancestor", base_ref, base_sha
+    equivalent_sha = verify_equivalent_merge(root, state, base_ref, runner)
+    if equivalent_sha:
+        return "equivalent", base_ref, equivalent_sha
+    raise LifecycleError(
+        f"Reviewed commit {implementation_sha[:12]} is not contained in "
+        f"'{base_ref}', and no commit there carries the same change (squash or "
+        "rebase). Merge the change into its base branch (or open and record a "
+        "PR), then rerun /sdd:archive."
+    )
 
 
 def normalize_repository(remote: str) -> str:
@@ -502,24 +630,26 @@ def require_merge(
         raise LifecycleError("Local review is not approved in STATE.md.")
 
     # Two evidence paths, both objective. A recorded PR is the authority when it
-    # exists; otherwise git ancestry proves the merge, so workflows without
-    # GitHub PRs (no remote, trunk-based, GitLab, local merges) can still close
-    # the loop instead of being stuck at READY_FOR_PR forever.
+    # exists; otherwise git itself proves the merge — the reviewed commit
+    # contained in the base, or the base carrying the same change squashed or
+    # rebased — so workflows without GitHub PRs (no remote, trunk-based, GitLab,
+    # local merges) can still close the loop instead of being stuck at
+    # READY_FOR_PR forever.
     # PR_OPEN asserts a Pull Request exists, so it is always judged on PR
     # evidence — missing metadata there is an error, not a fallback.
-    use_ancestor = (
+    use_local_evidence = (
         not data.get("pr_url")
         and data.get("state") in {"READY_FOR_PR", "MERGED"}
-        and data.get("merge_evidence", "") in {"", "ancestor"}
+        and data.get("merge_evidence", "") in {"", "ancestor", "equivalent"}
     )
-    if use_ancestor:
-        base_ref, base_sha = verify_ancestor_merge(root, data, runner)
+    if use_local_evidence:
+        kind, base_ref, merge_sha = verify_local_merge(root, data, runner)
         data["state"] = "MERGED"
         data["pr_state"] = ""
-        data["merge_evidence"] = "ancestor"
-        data["merge_sha"] = base_sha
+        data["merge_evidence"] = kind
+        data["merge_sha"] = merge_sha
         changed = write_state(change, data) if write else False
-        return data, {"evidence": "ancestor", "base_ref": base_ref}, changed
+        return data, {"evidence": kind, "base_ref": base_ref}, changed
 
     if data.get("state") not in {"PR_OPEN", "MERGED"}:
         raise LifecycleError(
@@ -661,12 +791,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
         elif args.command == "verify-merge":
-            _, _, changed = require_merge(root, args.feature)
-            message = (
-                "MERGED evidence recorded."
-                if changed
-                else "MERGED evidence already recorded."
-            )
+            data, _, changed = require_merge(root, args.feature)
+            state = "recorded" if changed else "already recorded"
+            # Name the evidence kind: how a merge was proven is part of the
+            # answer, not an implementation detail.
+            message = f"MERGED evidence {state} ({data.get('merge_evidence')})."
         else:
             message = finalize_archive(
                 root, args.feature, specs_confirmed=args.specs_confirmed
