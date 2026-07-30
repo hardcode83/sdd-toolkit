@@ -18,7 +18,8 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertNotIn("**archive** — follow the archive skill", auto)
         self.assertIn("Do not call `/sdd:archive`", auto)
         self.assertIn("Re-running is", auto)
-        self.assertIn("No remote or no `gh` → leave `READY_FOR_PR`", auto)
+        self.assertIn("leave `READY_FOR_PR`", auto)
+        self.assertIn("Never fabricate a URL", auto)
 
     def test_auto_never_asks_for_the_base_branch(self) -> None:
         """The base is a precondition of the run, not a question mid-flight."""
@@ -27,6 +28,28 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("mark-local-verified <feature>", auto)
         review = self.read_skill("review")
         self.assertIn("except under `/sdd:auto`", review)
+
+    def test_auto_never_interrupts_the_run_with_a_question(self) -> None:
+        """An unattended run must convert every question, not raise it."""
+        auto = self.read_skill("auto")
+        self.assertIn("**Auto never asks the user anything.**", auto)
+        self.assertIn("Do not call `AskUserQuestion`", auto)
+        # Each question point found in the phase skills has a stated substitute.
+        for substituted in (
+            "Shared rule 6",
+            "Missing arguments",
+            "Ad-hoc roadmap registration",
+            "stop and ask",
+        ):
+            self.assertIn(substituted, auto)
+        self.assertIn("do not ask for confirmation", auto)
+
+    def test_auto_treats_human_only_steps_as_handoffs(self) -> None:
+        auto = self.read_skill("auto")
+        self.assertIn("Handoff: the steps that stay the user's", auto)
+        self.assertIn("handoffs, not failures", auto)
+        self.assertIn("yours to run", auto)
+        self.assertIn("never stops the run", auto)
 
     def test_auto_distinguishes_own_change_from_a_foreign_claim(self) -> None:
         auto = self.read_skill("auto")
@@ -57,6 +80,23 @@ class LifecycleSkillContractTests(unittest.TestCase):
         new = self.read_skill("new")
         self.assertIn("start <feature>", new)
         self.assertIn("state: ACTIVE", new)
+
+    def test_every_phase_skill_records_its_own_usage(self) -> None:
+        """An uninstrumented phase does not lose its spend — it misattributes it
+        to whichever phase marked itself last, silently."""
+        for phase in ("new", "design", "tasks", "run", "review", "archive"):
+            skill = self.read_skill(phase)
+            with self.subTest(phase=phase):
+                self.assertIn(f'usage-mark.sh" {phase}', skill.replace("<feature> ", ""))
+                self.assertIn(f'usage-phase.sh" {phase}', skill.replace("<feature> ", ""))
+
+    def test_metrics_are_consolidated_from_the_log_not_by_hand(self) -> None:
+        archive = self.read_skill("archive")
+        self.assertIn("usage-sync.py", archive)
+        self.assertIn("Do **not** consolidate by hand", archive)
+        # After the move, so the archive date and the phase's tail are included.
+        self.assertLess(archive.index("finalize-archive <feature>"), archive.index("usage-sync.py"))
+        self.assertIn("usage-sync.py", self.read_skill("review"))
 
     def test_status_exposes_every_non_archived_state(self) -> None:
         status = self.read_skill("status")

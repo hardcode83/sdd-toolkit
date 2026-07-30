@@ -545,6 +545,24 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("", data["pr_state"])
         self.assertRegex(data["merge_sha"], r"^[0-9a-f]{40}$")
 
+    def test_archive_reports_a_roadmap_tick_that_did_not_happen(self) -> None:
+        """A silent no-op would let archive claim a loop the roadmap never closed."""
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] `example feature` — name does not parse alike\n",
+            encoding="utf-8",
+        )
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        message = finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 30)
+        )
+        self.assertIn("no roadmap entry names 'example'", message)
+        self.assertIn(
+            "- [ ] `example feature`",
+            (self.root / "sdd" / "roadmap.md").read_text(encoding="utf-8"),
+        )
+
     def test_squash_merge_proves_equivalence_without_a_pull_request(self) -> None:
         """A squash rewrites the SHA; the change is merged all the same."""
         self.implement_beyond_base()

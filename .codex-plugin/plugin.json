@@ -1,6 +1,6 @@
 {
   "name": "sdd-toolkit",
-  "version": "0.13.0",
+  "version": "0.21.0",
   "description": "Experimental Codex adapter for the existing SDD Toolkit skills and shared artifact workflow.",
   "author": {
     "name": "Jose Gascon",

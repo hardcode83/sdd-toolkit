@@ -89,6 +89,65 @@ def validate_manifests(root: Path = ROOT) -> list[str]:
         elif not isinstance(configured.get("PreToolUse"), list):
             errors.append("hooks/hooks.json: PreToolUse must be a list")
 
+    errors.extend(
+        validate_codex_manifests(
+            root, plugin.get("version") if isinstance(plugin, dict) else None
+        )
+    )
+    return errors
+
+
+def validate_codex_manifests(root: Path, plugin_version: object) -> list[str]:
+    """The Codex adapter ships its own manifests, so they need the same checks.
+
+    Nothing else reads them: unvalidated, the adapter's version silently drifted
+    away from the plugin it adapts, announcing a release that no longer exists.
+    """
+    errors: list[str] = []
+    codex_plugin_path = root / ".codex-plugin" / "plugin.json"
+    codex_marketplace_path = root / ".agents" / "plugins" / "marketplace.json"
+    codex_plugin = read_json(codex_plugin_path, root, errors)
+    codex_marketplace = read_json(codex_marketplace_path, root, errors)
+
+    if isinstance(codex_plugin, dict):
+        for field in ("name", "description", "version", "author"):
+            if not codex_plugin.get(field):
+                errors.append(f".codex-plugin/plugin.json: missing '{field}'")
+        version = str(codex_plugin.get("version", ""))
+        if version and not SEMVER_RE.match(version):
+            errors.append(".codex-plugin/plugin.json: version must be MAJOR.MINOR.PATCH")
+        elif plugin_version and version != str(plugin_version):
+            errors.append(
+                f".codex-plugin/plugin.json: version {version} must match "
+                f".claude-plugin/plugin.json version {plugin_version} — the adapter "
+                "exposes those exact skills"
+            )
+        skills = codex_plugin.get("skills")
+        if not skills or not (root / str(skills)).is_dir():
+            errors.append(
+                f".codex-plugin/plugin.json: skills path '{skills}' does not exist"
+            )
+
+    if isinstance(codex_marketplace, dict):
+        if not codex_marketplace.get("name"):
+            errors.append(".agents/plugins/marketplace.json: name is required")
+        plugins = codex_marketplace.get("plugins")
+        if not isinstance(plugins, list) or not plugins:
+            errors.append(".agents/plugins/marketplace.json: plugins must be non-empty")
+        else:
+            for index, entry in enumerate(plugins):
+                if not isinstance(entry, dict) or not entry.get("name"):
+                    errors.append(
+                        f".agents/plugins/marketplace.json: plugins[{index}] needs a name"
+                    )
+                    continue
+                source = entry.get("source")
+                path = source.get("path") if isinstance(source, dict) else None
+                if not path or not (root / str(path)).is_dir():
+                    errors.append(
+                        f".agents/plugins/marketplace.json: plugins[{index}] source "
+                        f"path '{path}' does not exist"
+                    )
     return errors
 
 

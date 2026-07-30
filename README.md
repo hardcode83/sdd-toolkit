@@ -132,7 +132,7 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y roadmap. Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR`. | sonnet |
-| `/sdd:auto [N\|feature]` | Modo autónomo hasta PR: implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
+| `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
@@ -281,8 +281,10 @@ que la documentación afirme un merge que todavía no ocurrió.
   La comprobación remota autoritativa pertenece a `/sdd:archive`.
 - La validación end-to-end del workflow en Codex sigue pendiente; las rutas
   Claude Code, helpers y contratos documentales sí están cubiertos por tests.
-- El PR #10 está apilado sobre el PR #9 (`feat/sdd-doctor`): el #9 debe
-  mergearse primero y la rama/base del #10 deberá actualizarse después.
+- Los manifiestos del adaptador Codex (`.codex-plugin/plugin.json`,
+  `.agents/plugins/marketplace.json`) los valida CI, incluida la
+  correspondencia de versión con `.claude-plugin/plugin.json`: el adaptador
+  expone exactamente esas skills, así que no puede anunciar otra release.
 
 ## Diagnóstico de coherencia (`/sdd:doctor`)
 
@@ -338,6 +340,8 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD013` | error | La referencia de PR es parcial o inválida: URL/número/estado requeridos no existen, no concuerdan o no pueden parsearse como `github.com/<owner>/<repo>/pull/<n>`. |
 | `SDD014` | error | El estado, su ubicación o sus campos obligatorios forman una combinación incompatible con el lifecycle. |
 | `SDD015` | error | La metadata local ya contiene evidencia de merge pero conserva `state: PR_OPEN`; debe reanudarse `/sdd:archive`. |
+| `SDD016` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` afirma tareas completas, pero `tasks.md` tiene casillas sin marcar (o no existe). El lifecycle exige ese gate al escribir el estado; esta regla lo revalida después. |
+| `SDD017` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` convive con un `BLOCKED.md` sin resolver. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -512,6 +516,8 @@ Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyen
 
 Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
+**Auto no te pregunta nada.** Ni gates, ni ambigüedades, ni confirmaciones: cada punto donde una fase pediría tu opinión tiene un sustituto declarado, y lo que no lo tiene se escribe en `BLOCKED.md` y el run sigue con la siguiente entrada. Sin steering docs auto ya no pide confirmación: avanza y lo señala como el primer arreglo pendiente en el informe. Y los pasos que son tuyos por naturaleza —pushear sin remoto, abrir el PR sin `gh`, mergear, archivar— son **handoffs, no fallos**: auto los deja commiteados, con el siguiente paso registrado en `STATE.md` (`/sdd:status` lo lee, así que sobrevive al cierre de sesión) y con el comando exacto en una lista final de *"esto te toca a ti"*. Un run desatendido termina en acciones, no en un transcript que reconstruir.
+
 **Reanudación parcial**: `/sdd:auto <feature>` sobre un change ya empezado no regenera nada — detecta documentos y `STATE.md`. Continúa trabajo local, abre un PR para `READY_FOR_PR`, reporta y espera si está `PR_OPEN`, y remite a `/sdd:archive` si está `MERGED`. El híbrido natural: tú conduces proposal/design y auto remata run→review→PR.
 
 ## Trabajo en equipo
@@ -525,6 +531,15 @@ Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía hea
 ## Métricas de uso por feature
 
 Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
+
+**El log es la fuente de verdad, no el gate.** `usage-phase.sh` solo escribe cuando una fase se lo pide, así que lo que se interrumpía antes del gate, lo que gastaba una fase sin instrumentar, o lo que llegaba *después* de escribir la fila desaparecía del ledger aunque el sink lo hubiera capturado. `scripts/usage-sync.py` reconstruye el ledger completo desde `.sdd-usage/otel.jsonl` y hace upsert de la fila consolidada: lo ejecutan `/sdd:review` al dejar `READY_FOR_PR` (así una feature esperando merge ya tiene métricas, no cero) y `/sdd:archive` después de mover el change (así cuenta también la cola de la fase). Funciona sobre changes ya archivados, con lo que es además la vía de recuperación de histórico:
+
+```bash
+python3 scripts/usage-sync.py --root /ruta/al/proyecto report          # qué falta
+python3 scripts/usage-sync.py --root /ruta/al/proyecto sync <feature>  # reconstruirlo
+```
+
+Es conservador por diseño: nunca baja una cifra que el log no pueda explicar (la conserva y avisa con `WARNING`), y mantiene las filas de fases que el log no conoce. Lo único que ninguna reconstrucción arregla a posteriori es la **atribución**: el sink etiqueta con la fase marcada en ese instante, así que una fase que no se marque va a parar a la anterior — por eso cada skill de fase se marca y la suite lo verifica.
 
 ## Extras por proyecto
 
@@ -546,7 +561,7 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-*
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-{mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
 docs/guide.md       # guía de uso narrativa

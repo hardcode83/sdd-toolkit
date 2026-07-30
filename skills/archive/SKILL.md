@@ -57,14 +57,31 @@ Write spec updates in the same language as the existing specs (or the user's lan
    - **Spec on first touch**: if the capability has no spec yet (common in projects that adopted SDD with existing code), create it covering the capability's full current behavior — the pre-existing parts this change interacted with plus what the change added — not just the delta. Don't document unrelated corners you didn't touch.
    - Specs describe the system **as it is now**, in present tense, with EARS requirements — merge the change's requirements into them, don't append a changelog.
    - Verify statements against the actual implementation, not just the proposal: the code is the source of truth for what was built.
-4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> archive` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Then, if the change has a `metrics.md`, sum its token and cost columns and append one summary row to `sdd/metrics.md` (create it with header `| feature | phases | tokens in | tokens out | tokens cache | cost USD (est) | started | archived |` if missing). The per-phase ledger travels with the change into the archive.
+4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> archive` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Do **not** consolidate by hand: step 6 recomputes both the ledger and the summary row from the captured log. The per-phase ledger travels with the change into the archive.
 5. **Finalize once.** After verifying the spec changes, run:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . finalize-archive <feature> --specs-confirmed
    ```
 
-   It rechecks GitHub, records `ARCHIVED` with PR URL/number and merge SHA,
-   moves the change to the dated archive, checks the roadmap entry, and
-   updates its pointer. It is idempotent and never modifies living specs.
-6. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together.
+   It re-verifies the same evidence as step 1 (GitHub for `pr`, git for
+   `ancestor`/`equivalent`), records `ARCHIVED` with that evidence and its merge
+   SHA, moves the change to the dated archive, ticks the roadmap entry and
+   updates its pointer. It is idempotent and never modifies living specs. If it
+   warns that no roadmap entry names the feature, the tick did **not** happen:
+   report that verbatim and fix `sdd/roadmap.md` — never claim a closed loop the
+   roadmap does not show.
+6. **Consolidate metrics from the log, after the move.** Run it unconditionally
+   (no-ops when tracking is off):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/usage-sync.py" --root . sync <feature>
+   ```
+
+   Running it *after* `finalize-archive` is what makes the numbers complete: it
+   rebuilds every phase row from `.sdd-usage/otel.jsonl` — including phases whose
+   gate never wrote one and the spend that arrived after it did — and upserts the
+   consolidated row in `sdd/metrics.md` with the archive date. Report its
+   WARNING lines verbatim: they mean a recorded row holds more than the log can
+   account for, and it was deliberately kept.
+7. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together.

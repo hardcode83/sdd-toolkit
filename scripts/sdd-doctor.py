@@ -245,16 +245,31 @@ def requirement_sort_key(requirement: str) -> tuple[int, str]:
     return (int(match.group()) if match else sys.maxsize, requirement)
 
 
+def unchecked_tasks(change: Path) -> list[int]:
+    """Line numbers of tasks still open in a change's tasks.md."""
+    return [
+        line_number
+        for line_number, line in enumerate(read_lines(change / "tasks.md"), start=1)
+        if (match := TASK_RE.match(line)) and match.group(1) == " "
+    ]
+
+
+def active_blocked_file(change: Path) -> Path | None:
+    """The change's BLOCKED.md when it still holds unresolved content."""
+    blocked = change / "BLOCKED.md"
+    if blocked.is_file() and blocked.read_text(
+        encoding="utf-8", errors="replace"
+    ).strip():
+        return blocked
+    return None
+
+
 def archive_checks(root: Path, archived_changes: list[Path]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for change in archived_changes:
         tasks = change / "tasks.md"
         if tasks.is_file():
-            pending: list[int] = []
-            for line_number, line in enumerate(read_lines(tasks), start=1):
-                match = TASK_RE.match(line)
-                if match and match.group(1) == " ":
-                    pending.append(line_number)
+            pending = unchecked_tasks(change)
             if pending:
                 diagnostics.append(
                     Diagnostic(
@@ -266,13 +281,11 @@ def archive_checks(root: Path, archived_changes: list[Path]) -> list[Diagnostic]
                             f"Archived change '{canonical_archive_name(change.name)}' "
                             f"contains {len(pending)} unchecked task(s)."
                         ),
-                        "Verify the work and document whether archive debt was explicitly accepted.",
+                        "Confirm the work actually shipped; the merge gate refuses to archive with pending tasks.",
                     )
                 )
-        blocked = change / "BLOCKED.md"
-        if blocked.is_file() and blocked.read_text(
-            encoding="utf-8", errors="replace"
-        ).strip():
+        blocked = active_blocked_file(change)
+        if blocked:
             diagnostics.append(
                 Diagnostic(
                     "SDD007",
@@ -283,7 +296,7 @@ def archive_checks(root: Path, archived_changes: list[Path]) -> list[Diagnostic]
                         f"Archived change '{canonical_archive_name(change.name)}' "
                         "still contains an active BLOCKED.md."
                     ),
-                    "Resolve the entries or document the explicit archive-with-debt override.",
+                    "Confirm the entries were handled; the merge gate refuses to archive with unresolved ones.",
                 )
             )
     return diagnostics
@@ -581,6 +594,55 @@ def lifecycle_checks(
                     "Run /sdd:archive to verify merge and advance the lifecycle.",
                 )
             )
+
+        # Everything from READY_FOR_PR onwards asserts the local gates passed.
+        # The lifecycle enforces them when it writes the state and never looks
+        # again, so a task unchecked later — or a blocker raised after review —
+        # leaves STATE.md claiming something that stopped being true.
+        if state in {"READY_FOR_PR", "PR_OPEN", "MERGED"}:
+            tasks = change / "tasks.md"
+            if not tasks.is_file():
+                diagnostics.append(
+                    Diagnostic(
+                        "SDD016",
+                        "ERROR",
+                        relative(change, root),
+                        0,
+                        f"State '{state}' asserts completed tasks, but tasks.md is missing.",
+                        "Restore tasks.md, or move the change back with the lifecycle commands.",
+                    )
+                )
+            else:
+                pending = unchecked_tasks(change)
+                if pending:
+                    diagnostics.append(
+                        Diagnostic(
+                            "SDD016",
+                            "ERROR",
+                            relative(tasks, root),
+                            pending[0],
+                            (
+                                f"State '{state}' asserts every task is complete, but "
+                                f"{len(pending)} remain unchecked."
+                            ),
+                            "Finish the work and re-run /sdd:review, or correct tasks.md.",
+                        )
+                    )
+            blocked = active_blocked_file(change)
+            if blocked:
+                diagnostics.append(
+                    Diagnostic(
+                        "SDD017",
+                        "ERROR",
+                        relative(blocked, root),
+                        1,
+                        (
+                            f"State '{state}' coexists with unresolved entries in "
+                            "BLOCKED.md."
+                        ),
+                        "Resolve the queue entries before the change advances any further.",
+                    )
+                )
 
     for change in archived_changes:
         state_file = change / "STATE.md"

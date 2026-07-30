@@ -27,7 +27,7 @@ Two modes, chosen by argument:
 
 ## Change review
 
-1. Read the change's `proposal.md`, `design.md` (if any), and `tasks.md`.
+1. Read the change's `proposal.md`, `design.md` (if any), and `tasks.md`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> review` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, review's spend is attributed to whichever phase ran last.
 2. **Launch the review panel in parallel** (one message, one Agent call per reviewer): the three core reviewers — `sdd-architect`, `sdd-security`, `sdd-qa` — plus every project reviewer at `.claude/agents/sdd-review-*.md` (same discovery and contract as in `/sdd:run`).
    **Incremental scope — don't pay twice for what already PASSed**: read the `<!-- panel: PASS ... -->` annotations on `tasks.md` section headings first.
    - Sections **with** a PASS annotation: instruct the reviewers to NOT re-audit them line by line — for those, the scope is only what section-level review structurally can't see: interactions *between* sections, global design coherence (D# consistency across the whole change), and anything a later section changed in files an earlier PASSed section owned.
@@ -52,5 +52,18 @@ Two modes, chosen by argument:
    the reviewed implementation SHA. This is not remote review, merge, spec
    fusion, roadmap completion, or archive.
 
-Do not fix findings in either mode. A passing change review may write only the
-lifecycle metadata above; all other review behavior remains report-only.
+6. **Metrics.** Run both unconditionally (each no-ops when tracking is off; NEVER
+   skip them based on your own assessment of whether metrics are enabled):
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> review
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/usage-sync.py" --root . sync <feature>
+   ```
+
+   `sync` rebuilds every phase row from the captured log and refreshes the
+   consolidated row in `sdd/metrics.md`, so a change waiting for its merge
+   already has complete metrics instead of none until archive.
+
+Do not fix findings in either mode. A passing change review may write the
+lifecycle metadata above and the metrics ledger; all other review behavior
+remains report-only.
