@@ -18,7 +18,8 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertNotIn("**archive** — follow the archive skill", auto)
         self.assertIn("Do not call `/sdd:archive`", auto)
         self.assertIn("Re-running is", auto)
-        self.assertIn("No remote or no `gh` → leave `READY_FOR_PR`", auto)
+        self.assertIn("leave `READY_FOR_PR`", auto)
+        self.assertIn("Never fabricate a URL", auto)
 
     def test_auto_never_asks_for_the_base_branch(self) -> None:
         """The base is a precondition of the run, not a question mid-flight."""
@@ -27,6 +28,28 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("mark-local-verified <feature>", auto)
         review = self.read_skill("review")
         self.assertIn("except under `/sdd:auto`", review)
+
+    def test_auto_never_interrupts_the_run_with_a_question(self) -> None:
+        """An unattended run must convert every question, not raise it."""
+        auto = self.read_skill("auto")
+        self.assertIn("**Auto never asks the user anything.**", auto)
+        self.assertIn("Do not call `AskUserQuestion`", auto)
+        # Each question point found in the phase skills has a stated substitute.
+        for substituted in (
+            "Shared rule 6",
+            "Missing arguments",
+            "Ad-hoc roadmap registration",
+            "stop and ask",
+        ):
+            self.assertIn(substituted, auto)
+        self.assertIn("do not ask for confirmation", auto)
+
+    def test_auto_treats_human_only_steps_as_handoffs(self) -> None:
+        auto = self.read_skill("auto")
+        self.assertIn("Handoff: the steps that stay the user's", auto)
+        self.assertIn("handoffs, not failures", auto)
+        self.assertIn("yours to run", auto)
+        self.assertIn("never stops the run", auto)
 
     def test_auto_distinguishes_own_change_from_a_foreign_claim(self) -> None:
         auto = self.read_skill("auto")

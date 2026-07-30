@@ -21,22 +21,36 @@ invents scope.
 2. `sdd/roadmap.md` exists with at least one unchecked, un-started entry
    (or the named feature is one).
 3. `sdd/steering/` has at least `architecture.md` or `security.md` or
-   `testing.md` — with no steering, the panel (the only reviewer in auto)
-   has weak referents. Warn and require explicit user confirmation to
-   proceed without them.
+   `testing.md`. With no steering, the panel (the only reviewer in auto) has
+   weak referents: **do not ask for confirmation** — the user pre-authorized
+   this run. Proceed and state the weakness prominently in the final report,
+   as the first thing to fix before the next run.
 
 ## The gate-conversion rule
 
-Everywhere a phase skill says "ask the user" or "wait for approval", auto
-substitutes:
+**Auto never asks the user anything.** Do not call `AskUserQuestion` while
+running auto — not for a gate, not for an ambiguity, not for a missing
+argument. A question that cannot be answered by the substitutes below is
+recorded as a BLOCKED.md entry and the run continues with the next feature.
+Everywhere a phase skill says "ask the user", "wait for approval", or
+"stop and ask", auto substitutes:
 
 - **Ambiguity that changes requirements** (new), **open questions** (design),
-  **blockers**, **persistent panel findings** (run/review), or any
-  DESIGN-CONFLICT that can't be resolved by making the documents match
-  already-approved sources → **BLOCK the feature** (see contract below) and
-  move on. Never guess to keep moving — guessing is exactly what gates
-  prevent.
+  **blockers** (run: its "stop and ask rather than guessing" becomes this),
+  **persistent panel findings** (run/review), or any DESIGN-CONFLICT that
+  can't be resolved by making the documents match already-approved sources →
+  **BLOCK the feature** (see contract below) and move on. Never guess to keep
+  moving — guessing is exactly what gates prevent.
 - **Approvals** → replaced by the automated checks listed per phase.
+- **Shared rule 6** (an existing `proposal.md` / `design.md` / `tasks.md`, whose
+  question is regenerate/amend/keep) → always **keep**: a document already on
+  disk is approved input. Never regenerate, never ask. Only if keeping it is
+  impossible — it contradicts the roadmap entry auto is executing — BLOCK.
+- **Missing arguments** (the phase skills ask when the feature is ambiguous) →
+  never applies: auto always passes the feature name explicitly.
+- **Ad-hoc roadmap registration** (`/sdd:new`'s question for features outside
+  the roadmap) → never applies either: auto only consumes roadmap entries and
+  never invents scope.
 
 ## Per-feature pipeline
 
@@ -104,9 +118,11 @@ or `MERGED` is started, and awaits merge/archive, not a fresh run). Then:
 
    This re-queries `gh`, validates repository/base/head/implementation SHA,
    records `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is
-   idempotent. No remote or no `gh` → leave `READY_FOR_PR` and report the
-   exact manual action (open the PR, or merge into the base branch yourself);
-   never fabricate a URL. Such a change is archived later through local git
+   idempotent. No remote, no `gh`, or a failing push (no permission, protected
+   branch) → this is a handoff, not a failure: leave `READY_FOR_PR`, report the
+   exact manual action (push, open the PR, or merge into the base branch
+   yourself), and continue with the next feature. Never fabricate a URL and
+   never stop the run over it. Such a change is archived later through local git
    evidence — the reviewed commit contained in the base, or a base commit
    carrying the same change after a squash or rebase.
 9. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
@@ -119,7 +135,7 @@ or `MERGED` is started, and awaits merge/archive, not a fresh run). Then:
 
 `/sdd:auto <feature>` where `sdd/changes/<feature>/` already exists does NOT start over — it resumes from the change's current phase with the same gate substitutes:
 
-- `BLOCKED.md` present → do not resume; tell the user the feature awaits their decision and stop.
+- `BLOCKED.md` present → do not resume: the feature awaits the user's decision. Report it as blocked and take the next roadmap entry; only a run that targeted this single feature ends here.
 - Only `proposal.md` → continue at design (the existing proposal counts as approved: the user drove it).
 - `proposal.md` + `design.md` → continue at tasks.
 - `tasks.md` with unchecked tasks → continue at run.
@@ -129,6 +145,24 @@ or `MERGED` is started, and awaits merge/archive, not a fresh run). Then:
 - `state: MERGED` → point to `/sdd:archive <feature>`; auto does not archive.
 
 Documents already written by the user's manual phases are treated as approved input — never regenerate them. If the change lives on an existing `sdd/<feature>` branch, switch to it instead of branching anew. This enables the hybrid the gates make expensive: the human drives the thinking phases, auto finishes the mechanical ones.
+
+## Handoff: the steps that stay the user's
+
+Auto is expected to run to the end of the run without the user present, so the
+things it cannot do alone — pushing without a remote, opening a PR without `gh`,
+merging, archiving — are **handoffs, not failures**. None of them may abort the
+run or turn into a question. For every one of them:
+
+1. **Leave nothing uncommitted.** Whatever passed its verification is committed
+   on `sdd/<feature>` before auto moves on, so the handoff is a branch the user
+   can push, not a dirty tree they must reconstruct.
+2. **Leave the next action on disk, not in the conversation.** `STATE.md` is the
+   record: `READY_FOR_PR` means "push and open the PR", `PR_OPEN` means "merge
+   it", `MERGED` means "`/sdd:archive <feature>`". `/sdd:status` reads exactly
+   that, so the handoff survives the session ending (shared rule 1).
+3. **Name it in the report** with the exact command, per feature.
+4. **Keep going.** A feature awaiting a human step never stops the run: return
+   to BASE and take the next roadmap entry.
 
 ## The BLOCKED contract
 
@@ -157,6 +191,14 @@ file, and resumes with the normal phase skills on that branch.
 - Always state that living specs and the definitive roadmap tick remain
   pending until merge, and that the next command after merge is
   `/sdd:archive <feature>`.
+- A closing **"yours to run"** list: one line per feature with the single
+  command the user has to execute (`git push`, `gh pr create …`, merge the PR,
+  `/sdd:archive <feature>`, or the BLOCKED.md question to answer). This is the
+  whole point of an unattended run — the user comes back to a list of actions,
+  not a transcript to reconstruct.
+- If the run proceeded without steering docs, say so first: the panel reviewed
+  against weak referents, and fixing that is the highest-value change before
+  the next run.
 - Cost per feature from `sdd/changes/<feature>/metrics.md` if tracking is on.
 - Anything the run revealed about steering docs being too vague to enforce —
   that's the user's lever for making the next auto run better.

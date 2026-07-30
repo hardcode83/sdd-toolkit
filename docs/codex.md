@@ -15,6 +15,10 @@ codex plugin add sdd-toolkit@sdd-toolkit-experimental
 scripts/codex-adapter-install.sh
 ```
 
+The adapter manifest's `version` tracks `.claude-plugin/plugin.json` — CI fails
+when they diverge, because the adapter exposes exactly those skills. Bump both in
+the same commit.
+
 The manifest points directly to the repository's existing `skills/` directory.
 Cloning the repository alone does not activate those skills; the marketplace
 and plugin must be installed.

@@ -23,6 +23,10 @@
     "exit_code": 1,
     "diagnostics": ["ERROR SDD009"]
   },
+  "lifecycle-drifted": {
+    "exit_code": 1,
+    "diagnostics": ["ERROR SDD016", "ERROR SDD017"]
+  },
   "lifecycle-invalid": {
     "exit_code": 1,
     "diagnostics": [

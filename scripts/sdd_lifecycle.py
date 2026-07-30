@@ -692,18 +692,27 @@ def roadmap_feature(body: str) -> str:
     return text.strip().strip("`")
 
 
-def update_roadmap(root: Path, feature: str, archive_relative: str) -> bool:
+def update_roadmap(root: Path, feature: str, archive_relative: str) -> str:
+    """Tick the feature's roadmap entry.
+
+    Returns `ticked` (updated), `current` (matched, already correct), `unmatched`
+    (no entry names this feature) or `absent` (no roadmap at all). The caller
+    reports `unmatched`: a silent no-op would let archive claim a roadmap tick
+    that never happened.
+    """
     roadmap = root / "sdd" / "roadmap.md"
     if not roadmap.is_file():
-        return False
+        return "absent"
     original = roadmap.read_text(encoding="utf-8")
     output: list[str] = []
     changed = False
+    matched = False
     for line in original.splitlines(keepends=True):
         match = ROADMAP_ENTRY_RE.match(line.rstrip("\n"))
         if not match or roadmap_feature(match.group("body")) != feature:
             output.append(line)
             continue
+        matched = True
         body = match.group("body")
         pointer = CHANGE_POINTER_RE.search(body)
         if pointer:
@@ -716,10 +725,11 @@ def update_roadmap(root: Path, feature: str, archive_relative: str) -> bool:
         updated = f"{match.group('prefix')}[x]{body}{newline}"
         output.append(updated)
         changed = changed or updated != line
-    content = "".join(output)
     if changed:
-        roadmap.write_text(content, encoding="utf-8")
-    return changed
+        roadmap.write_text("".join(output), encoding="utf-8")
+    if not matched:
+        return "unmatched"
+    return "ticked" if changed else "current"
 
 
 def finalize_archive(
@@ -755,8 +765,14 @@ def finalize_archive(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(change), str(destination))
     archive_relative = f"changes/archive/{destination.name}/"
-    update_roadmap(root, feature, archive_relative)
-    return f"Archived at {destination.relative_to(root)}."
+    roadmap_result = update_roadmap(root, feature, archive_relative)
+    message = f"Archived at {destination.relative_to(root)}."
+    if roadmap_result == "unmatched":
+        message += (
+            f" WARNING: no roadmap entry names '{feature}', so nothing was ticked "
+            "— check sdd/roadmap.md by hand."
+        )
+    return message
 
 
 def build_parser() -> argparse.ArgumentParser:

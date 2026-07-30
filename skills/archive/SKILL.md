@@ -64,7 +64,11 @@ Write spec updates in the same language as the existing specs (or the user's lan
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . finalize-archive <feature> --specs-confirmed
    ```
 
-   It rechecks GitHub, records `ARCHIVED` with PR URL/number and merge SHA,
-   moves the change to the dated archive, checks the roadmap entry, and
-   updates its pointer. It is idempotent and never modifies living specs.
+   It re-verifies the same evidence as step 1 (GitHub for `pr`, git for
+   `ancestor`/`equivalent`), records `ARCHIVED` with that evidence and its merge
+   SHA, moves the change to the dated archive, ticks the roadmap entry and
+   updates its pointer. It is idempotent and never modifies living specs. If it
+   warns that no roadmap entry names the feature, the tick did **not** happen:
+   report that verbatim and fix `sdd/roadmap.md` — never claim a closed loop the
+   roadmap does not show.
 6. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together.
