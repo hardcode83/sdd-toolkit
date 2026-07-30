@@ -532,6 +532,15 @@ Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía hea
 
 Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
 
+**El log es la fuente de verdad, no el gate.** `usage-phase.sh` solo escribe cuando una fase se lo pide, así que lo que se interrumpía antes del gate, lo que gastaba una fase sin instrumentar, o lo que llegaba *después* de escribir la fila desaparecía del ledger aunque el sink lo hubiera capturado. `scripts/usage-sync.py` reconstruye el ledger completo desde `.sdd-usage/otel.jsonl` y hace upsert de la fila consolidada: lo ejecutan `/sdd:review` al dejar `READY_FOR_PR` (así una feature esperando merge ya tiene métricas, no cero) y `/sdd:archive` después de mover el change (así cuenta también la cola de la fase). Funciona sobre changes ya archivados, con lo que es además la vía de recuperación de histórico:
+
+```bash
+python3 scripts/usage-sync.py --root /ruta/al/proyecto report          # qué falta
+python3 scripts/usage-sync.py --root /ruta/al/proyecto sync <feature>  # reconstruirlo
+```
+
+Es conservador por diseño: nunca baja una cifra que el log no pueda explicar (la conserva y avisa con `WARNING`), y mantiene las filas de fases que el log no conoce. Lo único que ninguna reconstrucción arregla a posteriori es la **atribución**: el sink etiqueta con la fase marcada en ese instante, así que una fase que no se marque va a parar a la anterior — por eso cada skill de fase se marca y la suite lo verifica.
+
 ## Extras por proyecto
 
 `/sdd:init` ofrece según el stack detectado, con diff contra lo ya activado en re-ejecuciones:
@@ -552,7 +561,7 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-*
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-{mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
 docs/guide.md       # guía de uso narrativa
