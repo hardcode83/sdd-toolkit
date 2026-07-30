@@ -81,6 +81,23 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("start <feature>", new)
         self.assertIn("state: ACTIVE", new)
 
+    def test_every_phase_skill_records_its_own_usage(self) -> None:
+        """An uninstrumented phase does not lose its spend — it misattributes it
+        to whichever phase marked itself last, silently."""
+        for phase in ("new", "design", "tasks", "run", "review", "archive"):
+            skill = self.read_skill(phase)
+            with self.subTest(phase=phase):
+                self.assertIn(f'usage-mark.sh" {phase}', skill.replace("<feature> ", ""))
+                self.assertIn(f'usage-phase.sh" {phase}', skill.replace("<feature> ", ""))
+
+    def test_metrics_are_consolidated_from_the_log_not_by_hand(self) -> None:
+        archive = self.read_skill("archive")
+        self.assertIn("usage-sync.py", archive)
+        self.assertIn("Do **not** consolidate by hand", archive)
+        # After the move, so the archive date and the phase's tail are included.
+        self.assertLess(archive.index("finalize-archive <feature>"), archive.index("usage-sync.py"))
+        self.assertIn("usage-sync.py", self.read_skill("review"))
+
     def test_status_exposes_every_non_archived_state(self) -> None:
         status = self.read_skill("status")
         for state in (
