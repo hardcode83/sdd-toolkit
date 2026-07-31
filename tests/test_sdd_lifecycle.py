@@ -183,6 +183,48 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(first, (self.change / "STATE.md").read_bytes())
 
+    def test_marking_ready_again_after_new_commits_refreshes_the_reviewed_sha(
+        self,
+    ) -> None:
+        """A FAIL from /sdd:review is fixed in commits that must be re-recorded.
+
+        `implementation_sha` feeds `verify-merge`, which fingerprints
+        `merge-base..implementation_sha`. Left pointing at the pre-fix commit, the
+        merge gate certifies a range that does not contain the fixes and archive
+        passes anyway.
+        """
+        self.ready()
+        first_sha = read_state(self.change)["implementation_sha"]
+
+        (self.root / "fix.txt").write_text("panel finding closed\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "close review finding")
+        second_sha = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(first_sha, second_sha)
+
+        message = mark_ready(self.root, FEATURE, "main")
+
+        self.assertIn("re-recorded", message)
+        self.assertIn(first_sha[:12], message)
+        self.assertIn(second_sha[:12], message)
+        self.assertEqual(second_sha, read_state(self.change)["implementation_sha"])
+        self.assertEqual("READY_FOR_PR", read_state(self.change)["state"])
+
+    def test_marking_ready_again_does_not_resurrect_a_recorded_pr(self) -> None:
+        """The refresh must not reopen a lifecycle that already moved past ready."""
+        self.record_open()
+        recorded = (self.change / "STATE.md").read_bytes()
+
+        (self.root / "late.txt").write_text("after the PR\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "late commit")
+
+        self.assertEqual(
+            "READY_FOR_PR already passed; lifecycle is PR_OPEN.",
+            mark_ready(self.root, FEATURE, "main"),
+        )
+        self.assertEqual(recorded, (self.change / "STATE.md").read_bytes())
+
     def test_recording_open_pr_does_not_archive_or_update_truth(self) -> None:
         original_spec = (self.root / "sdd/specs/example.md").read_bytes()
         original_roadmap = (self.root / "sdd/roadmap.md").read_bytes()

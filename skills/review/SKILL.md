@@ -36,6 +36,25 @@ Two modes, chosen by argument:
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).
 3. **Synthesize**: merge the three reports, dedupe, and drop any finding without a referent (R#, D#, or quoted steering rule). Present per requirement: **met / partially met / unmet** with `file:line` of implementation and test (from the QA report), then the surviving findings most severe first, then scope creep.
 4. If a panel agent type isn't available, do its dimension yourself inline (degraded but complete).
+4b. **When the verdict is FAIL, the fixes are not part of this phase — and they are
+   not free either.** Review is report-only (see below), so fixing means leaving
+   review and coming back. Two rules make that terminate, mirroring the fix loop
+   `/sdd:run` already caps per section:
+   - **Re-review what you fixed.** A finding closed without a reviewer seeing the
+     fix is an unreviewed change wearing an approved verdict. Re-run only the
+     reviewer(s) whose findings you touched, scoped to the fix.
+   - **Two fix rounds, then stop and hand it to the user.** If a third round would
+     be needed, say so and present what is open instead of iterating. Findings that
+     keep reappearing in the same place are usually a structural problem — the same
+     statement duplicated across several artifacts, a contract with no single home —
+     and another round of edits will not fix that; naming it will.
+   Prefer verifying a text fix by grepping the superseded wording across the whole
+   change, not by re-reading the passage you just rewrote: the corrected sentence
+   tends to land in the explanatory copy while the stale one survives in the
+   artifact that reaches the next implementer.
+   **Any commit made to close findings invalidates the recorded
+   `implementation_sha`** — re-run `mark-ready` (it re-records when HEAD moved) so
+   the merge gate certifies the fixed range and not the one that failed.
 5. Conclude with a verdict: locally verified or list what's missing. If the
    verdict passes, persist the two explicit lifecycle milestones:
 
