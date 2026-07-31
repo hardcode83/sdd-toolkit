@@ -554,7 +554,22 @@ def mark_ready(
     if current in {"PR_OPEN", "MERGED"}:
         return f"READY_FOR_PR already passed; lifecycle is {current}."
     if current == "READY_FOR_PR":
-        return "READY_FOR_PR already recorded."
+        # Idempotent at the same HEAD, but NOT a no-op once the branch has moved.
+        # `implementation_sha` is not decoration: `verify-merge` fingerprints
+        # `merge-base..implementation_sha`, so a stale value makes the merge gate
+        # certify only the commits up to it. Re-running /sdd:review after fixing its
+        # findings — the normal flow when the panel returns FAIL — used to leave the
+        # field pointing at the unfixed commit, and archive would still pass.
+        refreshed = git_context(root, base_branch, runner)
+        if refreshed == {key: data.get(key) for key in refreshed}:
+            return "READY_FOR_PR already recorded."
+        previous = (data.get("implementation_sha") or "")[:12] or "(none)"
+        data.update(refreshed)
+        write_state(change, data)
+        return (
+            "READY_FOR_PR re-recorded: implementation_sha "
+            f"{previous} -> {refreshed['implementation_sha'][:12]}."
+        )
     if current not in {"LOCAL_VERIFIED", "READY_FOR_PR"}:
         raise LifecycleError(f"Cannot mark READY_FOR_PR from lifecycle state '{current}'.")
     data.update(git_context(root, base_branch, runner))
