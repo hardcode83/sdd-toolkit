@@ -20,6 +20,7 @@ from sdd_lifecycle import (  # noqa: E402
     read_state,
     record_pr,
     require_merge,
+    stage_archive_move,
     start_change,
     write_state,
 )
@@ -101,8 +102,12 @@ class LifecycleTests(unittest.TestCase):
     def gh_runner(payload: dict[str, object]):
         def run(
             args: list[str],
-            **_: object,
+            **kwargs: object,
         ) -> subprocess.CompletedProcess[str]:
+            if args[0] == "git":
+                # Only GitHub is faked. The fixture is a real repository, so git
+                # must actually run — staging the archive move depends on it.
+                return subprocess.run(args, **kwargs)  # type: ignore[arg-type]
             if args[:3] != ["gh", "pr", "view"]:
                 raise AssertionError(f"Unexpected external command: {args}")
             return subprocess.CompletedProcess(
@@ -668,6 +673,52 @@ class LifecycleTests(unittest.TestCase):
         archived = self.root / "sdd/changes/archive/2026-07-30-example"
         self.assertEqual("ARCHIVED", read_state(archived)["state"])
         self.assertEqual("equivalent", read_state(archived)["merge_evidence"])
+
+    def test_archive_move_is_staged_so_the_deletion_cannot_be_dropped(self) -> None:
+        """An unstaged deletion is how an archived change comes back as active.
+
+        `shutil.move` is invisible to git, so if the move is not staged the active
+        path survives in HEAD and the next checkout writes it back as an orphan
+        `STATE.md` that doctor reads as a live change.
+        """
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        tracked_before = self.git("ls-files", "sdd/changes/example").stdout
+        self.assertIn("proposal.md", tracked_before)
+
+        finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 30)
+        )
+
+        # The source is gone from the index, not merely absent from disk.
+        self.assertEqual(
+            "", self.git("ls-files", "sdd/changes/example").stdout.strip()
+        )
+        staged = self.git("diff", "--cached", "--name-only").stdout
+        self.assertIn("sdd/changes/archive/2026-07-30-example/proposal.md", staged)
+        # Committing only what is staged must leave nothing behind at the old path.
+        self.git("commit", "-m", "archive example")
+        self.assertEqual(
+            "", self.git("ls-files", "sdd/changes/example").stdout.strip()
+        )
+        # Scope: the roadmap tick stays unstaged, for the human to read first.
+        self.assertIn("sdd/roadmap.md", self.git("diff", "--name-only").stdout)
+
+    def test_staging_the_move_is_skipped_outside_a_work_tree(self) -> None:
+        """Staging is a convenience, never a gate: no work tree, no `git add`."""
+        attempted: list[list[str]] = []
+
+        def runner(args: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            attempted.append(args)
+            return subprocess.CompletedProcess(
+                args=args, returncode=128, stdout="", stderr="not a git repository"
+            )
+
+        stage_archive_move(
+            self.root, self.change, self.change.parent / "archive/x", runner
+        )
+        self.assertEqual([["git", "rev-parse", "--is-inside-work-tree"]], attempted)
 
     def test_repository_without_remote_completes_the_lifecycle(self) -> None:
         self.git("remote", "remove", "origin")
