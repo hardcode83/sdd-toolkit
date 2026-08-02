@@ -68,5 +68,7 @@ jobs:
           fi
 
           echo "Releasing ${previous:-<none>} -> ${version} as ${tag}"
-          git tag -a "${tag}" -m "sdd v${version}"
+          # Same annotation `claude plugin tag` writes, so a tag created by hand
+          # and one created here are indistinguishable.
+          git tag -a "${tag}" -m "${name} ${version}"
           git push origin "${tag}"
