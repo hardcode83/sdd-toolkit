@@ -747,6 +747,39 @@ def update_roadmap(root: Path, feature: str, archive_relative: str) -> str:
     return "ticked" if changed else "current"
 
 
+def stage_archive_move(
+    root: Path,
+    change: Path,
+    destination: Path,
+    runner: Runner = subprocess.run,
+) -> None:
+    """Reflect the archive move in the git index.
+
+    `shutil.move` is a filesystem move, invisible to git: the deletion of the
+    active change is left unstaged. A commit that stages explicit paths — rather
+    than `git add -A sdd/` — then keeps the old directory in HEAD, and the next
+    checkout materializes it again as an orphan that `sdd-doctor` reads as an
+    active change (SDD003 + SDD009 + SDD012 + SDD016, all four from that single
+    dropped deletion). Staging both sides here makes the move atomic for whatever
+    the caller commits afterwards.
+
+    Deliberately scoped to the two paths of the move: living specs, the roadmap
+    and the metrics stay unstaged, because those are the files the human is
+    supposed to read before committing. Each side is staged on its own so a
+    never-tracked source (nothing to delete, an unmatched pathspec for `git add`)
+    cannot stop the destination from being staged. Nothing here is fatal — the
+    archive already succeeded on disk, and a repository this fails in is one
+    where the caller stages by hand anyway.
+    """
+    inside = try_command(
+        ["git", "rev-parse", "--is-inside-work-tree"], root, runner
+    )
+    if not inside or inside.stdout.strip() != "true":
+        return
+    for path in (change, destination):
+        try_command(["git", "add", "-A", "--", str(path)], root, runner)
+
+
 def finalize_archive(
     root: Path,
     feature: str,
@@ -779,6 +812,7 @@ def finalize_archive(
     write_state(change, data)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(change), str(destination))
+    stage_archive_move(root, change, destination, runner)
     archive_relative = f"changes/archive/{destination.name}/"
     roadmap_result = update_roadmap(root, feature, archive_relative)
     message = f"Archived at {destination.relative_to(root)}."

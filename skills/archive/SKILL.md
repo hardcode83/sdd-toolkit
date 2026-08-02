@@ -84,4 +84,13 @@ Write spec updates in the same language as the existing specs (or the user's lan
    consolidated row in `sdd/metrics.md` with the archive date. Report its
    WARNING lines verbatim: they mean a recorded row holds more than the log can
    account for, and it was deliberately kept.
-7. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together.
+7. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together, **staged with `git add -A sdd/`**: `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped.
+8. **Verify the commit, not the working tree.** Once the archive is committed, run
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.
+   Run it **after** the commit: a clean doctor on an uncommitted tree proves
+   nothing about what landed, and that gap is exactly how an orphaned `STATE.md`
+   reaches the base branch and resurfaces as four errors on somebody else's run.
+   In the commit diff the change's files must appear as **renames into**
+   `sdd/changes/archive/<date>-<feature>/`; a bare addition there, with no
+   deletion at the active path, means only half the move was committed. Never
+   report a closed loop from a pre-commit doctor run.
