@@ -28,3 +28,47 @@ jobs:
         run: python3 scripts/validate_toolkit.py fixtures
       - name: Confirm validation is read-only
         run: git diff --exit-code
+
+  # A release is a version bump, and the installer only offers an update when the
+  # declared version changes — so the tag has to follow the bump automatically or
+  # it gets forgotten, which is how `main` ended up three commits ahead of the
+  # newest release with no tag at all. Gated on `validate` on purpose: a tag is a
+  # promise that the executable specification passed at that commit.
+  tag:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the job compares this commit's declared version
+          # against the previous one and must see existing tags to stay idempotent.
+          fetch-depth: 0
+      - name: Tag when the declared version changed
+        run: |
+          set -euo pipefail
+          read_version() {
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+          }
+          name=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["name"])')
+          version=$(read_version < .claude-plugin/plugin.json)
+          tag="${name}--v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already exists — nothing to release."
+            exit 0
+          fi
+
+          previous=$(git show "HEAD^:.claude-plugin/plugin.json" 2>/dev/null | read_version || echo "")
+          if [ "${previous}" = "${version}" ]; then
+            echo "Version unchanged at ${version} — this push is not a release."
+            exit 0
+          fi
+
+          echo "Releasing ${previous:-<none>} -> ${version} as ${tag}"
+          # Same annotation `claude plugin tag` writes, so a tag created by hand
+          # and one created here are indistinguishable.
+          git tag -a "${tag}" -m "${name} ${version}"
+          git push origin "${tag}"
