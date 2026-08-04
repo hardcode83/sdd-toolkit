@@ -22,6 +22,7 @@ from sdd_lifecycle import (  # noqa: E402
     require_merge,
     stage_archive_move,
     start_change,
+    update_roadmap,
     write_state,
 )
 
@@ -734,6 +735,70 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("ARCHIVED", read_state(archived)["state"])
         self.assertIn(
             "- [x] example", (self.root / "sdd/roadmap.md").read_text(encoding="utf-8")
+        )
+
+
+class RoadmapTickTests(unittest.TestCase):
+    """The archive tick, now that /sdd:new no longer annotates in-flight changes."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "sdd").mkdir()
+
+    def write(self, content: str) -> None:
+        (self.root / "sdd" / "roadmap.md").write_text(content, encoding="utf-8")
+
+    def read(self) -> str:
+        return (self.root / "sdd" / "roadmap.md").read_text(encoding="utf-8")
+
+    def test_appends_the_archive_pointer_when_the_entry_has_none(self) -> None:
+        self.write("# Roadmap\n\n- [ ] example — sin anotación in-flight\n")
+        self.assertEqual(
+            "ticked", update_roadmap(self.root, "example", "changes/archive/2026-08-04-example/")
+        )
+        self.assertIn(
+            "- [x] example — sin anotación in-flight → "
+            "changes/archive/2026-08-04-example/",
+            self.read(),
+        )
+
+    def test_rewrites_a_legacy_in_flight_pointer_instead_of_appending(self) -> None:
+        self.write("# Roadmap\n\n- [ ] example — legacy → changes/example/\n")
+        update_roadmap(self.root, "example", "changes/archive/2026-08-04-example/")
+        roadmap = self.read()
+        self.assertIn("→ changes/archive/2026-08-04-example/", roadmap)
+        self.assertEqual(1, roadmap.count("→"))
+
+    def test_the_tick_is_idempotent(self) -> None:
+        self.write("# Roadmap\n\n- [ ] example — algo\n")
+        archive = "changes/archive/2026-08-04-example/"
+        update_roadmap(self.root, "example", archive)
+        first = self.read()
+        self.assertEqual("current", update_roadmap(self.root, "example", archive))
+        self.assertEqual(first, self.read())
+
+    def test_the_metadata_sub_line_is_left_untouched(self) -> None:
+        self.write(
+            "## Stage 1 — el dominio persiste\n\n"
+            "- [ ] example — algo\n"
+            "      needs: other · size: M\n"
+        )
+        update_roadmap(self.root, "example", "changes/archive/2026-08-04-example/")
+        roadmap = self.read()
+        self.assertIn("      needs: other · size: M\n", roadmap)
+        self.assertIn("- [x] example — algo → changes/archive/", roadmap)
+
+    def test_an_unmatched_feature_is_reported_not_silently_skipped(self) -> None:
+        self.write("# Roadmap\n\n- [ ] other — algo\n")
+        self.assertEqual(
+            "unmatched", update_roadmap(self.root, "example", "changes/archive/x/")
+        )
+
+    def test_no_roadmap_at_all_is_reported_as_absent(self) -> None:
+        self.assertEqual(
+            "absent", update_roadmap(self.root, "example", "changes/archive/x/")
         )
 
 

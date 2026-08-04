@@ -56,6 +56,24 @@
     "exit_code": 1,
     "diagnostics": ["ERROR SDD005"]
   },
+  "roadmap-graph-invalid": {
+    "exit_code": 1,
+    "diagnostics": [
+      "ERROR SDD018",
+      "ERROR SDD019",
+      "ERROR SDD020",
+      "ERROR SDD021"
+    ]
+  },
+  "roadmap-graph-warnings": {
+    "exit_code": 0,
+    "diagnostics": [
+      "WARNING SDD022",
+      "WARNING SDD022",
+      "WARNING SDD022",
+      "WARNING SDD023"
+    ]
+  },
   "roadmap-missing-change": {
     "exit_code": 1,
     "diagnostics": ["ERROR SDD002"]

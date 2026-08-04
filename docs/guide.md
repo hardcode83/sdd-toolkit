@@ -35,7 +35,7 @@ Tienes un PRD/plan en markdown y un directorio vacío.
 /sdd:init docs/plan.md
 ```
 
-El init lee el plan y te propone un **triaje** (confirmas antes de que escriba nada): visión y principios → `steering/product.md`; stack y decisiones ya tomadas → `project.md` + `steering/architecture.md`; la lista de features → `roadmap.md`, una línea por futuro change, en orden. Después pregunta qué **steering docs** crear (architecture, security, testing, documentation, por componente…), y qué **extras** activar: MCPs según tu stack, LSPs, puntero en CLAUDE.md, métricas de uso, rtk si falta el binario.
+El init lee el plan y te propone un **triaje** (confirmas antes de que escriba nada): visión y principios → `steering/product.md`; stack y decisiones ya tomadas → `project.md` + `steering/architecture.md`; la lista de features → `roadmap.md`, una línea por futuro change agrupada en stages (metas, no categorías) y con las dependencias que el plan declare; el análisis largo de una entrada, a `roadmap/<feature>.md`. Después pregunta qué **steering docs** crear (architecture, security, testing, documentation, por componente…), y qué **extras** activar: MCPs según tu stack, LSPs, puntero en CLAUDE.md, métricas de uso, rtk si falta el binario.
 
 Importante: el init **no** convierte el plan en proposals. Los proposals se escriben uno a uno, cuando les llega el turno — así el proposal de la feature 5 se escribe contra las specs reales de las features 1-4, no contra lo que el plan imaginaba.
 
@@ -95,17 +95,30 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 ## Recetario del día a día
 
-**¿Por dónde iba?** → `/sdd:status`: changes activos con progreso + roadmap como to-do list con la siguiente entrada marcada.
+**¿Por dónde iba?** → `/sdd:status`: changes activos con progreso + las vistas del roadmap — la **frontera** (qué se puede atacar ya, en paralelo, y cuántas entradas desbloquea cada una), las olas, el camino crítico de cada stage y el grafo.
 
-**Añadir una feature al backlog** → edita `sdd/roadmap.md` a mano (una línea `- [ ] nombre — qué es`) o pídeselo al agente. La posición en la lista es la decisión real: es el orden de ejecución.
+**¿Qué hago ahora?** → la primera entrada de la frontera. No es la primera línea del fichero: una entrada puede estar esperando algo. Si solo te da para una y hay varias disponibles, coge la que más desbloquee (`/sdd:status` lo anota).
 
-**Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso.
+**Añadir una feature al backlog** → edita `sdd/roadmap.md` a mano o pídeselo al agente: una línea en el stage al que pertenece, más su sub-línea de metadatos.
+
+```markdown
+- [ ] mi-feature — qué es, en una línea
+      needs: la-que-crea-lo-que-necesito · size: M · kind: feature
+```
+
+**El orden ya no lo decide la posición, lo decide `needs:`.** Es el cambio de mentalidad importante: si no declaras la dependencia, la entrada se considera atacable desde ya — y `/sdd:auto` puede cogerla antes de que exista lo que necesita. Declarar de menos es el error caro; declarar de más solo la aparca. Si el análisis es largo, no lo metas en la línea: va a `sdd/roadmap/mi-feature.md`, que solo lee el `/sdd:new` de esa entrada.
+
+**Los stages son metas, no categorías** → `## Stage 3 — reservas reales entrando por webhook`, no `## Backend`. Es lo que hace visible qué features convergen hacia el mismo fin, y por eso agrupar por `[FE]`/`[BE]` no sirve: las cadenas cruzan categorías.
+
+**Mi roadmap es una lista plana de hace meses** → sigue funcionando sin tocar nada: sin relaciones declaradas, toda entrada abierta está en la frontera (el comportamiento de siempre) y `/sdd:status` te dice explícitamente que no hay grafo que dibujar. Migras cuando quieras, entrada a entrada — o de golpe con `/sdd:init` sobre el plan, que te lo ofrece con el diff a la vista y **no toca las archivadas**.
+
+**Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso. Cuando nace de otra entrada, esa relación es justo para lo que sirven los metadatos: `completes:` si cierra lo que aquella dejó a medias, `needs:` si depende de algo que crea.
 
 **Tengo los requisitos ya escritos en un doc** → dos vías equivalentes: `/sdd:new mi-feature docs/reqs.md` (el doc como semilla directa), o entrada de roadmap con `(fuente: docs/reqs.md)` para que lo use cuando le llegue el turno. En ambos casos el proposal *convierte* el doc a EARS (no lo copia), señala ambigüedades y huecos, y cuanto mejor esté escrito el doc, menos preguntas te hará — con un doc realmente cerrado, la feature es candidata ideal para `/sdd:auto`.
 
 **¿Doc de una feature o plan entero?** → regla: *documento que describe una feature → `new`; documento que describe el producto/plan → `init`*. Y si te equivocas de comando, no pasa nada: `new` detecta el olor a plan (varias capabilities, decisiones de stack, lista de fases…) y se para antes de escribir, ofreciéndote tratarlo como ingesta de plan ahí mismo (con tu ok — nunca reescribe steering/roadmap por sorpresa) o acotar a una sola feature del doc.
 
-**Lanzar features sin intervenir** → `/sdd:auto [N]`: consume las próximas N entradas hasta abrir una rama + PR por feature, con panel obligatorio. Registra `PR_OPEN` y se detiene: no toca specs vivas, archive ni el tick definitivo del roadmap. Tu gate se mueve a revisar/mergear las PRs; después ejecutas `/sdd:archive <feature>`. Todo lo que necesita tu decisión acaba en `BLOCKED.md`.
+**Lanzar features sin intervenir** → `/sdd:auto [N]`: consume N entradas **de la frontera** (nunca las N primeras del fichero, que podrían depender unas de otras) hasta abrir una rama + PR por feature, con panel obligatorio. Relee la frontera entre features, así que cerrar una puede habilitar otra dentro de la misma tirada. Aborta si el grafo tiene errores — no elige un orden a partir de un grafo que ya se sabe mal. Registra `PR_OPEN` y se detiene: no toca specs vivas, archive ni el tick definitivo del roadmap. Tu gate se mueve a revisar/mergear las PRs; después ejecutas `/sdd:archive <feature>`. Todo lo que necesita tu decisión acaba en `BLOCKED.md`.
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md`, decide, borra el archivo y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos).
 
@@ -181,7 +194,7 @@ El panel salta al *completarse una sección* — una tarea suelta solo lo dispar
 
 1. **Los documentos mandan.** Si el código y la spec discrepan, se arregla el que esté mintiendo — nunca se divergen en silencio.
 2. **Tú eres el gate.** Ninguna fase avanza sola; aprobar el proposal es la decisión más barata e importante del ciclo.
-3. **Proposals just-in-time.** El roadmap es una línea por feature; el detalle se escribe cuando toca.
+3. **Proposals just-in-time.** El roadmap es un índice: una línea por feature más sus dependencias; el detalle se escribe cuando toca.
 4. **Specs = presente.** `sdd/specs/` describe lo que el sistema *hace*, no un changelog de lo que se hizo.
 5. **Changes pequeños.** Si un proposal pide más de 7 requisitos, son dos changes.
 6. **Sin referente no hay finding.** El panel es tan bueno como tus steering docs sean concretos.

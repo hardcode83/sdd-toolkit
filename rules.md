@@ -4,6 +4,12 @@
    roadmap — everything needed to continue this project is in those markdown
    files. Keep them truthful: specs match code, checkboxes match verified
    reality. Never rely on conversation memory for state.
+   And each fact has **one** home: never copy derived state into a second file.
+   A change's progress lives in its `STATE.md` and `BLOCKED.md`, so no phase
+   annotates `sdd/roadmap.md` to say a change started, is blocked, or is ready —
+   `/sdd:status` derives all of that. Only `/sdd:archive` writes the roadmap, and
+   only post-merge. Duplicating derived state into a shared file is what made
+   parallel work conflict (`docs/adr/0001-roadmap-structure-and-concurrency.md`).
 2. **Language**: write generated documents in the language the user
    communicates in.
 3. **Phase gates**: end each phase by presenting a summary and waiting for

@@ -18,8 +18,22 @@ invents scope.
 ## Preconditions (check all; abort with a clear message if any fails)
 
 1. Git repo with a **clean working tree**. Record the current branch as BASE.
-2. `sdd/roadmap.md` exists with at least one unchecked, un-started entry
-   (or the named feature is one).
+2. `sdd/roadmap.md` exists and its **frontier** is non-empty (or the named
+   feature is in it):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . frontier
+   ```
+
+   The frontier is the set of entries whose declared dependencies are all
+   closed — the only entries that can be built right now. Abort if it is empty
+   while open entries remain: everything left is waiting on something, and
+   `sdd_roadmap.py --root . report` says on what. A roadmap that declares no
+   relations puts every open entry in the frontier, so this is also the
+   pre-existing behaviour for flat roadmaps.
+   Any `ERROR` from `sdd_roadmap.py --root . validate` (a cycle, a dependency on
+   an entry that does not exist) aborts the run: auto must not pick an order out
+   of a graph that is known to be wrong.
 3. `sdd/steering/` has at least `architecture.md` or `security.md` or
    `testing.md`. With no steering, the panel (the only reviewer in auto) has
    weak referents: **do not ask for confirmation** — the user pre-authorized
@@ -48,15 +62,27 @@ Everywhere a phase skill says "ask the user", "wait for approval", or
   impossible — it contradicts the roadmap entry auto is executing — BLOCK.
 - **Missing arguments** (the phase skills ask when the feature is ambiguous) →
   never applies: auto always passes the feature name explicitly.
+- **`/sdd:new`'s dependency gate** (its question when an entry's `needs` are
+  still open) → never applies either, and must never be answered by guessing:
+  auto only takes entries from the frontier, and precondition 2 already aborts a
+  named feature that is not in it. If it somehow fires, BLOCK — auto overriding
+  a declared dependency is exactly the guess gates exist to prevent.
 - **Ad-hoc roadmap registration** (`/sdd:new`'s question for features outside
   the roadmap) → never applies either: auto only consumes roadmap entries and
   never invents scope.
 
 ## Per-feature pipeline
 
-Take the next unchecked, un-started roadmap entry — un-started means no
+Take the next **un-started entry from the frontier**, in the order the frontier
+lists it — never the next line in the file. Un-started means no
 `sdd/changes/<feature>/` at all (a change sitting at `READY_FOR_PR`, `PR_OPEN`
-or `MERGED` is started, and awaits merge/archive, not a fresh run). Then:
+or `MERGED` is started, and awaits merge/archive, not a fresh run).
+
+Re-read the frontier before each feature: closing one opens the entries that
+were waiting on it, so a run of `N` can legitimately reach features that were
+not workable when it started. Deferred entries (`deferred-until`) are never in
+the frontier and auto never picks them — their trigger is a human judgement.
+Then:
 
 1. **Branch + claim**: check `git ls-remote --heads origin "sdd/<feature>"`. If
    the branch exists, establish **whose** it is before calling it a claim —
@@ -174,7 +200,10 @@ When blocking a feature:
    This file is the handoff — write it so the user can decide in one read.
 2. Commit whatever is consistent (documents + code that passed its
    verification) on `sdd/<feature>` — never leave uncommitted work.
-3. Annotate the roadmap entry with ` ⛔ blocked`.
+3. Do **not** annotate the roadmap. `BLOCKED.md` is the record, and
+   `/sdd:status` derives `⛔` from it; annotating the entry too would duplicate
+   derived state into a shared file, which is what makes parallel runs conflict
+   (`docs/adr/0001-roadmap-structure-and-concurrency.md`, D5).
 4. Return to BASE and continue with the next entry (or finish if none).
 
 Unblocking is human: the user answers in BLOCKED.md's terms, deletes the

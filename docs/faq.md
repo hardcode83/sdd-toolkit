@@ -2,6 +2,8 @@
 
 Respuestas a las preguntas que surgieron construyendo y usando el toolkit. La [guía](guide.md) explica *cómo* usarlo; esto explica *por qué* es así.
 
+Las decisiones grandes —las que se investigaron con datos y descartaron alternativas— viven en [`adr/`](adr/) y se enlazan desde aquí. Este FAQ da la respuesta corta; la ADR da la evidencia y lo que se descartó.
+
 ## ¿Por qué los revisores core son architect/security/qa y no otros?
 
 No es un estándar del sector — es la terna con **referente garantizado**: el contrato del panel prohíbe findings sin referente citado, y el flujo SDD produce exactamente tres tipos de verdad-escrita en todo proyecto: el design (D# → architect), el steering de seguridad (reglas → security) y los criterios EARS (R# → qa). Además cubren las tres clases ortogonales de fallo: ¿está construido *como se decidió*?, ¿hace *daño*?, ¿hace *lo que se pidió*?
@@ -70,8 +72,24 @@ Porque el plugin se instala una vez por usuario y las skills se comparten: edita
 
 ## ¿Por qué el roadmap no se convierte en proposals desde el día uno?
 
-Porque el proposal de la feature 5 escrito el día uno estaría anclado a lo que el plan *imaginaba*; escrito cuando le toca, se ancla a las **specs reales** de las features 1-4. El roadmap es una línea por feature (barato de mantener y reordenar); el proposal es caro y caduca. Just-in-time no es pereza — es precisión.
+Porque el proposal de la feature 5 escrito el día uno estaría anclado a lo que el plan *imaginaba*; escrito cuando le toca, se ancla a las **specs reales** de las features 1-4. El roadmap es un índice —una línea por feature más sus dependencias, barato de mantener y de reordenar—; el proposal es caro y caduca. Just-in-time no es pereza — es precisión.
 
 ## ¿En equipo, quién tiene qué feature? ¿Y si dos personas cogen la misma?
 
 El candado es la **rama remota `sdd/<feature>`**: `/sdd:new` comprueba si existe (y avisa con el dueño), y ofrece pushear tu claim antes de escribir; auto lo publica *antes* de trabajar. `/sdd:status` enseña las ramas de otros como "en curso por otros". Los conflictos de merge restantes son señal, no ruido: dos features tocando la misma `specs/<capability>.md` tenían que coordinarse igualmente.
+
+Ese candado es de *equipo*. El caso de **varias sesiones tuyas en la misma máquina** es otro problema y tiene su propia respuesta: [ADR 0001](adr/0001-roadmap-structure-and-concurrency.md) D1-D2.
+
+## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
+
+Porque una lista plana no puede responder a "¿qué puedo atacar ya?" ni a "¿qué features convergen hacia el mismo fin?". La información de dependencias se escribía igualmente — pero en prosa dentro de la entrada, donde es inerte: nada podía calcular un orden.
+
+Tres decisiones detrás, con su evidencia medida en [ADR 0001](adr/0001-roadmap-structure-and-concurrency.md):
+
+- Los **stages agrupan por resultado**, no por categoría (D3). Agrupar por `[FE]`/`[BE]` escondería las cadenas, porque las cadenas cruzan categorías.
+- Los metadatos van en **sub-línea de continuación** (D4), no en la propia línea de la entrada: al final de un párrafo de varios KB no los encuentra nadie.
+- El grafo **se calcula, no se dibuja** (D7) — y solo se renderiza donde hay aristas. Un árbol de un nivel sobre entradas independientes finge información que no existe. Y no es un árbol: una entrada puede necesitar dos padres, así que la indentación no daba para expresarlo.
+
+## ¿Por qué el roadmap ya no se anota con `→ changes/<feature>/` al empezar una entrada?
+
+Porque era estado derivado duplicado en un fichero compartido, y se medía el coste: dos ramas anotando entradas **adyacentes** dan conflicto de merge garantizado — y trabajar en paralelo toma justamente entradas consecutivas. El estado (`▶ ✓ PR ⛔`) se deriva de `sdd/changes/*/STATE.md`, que es donde la regla 8 ya pone la verdad. El tick de `/sdd:archive` se mantiene: es post-merge y está serializado. Detalle en [ADR 0001](adr/0001-roadmap-structure-and-concurrency.md) D5.

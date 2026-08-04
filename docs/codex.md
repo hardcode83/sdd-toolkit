@@ -74,6 +74,7 @@ Claude Code.
 | `init` core scaffold | Partially supported | Created `sdd/project.md`, `sdd/README.md`, specs/archive directories, and selected steering docs. Planning ingestion, re-init/merge, baselines, and extras remain unverified. |
 | `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven internal adapter tests (Python `unittest` in the toolkit checkout), and checked tasks only after verification. The Claude review panel was deliberately skipped. This does not prescribe a test runner to consumer projects. |
 | `archive` merge-gated path | Unverified | The former pre-merge basic path is obsolete. Shared skills now require `STATE.md` plus objective `gh` merge evidence before specs, roadmap, and archive writes. |
+| Roadmap graph (`scripts/sdd_roadmap.py`) | Expected to work, unverified | Python 3 stdlib and read-only, like `sdd-doctor.py`, so nothing Claude-specific is involved: `status`'s frontier/waves/critical-path views and the `SDD018`-`SDD023` checks are one subprocess call. Not exercised under Codex. |
 | `review`, `auto`, `diagram` | Unverified | Outside this experiment. |
 | Claude reviewer panel | Unsupported | Claude agent types and project `.claude/agents/` reviewers were not adapted. |
 | Tournament mode | Unsupported | Claude Agent calls, model roles, and isolated-worktree tournament orchestration were not adapted. |
