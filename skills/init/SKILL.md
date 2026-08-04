@@ -72,7 +72,7 @@ Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.
 
 ### 3b. Worktree isolation (shared rule 10)
 
-Two things the project has to own, because the plugin cannot guess either:
+Two things the project has to own, because the plugin cannot guess either (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
 
 1. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing.
 2. **Declare the bootstrap.** Write a **Worktree bootstrap** section in `sdd/project.md` listing what a fresh worktree needs that git does not carry, and the exact command to get it. This is the number-one practical friction of worktrees: without `.env` / `.venv` / `node_modules` / a local database, the project's own verification fails there and the failure looks like a code problem.

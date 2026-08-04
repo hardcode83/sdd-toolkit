@@ -50,7 +50,7 @@ que sea su lenguaje o framework.
 /sdd:new
 ```
 
-Sin argumento, coge la primera entrada del roadmap y la convierte en `changes/<feature>/proposal.md`: 3-7 requisitos como user stories con criterios EARS ("WHEN X, THE SYSTEM SHALL Y"), un *Out of scope* explícito, y las specs que tocará. Lo revisas. Si algo no te cuadra, se corrige aquí — es el momento barato de cambiar de opinión.
+Sin argumento, coge la primera entrada de la **frontera** del roadmap (las que tienen sus dependencias cerradas — no la primera línea del fichero) y la convierte en `changes/<feature>/proposal.md`: 3-7 requisitos como user stories con criterios EARS ("WHEN X, THE SYSTEM SHALL Y"), un *Out of scope* explícito, y las specs que tocará. Lo revisas. Si algo no te cuadra, se corrige aquí — es el momento barato de cambiar de opinión.
 
 **3. Diseño (si hace falta):**
 
@@ -81,7 +81,7 @@ Un PR abierto o cerrado sin merge no se puede archivar. Las specs vivas y el
 tick definitivo del roadmap esperan al merge; una afirmación del agente no
 sustituye `gh pr view`.
 
-Y vuelta al paso 2 con la siguiente entrada del roadmap.
+Y vuelta al paso 2 con la siguiente entrada de la frontera — que puede no ser la siguiente del fichero: cerrar una entrada desbloquea las que la esperaban.
 
 ## Escenario B: adoptar SDD en un proyecto existente
 

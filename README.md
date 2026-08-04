@@ -485,6 +485,9 @@ Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
 proyecto/
 ├── .mcp.json                   # MCPs opcionales (escrito por /sdd:init)
 ├── .claude/settings.json       # env de telemetría si activas métricas
+├── .claude/worktrees/          # copias aisladas por feature — GITIGNORADO (SDD024)
+├── .git/sdd/sessions.json      # registro de sesiones y bindings — estado de máquina
+├── .sdd-usage/                 # (opcional) log OTel, uno por repo — gitignorado
 ├── CLAUDE.md                   # puntero SDD (bloque idempotente)
 └── sdd/                        # ← LA CAPA DE PERSISTENCIA
     ├── project.md              # steering core: stack, comandos (se lee siempre)
@@ -646,7 +649,7 @@ evidencia y alternativas en [ADR 0001](docs/adr/0001-roadmap-structure-and-concu
 
 ## Métricas de uso por feature
 
-Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
+Extra opcional de `/sdd:init`: tokens reales + coste estimado desde la concepción al archivado, **subagentes incluidos**. Fuente: el export OTel nativo de Claude Code (`claude_code.token.usage`) recibido por un sink OTLP local (`scripts/usage-sink.py`, Python stdlib) que etiqueta cada datapoint con la fase activa **de la sesión que lo produjo** (por su `session.id`), así que dos sesiones en paralelo no se facturan tokens la una a la otra. Un sink y un log por repositorio, worktrees incluidos. Ledger por change (`metrics.md`) + consolidado en `sdd/metrics.md`. Límites documentados en `references/metrics.md`.
 
 **El log es la fuente de verdad, no el gate.** `usage-phase.sh` solo escribe cuando una fase se lo pide, así que lo que se interrumpía antes del gate, lo que gastaba una fase sin instrumentar, o lo que llegaba *después* de escribir la fila desaparecía del ledger aunque el sink lo hubiera capturado. `scripts/usage-sync.py` reconstruye el ledger completo desde `.sdd-usage/otel.jsonl` y hace upsert de la fila consolidada: lo ejecutan `/sdd:review` al dejar `READY_FOR_PR` (así una feature esperando merge ya tiene métricas, no cero) y `/sdd:archive` después de mover el change (así cuenta también la cola de la fase). Funciona sobre changes ya archivados, con lo que es además la vía de recuperación de histórico:
 
@@ -676,7 +679,7 @@ skills/<fase>/      # init·new·design·tasks·run·archive·status·doctor·re
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
-references/         # steering · mcp-catalog · lsp-catalog · metrics
+references/         # steering · isolation · mcp-catalog · lsp-catalog · plugin-catalog · metrics
 scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · sdd_session.py · validate_toolkit.py · usage-{dir,mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
