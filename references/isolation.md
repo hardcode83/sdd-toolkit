@@ -47,8 +47,12 @@ Conflict evidence, in the order it matters:
 2. **Create and enter it** with the `EnterWorktree` tool, named after the feature
    (`sdd/<feature>`). It switches the session's working directory, which is the
    whole point — prefixing paths by hand leaves the harness pinned to the old
-   directory. The worktree lands in `.claude/worktrees/`, which must be
-   gitignored (`/sdd:init` adds it; `/sdd:doctor` reports it missing).
+   directory. The worktree lands under `.claude/worktrees/`, which must be
+   gitignored (`/sdd:init` adds it; `SDD024` reports it missing).
+   Do not assume the directory name: the tool flattens the `/`, so the name
+   `sdd/<feature>` becomes `.claude/worktrees/sdd+<feature>`. That is precisely
+   why the path is recorded in step 4 and read back with `resolve` — never
+   reconstructed.
 
 3. **Bootstrap what git does not carry.** A fresh worktree has no `.env`, no
    `.venv`, no `node_modules`, no local database — so the project's own
@@ -103,10 +107,16 @@ After `/sdd:archive` proves the merge, the worktree and its branch have no
 further use. Archive offers to remove them:
 
 ```bash
-git worktree remove .claude/worktrees/sdd/<feature>
+path=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>)
+git worktree remove "$path"
 git branch -d sdd/<feature>
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . release <feature>
 ```
+
+**Always take the path from `resolve`, never build it.** `EnterWorktree` flattens
+the `/` in a worktree name, so `sdd/<feature>` lands in
+`.claude/worktrees/sdd+<feature>` — a hardcoded `.claude/worktrees/sdd/<feature>`
+does not exist. The registry holds the real path; use it.
 
 Use plain git, not `ExitWorktree`: that tool only touches worktrees created by
 `EnterWorktree` **in the same session**, and archive normally runs in a different
