@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -104,8 +105,33 @@ class PhaseTotals:
         )
 
 
+def usage_dir(root: Path) -> Path:
+    """The single `.sdd-usage` shared by every worktree of this repository.
+
+    One sink serves the whole project (every session exports to the same port,
+    configured in the versioned settings), so there is exactly one log — and it
+    sits next to the main worktree. Degrades to `root` outside a git repository,
+    which is the pre-worktree behaviour. Mirrors `scripts/usage-dir.sh`.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return root / ".sdd-usage"
+    if result.returncode or not result.stdout.strip():
+        return root / ".sdd-usage"
+    common = Path(result.stdout.strip())
+    if not common.is_absolute():
+        common = root / common
+    return common.parent.resolve() / ".sdd-usage"
+
+
 def load_log(root: Path) -> list[dict]:
-    log = root / ".sdd-usage" / "otel.jsonl"
+    log = usage_dir(root) / "otel.jsonl"
     if not log.is_file():
         return []
     rows: list[dict] = []

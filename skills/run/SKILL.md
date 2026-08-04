@@ -22,6 +22,9 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
 ## Steps
 
 1. **Load context.** Read `sdd/project.md` and the change's `proposal.md`, `design.md` (if any), and `tasks.md`. If `tasks.md` doesn't exist, stop and point to `/sdd:tasks`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> run` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
+   - **Worktree, then the branch guard** (shared rule 10 — this is the phase that writes code, so it matters most here):
+     1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>` — if it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`). Nothing printed → run `… check --feature <feature>` and follow `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` on `CONFLICT`.
+     2. **Before the first edit**, verify `git branch --show-current` is `sdd/<feature>` (or the branch `STATE.md` records). If it is not, **STOP** and report it — do not "fix" it with a checkout, which can drag another session's uncommitted files onto this branch. This guard exists because `mark-ready` records `head_branch` and `implementation_sha` as the merge gate's evidence: writing code from the wrong branch does not just conflict, it makes that evidence false.
    - **Steering**: if `sdd/steering/` exists, read each doc's frontmatter and fully load those whose `phases` (if present) include `run` and whose `applies_to` (if present) matches the files this change touches. Re-check when a task takes you into files of a scope not yet loaded (e.g. the first task touching `infra/`).
 2. **Execute tasks strictly in order.** For each unchecked task:
    - Implement it following the design decisions and the conventions in `project.md`.

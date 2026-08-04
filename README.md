@@ -79,7 +79,9 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `sdd/roadmap/<feature>.md` | Proyecto | tú (o el init al ingerir un plan) | el análisis largo de una entrada; solo lo lee su `/sdd:new` |
 | `.claude/agents/sdd-review-*.md` | Proyecto | tú, desde `templates/reviewer-template.md` | revisores custom del panel — versionados con el repo |
 | `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
-| `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
+| `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja; **uno por repo**, compartido por sus worktrees |
+| `.git/sdd/sessions.json` | Máquina | `sdd_session.py` | registro de sesiones vivas y bindings de worktree; nunca commiteable |
+| `.claude/worktrees/` | Máquina | `EnterWorktree` | copias aisladas por feature; **debe estar en `.gitignore`** |
 
 **La frontera interesante son los templates y el steering**: el plugin pone la *forma* (esqueleto + frontmatter + reglas de carga en `references/steering.md`), el proyecto pone el *contenido* (tus reglas concretas). El init copia una vez y rellena; los updates del plugin **jamás tocan lo copiado** — por eso endurecer una regla de seguridad es editar un markdown de tu repo, y cambiar cómo se revisa es editar el plugin. Y el mismo patrón explica el panel: los agentes (plugin) no llevan reglas propias — verifican las tuyas (proyecto).
 
@@ -349,6 +351,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD021` | error | Una entrada cerrada declara una dependencia que sigue abierta: se entregó antes de aquello de lo que dijo depender. |
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
+| `SDD024` | warning | `.claude/worktrees/` contiene worktrees pero no está en `.gitignore`, así que pueden acabar commiteados. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -380,6 +383,12 @@ estructura: viven en `scripts/sdd_roadmap.py` y `sdd-doctor.py` solo convierte
 sus `Finding` en `Diagnostic` (`graph_checks()`). Están ahí porque las fases
 necesitan las mismas respuestas de las que se derivan (frontera, olas) —
 duplicar el parser en el doctor es como los dos se desincronizarían.
+
+Y una frontera que conviene respetar: el doctor valida **estado de proyecto**
+(lo que está commiteado), porque sus fixtures son árboles de proyecto. El estado
+de **máquina** —el registro de sesiones y los bindings de worktree, que viven en
+el directorio git compartido— lo reporta `scripts/sdd_session.py orphans`, y la
+skill `/sdd:doctor` ejecuta los dos y etiqueta cuál es cuál.
 
 Esta estructura mantiene separadas detección, presentación y política de salida;
 una futura reparación, si se diseña, deberá seguir siendo una operación explícita
@@ -569,6 +578,63 @@ Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía hea
 
 **Reanudación parcial**: `/sdd:auto <feature>` sobre un change ya empezado no regenera nada — detecta documentos y `STATE.md`. Continúa trabajo local, abre un PR para `READY_FOR_PR`, reporta y espera si está `PR_OPEN`, y remite a `/sdd:archive` si está `MERGED`. El híbrido natural: tú conduces proposal/design y auto remata run→review→PR.
 
+## Varias features a la vez, en la misma máquina
+
+Dos sesiones sobre el mismo clon comparten HEAD. La segunda hace
+`git checkout -b sdd/<otra>` y **se lleva los ficheros sin commitear de la
+primera a la rama equivocada**; la primera sigue escribiendo creyendo estar en la
+suya. El daño no es un conflicto de merge: `mark-ready` graba `head_branch` e
+`implementation_sha` como *la* prueba del gate de merge, así que una sesión
+descolocada graba evidencia falsa — corrompe el núcleo del diseño.
+
+**Una feature = una rama = un directorio de trabajo** (regla compartida 10). El
+flujo lo detecta y lo arregla solo:
+
+```bash
+python3 scripts/sdd_session.py --root . check --feature <feature>
+```
+
+`CLEAR` → sigues donde estás. `CONFLICT` → `/sdd:new` te **ofrece** el worktree
+(recomendando sí) nombrando la evidencia; `/sdd:auto`, que no pregunta nunca, lo
+**aplica**. Tres evidencias, en orden de importancia: otra **sesión viva** sobre
+este clon, HEAD en la rama de **otra feature** (peor si el árbol está sucio), o
+este clon con **changes en curso** de otras features.
+
+| Pieza | Dónde | Por qué ahí |
+|---|---|---|
+| Registro de sesiones y bindings | `$(git rev-parse --git-common-dir)/sdd/sessions.json` | Compartido por todos los worktrees del repo, nunca commiteable, invisible a `git status` |
+| Liveness | el `pid` registrado (`kill -0`) | Una sesión que muere se lleva su claim: **no hay candados zombis** que desbloquear a mano |
+| Worktrees | `.claude/worktrees/` | Donde los crea `EnterWorktree`. **Tiene que estar en `.gitignore`** (`/sdd:init` lo añade, `SDD024` lo vigila) |
+
+El registro guarda dos cosas distintas a propósito: **sesiones** (se podan por
+liveness) y **bindings feature→worktree** (sobreviven a la sesión, porque el
+trabajo a medias también). Cada fase posterior encuentra su sitio con
+`sdd_session.py resolve <feature>`, nunca adivinando una ruta.
+
+**Lo que hay que pagar**, y no se esconde:
+
+- Un worktree recién creado **no tiene** `.env`, `.venv`, `node_modules` ni tu
+  base de datos local, así que la verificación del proyecto falla allí y el fallo
+  parece un bug. Se declara en la sección **Worktree bootstrap** de
+  `sdd/project.md` (regla 9: los comandos del proyecto son del proyecto). Si no
+  está declarado y la verificación falla por eso, *eso* es el hallazgo — no se
+  adivina qué copiar.
+- `worktree.baseRef` por defecto es `fresh`: rama desde `origin/<base>`, ignorando
+  commits locales sin pushear. El flujo compara antes y te avisa, para no grabar
+  en `STATE.md` un BASE del que el worktree no salió.
+- `/sdd:archive` queda **serializado en el worktree principal**: muta
+  `sdd/specs/`, tickea el roadmap y mueve directorios. Es post-merge, así que ya
+  era cierto de hecho; ahora es precondición explícita. Y es quien ofrece retirar
+  el worktree y su rama.
+- Las **métricas** estaban rotas para concurrencia y worktrees lo empeoraba en
+  silencio: un único `current-task` global era last-writer-wins, y como todas las
+  sesiones exportan al mismo puerto (está en el `settings.json` versionado) solo
+  el primer sink bindea. Ahora hay **un sink y un log por repo** y la atribución
+  es **por `session.id`**, que el sink ya recibía en cada datapoint.
+
+Detalle del protocolo en [`references/isolation.md`](references/isolation.md);
+evidencia y alternativas en [ADR 0001](docs/adr/0001-roadmap-structure-and-concurrency.md) D1-D2.
+
 ## Trabajo en equipo
 
 **Una feature = una rama `sdd/<feature>` = un dueño.** El código, los documentos del change y `STATE.md` viajan juntos en el PR. El merge integra la implementación y su evidencia local; el archive posterior actualiza specs/roadmap y convierte el change en historia solo cuando ese merge ya es objetivo.
@@ -611,7 +677,7 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · validate_toolkit.py · usage-{mark,phase,sink,sync}
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · sdd_session.py · validate_toolkit.py · usage-{dir,mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
 docs/guide.md       # guía de uso narrativa

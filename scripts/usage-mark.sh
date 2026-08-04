@@ -7,17 +7,32 @@ set -euo pipefail
 
 feature="${1:?usage: usage-mark.sh <feature> <phase>}"
 phase="${2:?usage: usage-mark.sh <feature> <phase>}"
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(pwd)
-settings="$root/.claude/settings.json"
+
+# One sink, one log, one pidfile for the whole repository — including its
+# worktrees, which all export to the same port.
+# shellcheck source=usage-dir.sh
+. "$here/usage-dir.sh"
+sdd_usage_resolve "$root"
+settings="$SDD_USAGE_MAIN/.claude/settings.json"
 
 command -v jq >/dev/null || exit 0
 [ -f "$settings" ] || exit 0
 enabled=$(jq -r '.env.CLAUDE_CODE_ENABLE_TELEMETRY // empty' "$settings")
 [ "$enabled" = "1" ] || exit 0
 
-dir="$root/.sdd-usage"
-mkdir -p "$dir"
+dir="$SDD_USAGE_DIR"
+mkdir -p "$dir/tasks"
+# Attribution is PER SESSION. A single shared pointer was last-writer-wins, so
+# two concurrent sessions billed each other's tokens to the wrong feature. The
+# sink already records `session.id` on every datapoint, so it can resolve the
+# right file. `current-task` stays as the fallback for datapoints that arrive
+# without a session id, and for readers older than this change.
 printf '%s/%s' "$feature" "$phase" > "$dir/current-task"
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  printf '%s/%s' "$feature" "$phase" > "$dir/tasks/$CLAUDE_CODE_SESSION_ID"
+fi
 
 # ensure sink (port from the configured OTLP endpoint)
 port=4318
@@ -27,6 +42,6 @@ pidfile="$dir/sink.pid"
 if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
   exit 0
 fi
-SDD_USAGE_DIR="$dir" nohup python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/usage-sink.py" "$port" >/dev/null 2>&1 &
+SDD_USAGE_DIR="$dir" nohup python3 "$here/usage-sink.py" "$port" >/dev/null 2>&1 &
 echo $! > "$pidfile"
 echo "usage sink started on 127.0.0.1:$port"

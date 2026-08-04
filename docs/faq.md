@@ -78,7 +78,35 @@ Porque el proposal de la feature 5 escrito el día uno estaría anclado a lo que
 
 El candado es la **rama remota `sdd/<feature>`**: `/sdd:new` comprueba si existe (y avisa con el dueño), y ofrece pushear tu claim antes de escribir; auto lo publica *antes* de trabajar. `/sdd:status` enseña las ramas de otros como "en curso por otros". Los conflictos de merge restantes son señal, no ruido: dos features tocando la misma `specs/<capability>.md` tenían que coordinarse igualmente.
 
-Ese candado es de *equipo*. El caso de **varias sesiones tuyas en la misma máquina** es otro problema y tiene su propia respuesta: [ADR 0001](adr/0001-roadmap-structure-and-concurrency.md) D1-D2.
+Ese candado es de *equipo*. El caso de **varias sesiones tuyas en la misma máquina** es otro problema y tiene su propia respuesta, abajo. Los dos checks corren, porque la rama de un compañero y el proceso de un compañero son hechos distintos.
+
+## Abro dos sesiones para dos features y se pisan — ¿por qué worktree y no simplemente ramas?
+
+Porque el problema no son las ramas, es que **comparten el directorio de trabajo**. Dos sesiones sobre el mismo clon comparten HEAD: la segunda hace `git checkout -b sdd/<otra>` y git se lleva con ella los ficheros sin commitear de la primera, que sigue escribiendo creyendo estar en su rama.
+
+Y el daño no se queda en un conflicto: `mark-ready` graba `head_branch` e `implementation_sha` como **la** prueba del gate de merge (regla 8). Una sesión descolocada graba evidencia falsa — se corrompe el núcleo del diseño, no un detalle de ergonomía. Por eso `/sdd:run` verifica la rama **antes de la primera edición** y para en seco si no cuadra, en vez de "arreglarlo" con un checkout que arrastraría ficheros ajenos.
+
+Un worktree da rama *y* directorio propios compartiendo el object store, así que es barato. Encaja especialmente bien porque el estado de SDD ya estaba particionado por feature: `sdd/changes/<feature>/` no lo comparte nadie. El flujo ya estaba diseñado como si fuera paralelo — solo le faltaba el aislamiento físico.
+
+## ¿Por qué el registro de sesiones vive en `.git/` y no en `sdd/`?
+
+Porque es estado de **máquina**, no de proyecto, y las dos propiedades que necesita las da ese sitio y no otro: `$(git rev-parse --git-common-dir)` es **compartido por todos los worktrees** del repo (así que las sesiones se ven entre ellas) y está **dentro de `.git`** (así que nunca aparece en `git status` ni se puede committear por accidente).
+
+La liveness sale del `pid` registrado (`kill -0`), lo que elimina la peor propiedad de un candado: **no hay candados zombis**. Una sesión que muere se lleva su claim. Y guarda dos cosas distintas a propósito — las *sesiones* se podan por liveness, los *bindings feature→worktree* sobreviven, porque el trabajo a medias también sobrevive a la conversación que lo empezó.
+
+Misma frontera en `/sdd:doctor`: valida estado de proyecto (sus fixtures son árboles commiteados) y delega el estado de máquina en `sdd_session.py orphans`.
+
+## Activé worktrees y ahora los tests fallan — ¿está roto?
+
+Casi seguro que no: un worktree recién creado no tiene lo que git no versiona — `.env`, `.venv`, `node_modules`, tu base de datos local. Es la fricción número uno real de los worktrees, y por eso se declara en la sección **Worktree bootstrap** de `sdd/project.md`: qué hace falta y el comando exacto para conseguirlo (regla 9 — los comandos del proyecto son del proyecto, el plugin no los adivina).
+
+Si la verificación falla por un fichero local que esa sección no menciona, **eso es el hallazgo**: se documenta ahí. El flujo tiene instrucciones explícitas de no adivinar qué copiar, porque copiar el fichero equivocado es peor que fallar.
+
+## ¿Y las métricas por feature con dos sesiones en marcha?
+
+Estaban rotas antes de esto, y los worktrees lo empeoraban en silencio. Dos causas: `usage-mark.sh` escribía un único `current-task` global (last-writer-wins, así que una sesión facturaba sus tokens a la feature de la otra), y como el endpoint OTLP está en el `settings.json` **versionado** y se lee al arrancar sesión, todas las sesiones exportan al mismo puerto — con worktrees solo el primer sink bindea y todo cae en su log.
+
+El arreglo salió barato porque el sink ya recibía `session.id` en cada datapoint: **un sink y un log por repositorio** (resuelto al worktree principal) y **atribución por sesión**. El `current-task` sigue existiendo como fallback para datapoints sin sesión identificable, así que nada que se atribuía antes deja de atribuirse.
 
 ## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
 

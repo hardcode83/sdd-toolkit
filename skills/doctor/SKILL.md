@@ -26,3 +26,17 @@ order wrong — show the views rather than describing them:
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . report
 ```
+
+Then check **machine state**, which the validator above deliberately does not
+cover (it lives in the shared git directory, not in the committed project):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . orphans
+```
+
+Each line is a worktree binding to clean up — `missing` (the worktree is gone;
+`sdd_session.py release <feature>`) or `archived` (the change already shipped;
+`git worktree remove <path>` plus `git branch -d sdd/<feature>` and `release`).
+Report them alongside the diagnostics, labelled as machine-local so nobody looks
+for them in the repository. Outside a git repository the command errors: say so
+and move on, it is not a project problem.

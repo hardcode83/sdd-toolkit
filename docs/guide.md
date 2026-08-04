@@ -112,6 +112,14 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Mi roadmap es una lista plana de hace meses** → sigue funcionando sin tocar nada: sin relaciones declaradas, toda entrada abierta está en la frontera (el comportamiento de siempre) y `/sdd:status` te dice explícitamente que no hay grafo que dibujar. Migras cuando quieras, entrada a entrada — o de golpe con `/sdd:init` sobre el plan, que te lo ofrece con el diff a la vista y **no toca las archivadas**.
 
+**Atacar dos features a la vez** → abre dos sesiones y ya está: la segunda detecta a la primera y te ofrece un worktree aislado (`.claude/worktrees/`), con su rama y su directorio. Di sí. Sin eso comparten HEAD, y la segunda se lleva los ficheros sin commitear de la primera a su rama — que además hace que `STATE.md` grabe una rama y un SHA que no describen el trabajo.
+
+Un aviso práctico: un worktree recién creado **no tiene** tu `.env` ni `node_modules` ni tu base de datos local, así que los tests fallarán ahí hasta que `sdd/project.md` declare su sección **Worktree bootstrap** (`/sdd:init` te la pregunta). Si te pasa, no es un bug del código: es esa sección que falta.
+
+**¿Dónde está el trabajo de la otra sesión?** → `/sdd:status` agrega todos los worktrees del repo y lista las sesiones vivas. Un change puede no estar en el directorio desde el que lanzaste el comando.
+
+**Terminé y mergeé** → `/sdd:archive` corre **en el worktree principal** (muta specs, roadmap y mueve directorios: es el punto de serialización del flujo) y te ofrece retirar el worktree y su rama. Si algo quedó sin commitear allí, `git worktree remove` se niega — y eso es lo correcto: trabajo sin commitear es trabajo que nunca llegó al merge.
+
 **Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso. Cuando nace de otra entrada, esa relación es justo para lo que sirven los metadatos: `completes:` si cierra lo que aquella dejó a medias, `needs:` si depende de algo que crea.
 
 **Tengo los requisitos ya escritos en un doc** → dos vías equivalentes: `/sdd:new mi-feature docs/reqs.md` (el doc como semilla directa), o entrada de roadmap con `(fuente: docs/reqs.md)` para que lo use cuando le llegue el turno. En ambos casos el proposal *convierte* el doc a EARS (no lo copia), señala ambigüedades y huecos, y cuanto mejor esté escrito el doc, menos preguntas te hará — con un doc realmente cerrado, la feature es candidata ideal para `/sdd:auto`.

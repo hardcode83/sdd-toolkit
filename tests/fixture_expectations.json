@@ -85,5 +85,9 @@
   "valid": {
     "exit_code": 0,
     "diagnostics": []
+  },
+  "worktree-not-ignored": {
+    "exit_code": 0,
+    "diagnostics": ["WARNING SDD024"]
   }
 }
