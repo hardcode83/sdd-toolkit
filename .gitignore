@@ -1,2 +1,5 @@
 .DS_Store
 __pycache__/
+# Isolated per-feature checkouts (shared rule 10). Committing them would nest a
+# copy of the whole tree inside the repo — the failure SDD024 warns about.
+.claude/worktrees/

@@ -27,7 +27,7 @@ class DoctorFixtureTests(unittest.TestCase):
             for item in expectation["diagnostics"]
         }
         codes = {item.split()[1] for item in diagnostics}
-        self.assertEqual({f"SDD{number:03d}" for number in range(1, 24)}, codes)
+        self.assertEqual({f"SDD{number:03d}" for number in range(1, 25)}, codes)
 
     def test_valid_fixtures_cover_legacy_and_lifecycle_managed_archives(self) -> None:
         expectations = load_expectations()

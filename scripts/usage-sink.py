@@ -15,9 +15,38 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 USAGE_DIR = os.environ.get("SDD_USAGE_DIR") or os.path.join(os.getcwd(), ".sdd-usage")
 OUT = os.path.join(USAGE_DIR, "otel.jsonl")
 TASK = os.path.join(USAGE_DIR, "current-task")
+# Per-session pointers written by usage-mark.sh. One sink serves every session of
+# the project (they all export to the same port), so a single shared pointer was
+# last-writer-wins: concurrent sessions billed their tokens to each other's
+# feature, silently. Every datapoint carries `session.id`, so the right pointer
+# is resolvable. See docs/adr/0001-roadmap-structure-and-concurrency.md.
+TASKS_DIR = os.path.join(USAGE_DIR, "tasks")
 STATE = os.path.join(USAGE_DIR, "sink-state.json")
 
 METRICS = {"claude_code.token.usage": "tokens", "claude_code.cost.usage": "cost"}
+
+
+def read_task(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def task_for(session, cache):
+    """The feature/phase to attribute a datapoint to, resolved by its session.
+
+    Falls back to the shared pointer when the session is unknown (a datapoint
+    without `session.id`, or a session that never marked a phase), so nothing
+    that used to be attributed stops being attributed.
+    """
+    key = str(session or "")
+    if key not in cache:
+        cache[key] = (
+            read_task(os.path.join(TASKS_DIR, key)) if key else ""
+        ) or read_task(TASK)
+    return cache[key]
 
 
 def attr_map(attrs):
@@ -46,12 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"{}")
 
     def ingest(self, payload):
-        task = ""
-        try:
-            with open(TASK) as f:
-                task = f.read().strip()
-        except OSError:
-            pass
+        tasks = {}
         try:
             with open(STATE) as f:
                 state = json.load(f)
@@ -87,7 +111,8 @@ class Handler(BaseHTTPRequestHandler):
                             "type": at.get("type"), "model": at.get("model"),
                             "session": at.get("session.id"),
                             "source": at.get("query_source"),
-                            "value": delta, "task": task,
+                            "value": delta,
+                            "task": task_for(at.get("session.id"), tasks),
                         })
         if rows:
             os.makedirs(USAGE_DIR, exist_ok=True)

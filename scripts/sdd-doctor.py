@@ -181,6 +181,50 @@ def pointer_checks(
     return diagnostics
 
 
+def worktree_checks(root: Path) -> list[Diagnostic]:
+    """The one worktree invariant that is a property of the committed project.
+
+    Everything else about worktrees — stale bindings, a worktree still on disk for
+    an archived change — is *machine* state living in the shared git directory,
+    so it is reported by `sdd_session.py orphans` (which /sdd:doctor also runs)
+    rather than here: this validator's fixtures are committed project trees, and
+    machine state cannot be expressed as one.
+    """
+    worktrees = root / ".claude" / "worktrees"
+    if not worktrees.is_dir():
+        # Nothing to warn about until the project actually uses one.
+        return []
+    ignore = root / ".gitignore"
+    patterns = {
+        line.strip().rstrip("/")
+        for line in read_lines(ignore)
+        if line.strip() and not line.strip().startswith("#")
+    }
+    covered = {
+        ".claude/worktrees",
+        "/.claude/worktrees",
+        ".claude/worktrees/*",
+        ".claude",
+        "/.claude",
+        ".claude/*",
+    }
+    if patterns & covered:
+        return []
+    return [
+        Diagnostic(
+            "SDD024",
+            "WARNING",
+            relative(ignore, root),
+            0,
+            (
+                ".claude/worktrees/ holds git worktrees but is not ignored, so "
+                "they can be committed into the repository."
+            ),
+            "Add '.claude/worktrees/' to .gitignore before committing anything.",
+        )
+    ]
+
+
 def graph_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
     """Dependency-graph consistency, delegated to the roadmap module.
 
@@ -789,6 +833,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
             pointer_checks(root, roadmap, roadmap_entries, archives_by_feature)
         )
         diagnostics.extend(graph_checks(root, roadmap))
+    diagnostics.extend(worktree_checks(root))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))
     diagnostics.extend(archive_checks(root, archived_changes))

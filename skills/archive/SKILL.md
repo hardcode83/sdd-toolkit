@@ -14,6 +14,18 @@ Write spec updates in the same language as the existing specs (or the user's lan
 
 ## Steps
 
+0. **Run this in the main worktree, on the base branch, one change at a time**
+   (shared rule 10). Archive mutates `sdd/specs/`, ticks `sdd/roadmap.md`,
+   consolidates metrics and moves directories — shared state, so it is the
+   serialization point of the whole flow. Being post-merge, the base branch is
+   also where the merged content actually is.
+
+   Check where you are: `git rev-parse --git-dir` returning a path under
+   `.git/worktrees/` means this is a linked worktree. Leave it first
+   (`EnterWorktree` with the main worktree's `path`, or `ExitWorktree` with
+   `action: "keep"`) and re-run there. Never archive from inside the feature's own
+   worktree: the directory being moved would be the one you are standing in.
+
 1. **Verify objective merge evidence before any final-state write.** Run:
 
    ```bash
@@ -84,8 +96,17 @@ Write spec updates in the same language as the existing specs (or the user's lan
    consolidated row in `sdd/metrics.md` with the archive date. Report its
    WARNING lines verbatim: they mean a recorded row holds more than the log can
    account for, and it was deliberately kept.
-7. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together, **staged with `git add -A sdd/`**: `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped.
-8. **Verify the commit, not the working tree.** Once the archive is committed, run
+7. **Retire the feature's worktree, if it had one.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path, the merge is proven and that isolated copy has no further use — **offer** to retire it (AskUserQuestion, recommend yes):
+
+   ```bash
+   git worktree remove <path>
+   git branch -d sdd/<feature>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . release <feature>
+   ```
+
+   Use plain git, not `ExitWorktree` — that tool only touches worktrees created by `EnterWorktree` in the *same* session, and archive normally runs in another. Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`. `git worktree remove` refuses a dirty tree: surface that refusal instead of forcing it, because uncommitted work there is work that never reached the merge. If the user declines removal, still run `release` only if they also want the binding dropped — otherwise leave both, and say `/sdd:doctor` will report the worktree as an orphan of an archived change.
+8. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together, **staged with `git add -A sdd/`**: `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped.
+9. **Verify the commit, not the working tree.** Once the archive is committed, run
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.
    Run it **after** the commit: a clean doctor on an uncommitted tree proves
    nothing about what landed, and that gap is exactly how an orphaned `STATE.md`

@@ -65,3 +65,22 @@
    `sdd/steering/` or existing configuration. Never infer them from the
    toolkit's implementation language, and never copy the toolkit's internal
    tests or CI into a consumer repository.
+10. **One feature, one branch, one working directory.** Two sessions sharing a
+    clone share its HEAD, so a second `git checkout -b sdd/<other>` drags the
+    first one's uncommitted files onto the wrong branch — and `mark-ready` then
+    records a `head_branch`/`implementation_sha` that does not describe the work,
+    corrupting the very evidence rule 8 depends on. So:
+    - Before creating or switching to a feature branch, ask
+      `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py --root . check --feature <f>`.
+      On `CONFLICT`, isolate the feature in its own git worktree, following
+      `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` — it says when to offer it
+      and when to just do it.
+    - A feature's worktree is recorded once (`claim`) and every later phase finds
+      it with `resolve` — never by guessing a path. The registry is machine-local
+      state in the shared git directory; the **remote** `sdd/<feature>` branch is
+      still the team's claim, and the two are different facts.
+    - Never write code for a feature while HEAD is on another feature's branch.
+      Verify the branch before the first edit, not after.
+    - `/sdd:archive` runs **only in the main worktree, on the base branch, one
+      change at a time**: it mutates `sdd/specs/`, ticks the roadmap and moves
+      directories. Being post-merge, that was already true in practice.

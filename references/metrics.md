@@ -14,7 +14,12 @@ conception to archive.
   duplicated) from `READY_FOR_PR` onwards, with `archived` filled in when the
   change is archived. A feature waiting for its merge already has its row.
 - `.sdd-usage/` — runtime data (gitignored, machine-local): `otel.jsonl`
-  (raw datapoints), `current-task` (attribution marker), `sink.pid`.
+  (raw datapoints), `tasks/<session-id>` (one attribution marker per session),
+  `current-task` (the fallback marker, see below), `sink.pid`.
+  **One per repository**, next to the main worktree: every session of a project
+  exports to the same port, so there is exactly one sink and one log even when
+  features are isolated in separate worktrees. Resolved by
+  `scripts/usage-dir.sh` (and `usage_dir()` in `usage-sync.py`).
 
 ## How it works
 
@@ -28,10 +33,12 @@ documented, stable interface for usage (`claude_code.token.usage` and
    10 s export interval.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/usage-sink.py` — a ~100-line stdlib-Python
    OTLP receiver — runs locally on that port and appends every datapoint to
-   the project's `.sdd-usage/otel.jsonl`, tagged with the **active task**
-   (`<feature>/<phase>`).
+   the project's `.sdd-usage/otel.jsonl`, tagged with the task
+   (`<feature>/<phase>`) **of the session that produced it**: every datapoint
+   carries `session.id`, so the sink resolves `tasks/<session-id>`.
 3. Each phase marks itself active at start (`usage-mark.sh <feature> <phase>`,
-   which also autostarts the sink) and writes its ledger row at the gate
+   which writes that per-session marker and autostarts the sink) and writes its
+   ledger row at the gate
    (`usage-phase.sh <feature> <phase>`, which aggregates all rows for that
    task — across sessions and subagents — and replaces the row idempotently).
 4. `usage-sync.py --root . sync <feature>` rebuilds the **whole** ledger from
@@ -66,19 +73,29 @@ kept and reported with a `WARNING` instead of being lowered. Syncing never
 destroys a number it cannot reproduce.
 
 One thing no rebuild can fix retroactively: attribution. The sink tags each
-datapoint with whatever `current-task` says at that moment, so a phase that
-never marks itself has its spend filed under the previous phase. That is why
-every phase skill marks itself, and why the test suite asserts it.
+datapoint with whatever its session's marker said at that moment, so a phase
+that never marks itself has its spend filed under that session's previous
+phase. That is why every phase skill marks itself, and why the test suite
+asserts it.
 
 ## Properties and limits
 
 - **Multi-agent**: subagent usage carries `query_source=subagent` and is
   counted (the ledger notes `incl. subagents`).
-- **Multi-session**: attribution is by the task marker, not by session — a
-  phase spanning several sessions (or concurrent sessions of the same
-  feature) aggregates correctly. The assumption is *one active feature per
-  project at a time*; interleaving two features concurrently misattributes
-  the overlap.
+- **Multi-session**: attribution is **per session**, so two sessions working
+  two features concurrently are each billed to their own feature. A phase
+  spanning several sessions still aggregates correctly, because rows are
+  aggregated by task, not by session.
+  This was the assumption that used to be baked in — *one active feature per
+  project at a time* — and it was wrong in both directions: a single global
+  marker was last-writer-wins, and because the OTLP port lives in the versioned
+  `settings.json` (read at session start), every session and every worktree
+  exports to the same one, so per-worktree ledgers would have silently collected
+  everything in whichever worktree bound the port first. Hence: one sink and one
+  log per repository, attribution by `session.id`.
+  `current-task` remains as the fallback for datapoints whose session cannot be
+  identified (no `session.id`, or a session that never marked a phase), so
+  nothing that used to be attributed stops being attributed.
 - **Export lag**: metrics flush every ~10 s; a gate that records immediately
   after the last action may miss the tail (the script says so and can be
   re-run — rows are recomputed, not duplicated).

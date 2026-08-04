@@ -3,7 +3,7 @@
 - **Fecha**: 2026-08-04
 - **Estado**: aceptada
 - **Alcance**: `sdd/roadmap.md` y su formato · `/sdd:new`, `/sdd:auto`, `/sdd:status`, `/sdd:doctor`, `/sdd:archive` · aislamiento de sesiones concurrentes · atribución de métricas
-- **Se implementa en**: change `roadmap-structure` (esta ADR) y change `concurrent-worktrees` (el siguiente)
+- **Se implementa en**: `roadmap-structure` (D3-D8) y `concurrent-worktrees` (D1-D2), en ese orden — ver *Implementación* al final
 
 ## Contexto
 
@@ -279,5 +279,40 @@ de 3-7 requisitos por change del propio toolkit).
 - `/sdd:archive` queda serializado en el worktree principal: muta `sdd/specs/`,
   tickea el roadmap y mueve directorios. Es post-merge, así que ya era cierto de
   hecho; ahora es precondición explícita.
-- El adaptador de Codex no soporta worktrees, igual que ya no soporta
-  `tournament`.
+- El adaptador de Codex no tiene `EnterWorktree`, así que allí el aislamiento es
+  manual (los scripts sí funcionan tal cual).
+
+## Implementación
+
+`roadmap-structure` (D3-D8): `templates/roadmap-template.md`,
+`scripts/sdd_roadmap.py` + sus tests, `update_roadmap()` en `sdd_lifecycle.py`,
+`graph_checks()` en `sdd-doctor.py` (`SDD018`-`SDD023`), y los gates en `new`,
+`auto`, `status`, `doctor`, `init`.
+
+`concurrent-worktrees` (D1-D2): `scripts/sdd_session.py` + sus tests,
+`references/isolation.md` (el protocolo, para no repetirlo en cinco skills),
+regla compartida 10, gates en `new`/`design`/`tasks`/`run`/`review`/`auto`/
+`archive`/`status`/`init`, sección *Worktree bootstrap* en
+`templates/scaffold/project.md`, `SDD024`, y el arreglo de métricas
+(`usage-dir.sh` nuevo + `usage-mark.sh`, `usage-sink.py`, `usage-phase.sh`,
+`usage-sync.py`).
+
+### Desviaciones respecto al plan
+
+**Los checks de worktree en el doctor se quedaron en uno, no cuatro.** El plan
+preveía `SDD024`-`SDD027` (worktree huérfano, gitignore ausente, claim obsoleto,
+rama del worktree ≠ feature ligada). Al implementarlo apareció una frontera que
+el plan no había visto: los fixtures de `sdd-doctor.py` son **árboles de proyecto
+commiteados**, y tres de esos cuatro checks dependen del registro de sesiones, que
+es estado de **máquina** en el directorio git compartido. Un fixture no puede
+expresarlo, y `tests/test_sdd_doctor.py` exige —con razón— que el registro de
+fixtures cubra todos los códigos publicados.
+
+Se resolvió respetando la frontera en vez de debilitar el test: el doctor
+conserva solo `SDD024` (`.claude/worktrees/` sin ignorar, puro sistema de
+ficheros), y los huérfanos del registro los reporta `sdd_session.py orphans`, que
+la skill `/sdd:doctor` ejecuta también, etiquetando cuál es estado de proyecto y
+cuál de máquina. Coincide además con la tabla de propiedad del README, que ya
+distinguía *Proyecto* de *Máquina*. El check de "rama del worktree ≠ feature" se
+descartó: `/sdd:run` ya lo verifica **antes de la primera edición**, que es donde
+sirve para prevenir el daño en vez de constatarlo.

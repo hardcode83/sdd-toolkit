@@ -99,6 +99,17 @@ Then:
    No remote branch → `git checkout -b sdd/<feature>` from BASE and, if a remote
    exists, **push the branch immediately** — publishing the claim before doing
    any work, not after.
+
+   **Isolate before branching** (shared rule 10): run
+   `sdd_session.py --root . check --feature <feature>`. On `CONFLICT`, auto does
+   **not** ask — it applies the worktree per
+   `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` (base-ref check →
+   `EnterWorktree` → bootstrap from `sdd/project.md` → `claim`) and says so in
+   the final report. If the bootstrap the project declares fails, or the project
+   declares none and verification then fails on a missing local file, BLOCK the
+   feature: that is a real gap in `project.md`, not something to guess around.
+   On `CLEAR`, `claim` the feature and continue in place. A resumed feature uses
+   `resolve` and enters its existing worktree instead of creating a second one.
 2. **new** — follow `${CLAUDE_PLUGIN_ROOT}/skills/new/SKILL.md`. Approval
    substitute: the proposal must trace every requirement to the roadmap
    entry (and its source doc, if referenced) and respect `product.md`.
@@ -155,7 +166,13 @@ Then:
    check off the roadmap, consolidate archive metrics, or move the change.
    Those final effects are permitted only once the merge is objectively proven
    — a `MERGED` PR, or the reviewed commit contained in the base branch.
-10. `git checkout BASE` and continue with the next entry.
+10. **Return to base and continue.** If this feature ran in its own worktree,
+    go back to the main worktree (`EnterWorktree` with the original `path`, or
+    `ExitWorktree` with `action: "keep"` when auto created it this session) and
+    leave the worktree **on disk** — the change is not merged yet, so its work
+    must survive. Otherwise `git checkout BASE`. Then take the next entry.
+    Never archive or remove a worktree here; that is `/sdd:archive`'s job, after
+    the merge is proven.
 
 ## Resuming a mid-flight feature
 
@@ -204,7 +221,8 @@ When blocking a feature:
    `/sdd:status` derives `⛔` from it; annotating the entry too would duplicate
    derived state into a shared file, which is what makes parallel runs conflict
    (`docs/adr/0001-roadmap-structure-and-concurrency.md`, D5).
-4. Return to BASE and continue with the next entry (or finish if none).
+4. Return to base as in pipeline step 10 (leaving any worktree on disk — the
+   blocked work lives there) and continue with the next entry, or finish if none.
 
 Unblocking is human: the user answers in BLOCKED.md's terms, deletes the
 file, and resumes with the normal phase skills on that branch.
@@ -217,6 +235,10 @@ file, and resumes with the normal phase skills on that branch.
   **claimed by someone else** (remote branch, no local change) / **skipped**
   (with the reason). Never call a PR-open change shipped or archived, and never
   report one of our own in-flight changes as claimed.
+- **Where each feature lives**: if it ran in its own worktree, give the path.
+  Without it the user cannot pick the work up — it is not in the directory they
+  started the run from. Say that the worktrees stay on disk until archive removes
+  them, and that `/sdd:status` lists them.
 - Always state that living specs and the definitive roadmap tick remain
   pending until merge, and that the next command after merge is
   `/sdd:archive <feature>`.

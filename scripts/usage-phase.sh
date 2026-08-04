@@ -10,8 +10,15 @@ export LC_ALL=C
 
 feature="${1:?usage: usage-phase.sh <feature> <phase>}"
 phase="${2:?usage: usage-phase.sh <feature> <phase>}"
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(pwd)
-log="$root/.sdd-usage/otel.jsonl"
+
+# The log is repo-wide (one sink for every worktree); the ledger is local, because
+# it travels in this change's Pull Request.
+# shellcheck source=usage-dir.sh
+. "$here/usage-dir.sh"
+sdd_usage_resolve "$root"
+log="$SDD_USAGE_DIR/otel.jsonl"
 ledger="$root/sdd/changes/$feature/metrics.md"
 
 [ -f "$log" ] || { echo "usage tracking not enabled — skipping"; exit 0; }

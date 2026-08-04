@@ -20,9 +20,17 @@ Report the state of the SDD workflow. Read-only — change nothing. Arguments: n
    - **Phase**: which of `proposal.md` / `design.md` / `tasks.md` exist.
    - **Progress**: if `tasks.md` exists, count `- [x]` vs `- [ ]` (e.g. `grep -c '^\s*- \[x\]'`).
    - **Pending queue**: if `BLOCKED.md` exists, this change has unresolved entries — show these FIRST, each with its type (`decision`: needs the user / `deferred`: resumable — show its resume command) and one-line reason. This is the user's inbox: decisions to make and deferred work to pick up.
-2. **In progress by others** (only if the repo has a git remote): `git ls-remote --heads origin "sdd/*"` — list remote SDD branches that don't correspond to a local active change, as "en curso por otros" (branch name; add author/date via `git log -1` on the fetched ref if cheap). This completes the picture: claims live as remote branches before they're merged.
-3. Count capability specs in `sdd/specs/` and recent entries in `sdd/changes/archive/`.
-4. If `sdd/roadmap.md` exists, get the derived roadmap views — do not hand-render them, and never infer order from line position:
+2. **Other worktrees of this repo** (shared rule 10 — a change may not be in *this* directory at all):
+
+   ```bash
+   git worktree list
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . list
+   ```
+
+   Step 1 only sees the `sdd/changes/` of the current working directory, so a feature isolated in a sibling worktree would be invisible. For each worktree other than this one, read its `sdd/changes/*/STATE.md` too and include those changes in the table, labelled with the worktree they live in. Also report **live sessions** (`list` prints them, pruned by process liveness): that is what tells the user another session is holding a feature right now. Bindings whose worktree is gone are reported by `/sdd:doctor`, not here.
+3. **In progress by others** (only if the repo has a git remote): `git ls-remote --heads origin "sdd/*"` — list remote SDD branches that don't correspond to a local active change, as "en curso por otros" (branch name; add author/date via `git log -1` on the fetched ref if cheap). This completes the picture: claims live as remote branches before they're merged.
+4. Count capability specs in `sdd/specs/` and recent entries in `sdd/changes/archive/`.
+5. If `sdd/roadmap.md` exists, get the derived roadmap views — do not hand-render them, and never infer order from line position:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . report
@@ -31,7 +39,7 @@ Report the state of the SDD workflow. Read-only — change nothing. Arguments: n
    Relay its sections as they come: **frontera** (what can be worked right now, in parallel — each entry annotated with how many others it unblocks, so the user can choose), **olas** (topological levels), **camino crítico** per stage (the chain that parallel work cannot shorten), **aplazadas**, and the **grafo** as a fenced ```mermaid block. The status symbols (`✔` archived, `PR` `PR_OPEN`, `✓` `READY_FOR_PR`, `▶` active, `⛔` blocked, `·` pending) are derived from each change's `STATE.md` and `BLOCKED.md`, never from the roadmap text — a checked entry whose change is still active is inconsistent, not done, and `/sdd:doctor` is what reports it.
 
    When the roadmap declares no relations (a flat legacy roadmap), the report says so explicitly instead of drawing a one-level graph that would fake information. Pass `--stage <n>` to narrow to one stage. If the report's **Problemas** section is non-empty, show it and point to `/sdd:doctor`.
-5. Present a compact table: change · lifecycle · document phase · tasks done/total · PR · suggested next action. Use `/sdd:design`, `/sdd:tasks`, or `/sdd:run` for active work; open/record a PR for `READY_FOR_PR`; wait for merge then `/sdd:archive` for `PR_OPEN`; `/sdd:archive` for `MERGED`. Never suggest archive merely because all local tasks are checked.
+6. Present a compact table: change · lifecycle · document phase · tasks done/total · worktree (only when it isn't this directory) · PR · suggested next action. Use `/sdd:design`, `/sdd:tasks`, or `/sdd:run` for active work; open/record a PR for `READY_FOR_PR`; wait for merge then `/sdd:archive` for `PR_OPEN`; `/sdd:archive` for `MERGED`. Never suggest archive merely because all local tasks are checked.
 
 If `sdd/` doesn't exist, say so and point to `/sdd:init`. If there are no active changes, say so and point to `/sdd:new` (suggesting the first entry of the frontier if there is one — not the first line of the roadmap).
 
