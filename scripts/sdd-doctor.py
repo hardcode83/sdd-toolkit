@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -181,6 +182,58 @@ def pointer_checks(
     return diagnostics
 
 
+def path_is_ignored(root: Path, target: Path) -> bool:
+    """Whether git ignores `target`, by every mechanism git honours.
+
+    Asks git when `root` is the top level of a working tree, because
+    `.gitignore` is only one of the sources: `.git/info/exclude` and a global
+    `core.excludesFile` are equally valid places to ignore a machine-local
+    directory, and reading only `.gitignore` reports a project that did it
+    properly as broken.
+
+    Falls back to a textual `.gitignore` scan when git is unavailable, or when
+    `root` is not a repository top level — which is also what keeps this
+    validator's own fixtures deterministic instead of dependent on whatever
+    repository happens to contain them.
+    """
+    try:
+        toplevel = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if not toplevel.returncode and Path(toplevel.stdout.strip()) == root:
+            checked = subprocess.run(
+                ["git", "-C", str(root), "check-ignore", "-q", str(target)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return checked.returncode == 0
+    except OSError:
+        pass
+    patterns = {
+        line.strip().rstrip("/")
+        for line in read_lines(root / ".gitignore")
+        if line.strip() and not line.strip().startswith("#")
+    }
+    relative_target = target.relative_to(root).as_posix()
+    return bool(
+        patterns
+        & {
+            relative_target,
+            f"/{relative_target}",
+            f"{relative_target}/*",
+            *{
+                candidate
+                for parent in (".claude",)
+                for candidate in (parent, f"/{parent}", f"{parent}/*")
+            },
+        }
+    )
+
+
 def worktree_checks(root: Path) -> list[Diagnostic]:
     """The one worktree invariant that is a property of the committed project.
 
@@ -195,20 +248,7 @@ def worktree_checks(root: Path) -> list[Diagnostic]:
         # Nothing to warn about until the project actually uses one.
         return []
     ignore = root / ".gitignore"
-    patterns = {
-        line.strip().rstrip("/")
-        for line in read_lines(ignore)
-        if line.strip() and not line.strip().startswith("#")
-    }
-    covered = {
-        ".claude/worktrees",
-        "/.claude/worktrees",
-        ".claude/worktrees/*",
-        ".claude",
-        "/.claude",
-        ".claude/*",
-    }
-    if patterns & covered:
+    if path_is_ignored(root, worktrees):
         return []
     return [
         Diagnostic(
@@ -217,10 +257,13 @@ def worktree_checks(root: Path) -> list[Diagnostic]:
             relative(ignore, root),
             0,
             (
-                ".claude/worktrees/ holds git worktrees but is not ignored, so "
-                "they can be committed into the repository."
+                ".claude/worktrees/ holds git worktrees but git ignores it by no "
+                "rule, so they can be committed into the repository."
             ),
-            "Add '.claude/worktrees/' to .gitignore before committing anything.",
+            (
+                "Add '.claude/worktrees/' to .gitignore (or .git/info/exclude to "
+                "keep it machine-local) before committing anything."
+            ),
         )
     ]
 
