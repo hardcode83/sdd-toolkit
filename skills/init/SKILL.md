@@ -40,16 +40,17 @@ Keep exploration proportional — this is a steering summary, not an audit.
 |---|---|
 | Vision, target users, principles, goals | `sdd/steering/product.md` |
 | Stack/architecture decisions already made | `sdd/project.md` + `sdd/steering/architecture.md` |
-| Feature list / phases / milestones | `sdd/roadmap.md` — one line per future change, in order |
+| Feature list / phases / milestones | `sdd/roadmap.md` — an index: one line per future change, grouped into `## Stage N — <outcome>`, each with its metadata sub-line |
+| A feature's long rationale / analysis | `sdd/roadmap/<feature>.md` — a note read only by that entry's `/sdd:new` |
 
 Do NOT turn the plan's features into proposals now — proposals are written just-in-time by `/sdd:new`, one at a time, when their turn comes.
 
 **Re-ingesting an updated plan** (project already initialized): merge, never regenerate. Diff the plan against the current `sdd/roadmap.md` and steering, then:
 
-- Checked (`[x]`) and in-progress (`→ changes/…`) entries are history — never rewrite or reorder them.
-- New features → new `- [ ]` entries, inserted where they belong in the order.
-- Dropped features → remove their pending entries (confirm first).
-- Changed features not yet started → edit their pending line.
+- Checked (`[x]`) entries and any entry with a `sdd/changes/<feature>/` directory are history or in flight — never rewrite or reorder them. (In-flight state is *not* marked in the roadmap; check the changes directory, not the entry text.)
+- New features → new `- [ ]` entries in the stage they belong to, each with its metadata sub-line. Declare the relations the plan implies (`needs`, `completes`, `informs-from`, `inherits-from`) — that is what makes the order calculable instead of positional.
+- Dropped features → remove their pending entries (confirm first), and remove or repoint any `needs:` that named them; a dangling dependency is an error `/sdd:doctor` will report (`SDD019`).
+- Changed features not yet started → edit their pending line and its metadata.
 - Changes that contradict behavior already built (there's a spec in `sdd/specs/` for it) → don't just edit the roadmap: flag them explicitly as `/sdd:new` candidates, because reality now disagrees with the plan.
 - Vision/architecture deltas → update the affected steering docs, showing the user the diff.
 
@@ -59,7 +60,15 @@ Create if missing: `sdd/specs/`, `sdd/changes/archive/`, `sdd/README.md` (copy f
 
 Write `sdd/project.md` with sections: **Overview**, **Stack**, **Commands** (exact, copy-pasteable), **Conventions**, **Context** (links, enabled MCPs/LSPs/metrics). Keep it under ~80 lines — it gets read at the start of every SDD phase.
 
-If a planning doc provided a feature list, write `sdd/roadmap.md` from `${CLAUDE_PLUGIN_ROOT}/templates/roadmap-template.md`.
+If a planning doc provided a feature list, write `sdd/roadmap.md` from `${CLAUDE_PLUGIN_ROOT}/templates/roadmap-template.md`. Three rules for filling it:
+
+- **Stages are outcomes, not categories.** `## Stage 2 — reservas reales entrando por webhook`, never `## Backend`. Grouping by category hides the dependency chains, because chains cross categories. Category labels (`[FE]`, `[BE]`…) belong inline on the entry, if the project wants them.
+- **Declare only the relations the plan actually states.** Inventing dependencies is worse than leaving the graph flat: an entry with no metadata is simply always workable, which is correct when nothing is known. Do not guess `needs:`.
+- **Keep the index short.** One scannable line per entry. If the plan carries pages of rationale for a feature, that goes to `sdd/roadmap/<feature>.md`, not into the entry — `sdd/roadmap.md` is read by every phase, so its size is a cost paid on every run.
+
+Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . validate` must report no errors, and `… report` should show a frontier that matches the plan's intended starting point.
+
+**Migrating an existing flat roadmap** (re-init over a project that predates stages): offer it, never do it silently, and show the diff. Group the **pending** entries into stages, transcribe into metadata the relations their prose already states ("depende de X", "cierra el cuarto ítem de Y", "hereda de Z"), and move bodies longer than a couple of lines to `sdd/roadmap/<feature>.md`. **Archived entries are not touched** — they are the historical record, and shared rule 8 already forbids rewriting those. A flat roadmap keeps working unmigrated: with no declared relations every open entry is in the frontier, which is exactly the old behaviour.
 
 ### 4. Steering docs
 
@@ -133,4 +142,4 @@ Current system behavior is documented in `sdd/specs/`; in-flight changes live in
 
 ### 8. Summarize
 
-Report what was created/enabled. Note the per-phase model profile is fixed in the plugin (opus for new/design, sonnet for the bulk, haiku for archive/status) and is changed by editing the plugin's skill frontmatter, not per project. Suggest the first step: `/sdd:new` on the first roadmap entry if a roadmap exists, otherwise `/sdd:new <feature>`.
+Report what was created/enabled. Note the per-phase model profile is fixed in the plugin (opus for new/design, sonnet for the bulk, haiku for archive/status) and is changed by editing the plugin's skill frontmatter, not per project. Suggest the first step: if a roadmap exists, `/sdd:new` on the first entry of its frontier (`sdd_roadmap.py --root . frontier`) — and mention `/sdd:status` as the way to see what is workable in parallel, the waves and the critical path. Otherwise `/sdd:new <feature>`.

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
+import sdd_roadmap
 from sdd_lifecycle import (
     PR_FIELDS,
     PR_URL_RE,
@@ -178,6 +179,32 @@ def pointer_checks(
                     )
                 )
     return diagnostics
+
+
+def graph_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
+    """Dependency-graph consistency, delegated to the roadmap module.
+
+    The graph lives in sdd_roadmap.py because the phase skills need the same
+    answers (frontier, waves) that validation is derived from — duplicating the
+    parser here is how the two would drift apart.
+    """
+    try:
+        entries = sdd_roadmap.parse_roadmap(roadmap)
+    except sdd_roadmap.RoadmapError:
+        return []
+    graph = sdd_roadmap.Graph(root, entries)
+    roadmap_file = relative(roadmap, root)
+    return [
+        Diagnostic(
+            finding.code,
+            finding.severity,
+            roadmap_file,
+            finding.line,
+            finding.explanation,
+            finding.action,
+        )
+        for finding in graph.validate()
+    ]
 
 
 def active_document_checks(root: Path, active_changes: list[Path]) -> list[Diagnostic]:
@@ -761,6 +788,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
         diagnostics.extend(
             pointer_checks(root, roadmap, roadmap_entries, archives_by_feature)
         )
+        diagnostics.extend(graph_checks(root, roadmap))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))
     diagnostics.extend(archive_checks(root, archived_changes))

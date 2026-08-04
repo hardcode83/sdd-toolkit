@@ -75,7 +75,8 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
 | `sdd/changes/` + `archive/` | Proyecto | las fases del ciclo | el ciclo del change |
 | `sdd/changes/<feature>/STATE.md` | Proyecto | review, auto y archive mediante `sdd_lifecycle.py` | estado local + evidencia objetiva de PR/merge |
-| `sdd/roadmap.md` | Proyecto | init lo siembra; **editable a mano** | añadir/reordenar líneas |
+| `sdd/roadmap.md` | Proyecto | init lo siembra y `/sdd:archive` tickea; **editable a mano** | añadir entradas y declarar sus dependencias |
+| `sdd/roadmap/<feature>.md` | Proyecto | tú (o el init al ingerir un plan) | el análisis largo de una entrada; solo lo lee su `/sdd:new` |
 | `.claude/agents/sdd-review-*.md` | Proyecto | tú, desde `templates/reviewer-template.md` | revisores custom del panel — versionados con el repo |
 | `CLAUDE.md` · `.mcp.json` · `settings.json` | Proyecto | init (merge idempotente) | re-init → extras |
 | `.sdd-usage/` · binarios | Máquina | runtime / instaladores | gitignorado, no viaja |
@@ -124,15 +125,15 @@ Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-t
 | Comando | Qué hace | Modelo |
 |---|---|---|
 | `/sdd:init [plan.md]` | Bootstrap: steering docs, scaffold, baseline de specs (brownfield), roadmap desde un plan (greenfield), extras (MCPs, LSPs, métricas). Re-ejecutable: detecta lo ya inicializado y hace merge, no regenera. | sonnet |
-| `/sdd:new [feature]` | Proposal con user stories EARS (3-7 requisitos). Sin argumento, coge la siguiente entrada del roadmap. | opus |
+| `/sdd:new [feature]` | Proposal con user stories EARS (3-7 requisitos). Sin argumento, coge la siguiente entrada de la **frontera** del roadmap; avisa si la que pides tiene dependencias abiertas. | opus |
 | `/sdd:design [feature]` | Diseño técnico con decisiones y alternativas. Se salta si el cambio es trivial. | opus |
 | `/sdd:tasks [feature]` | Checklist de tareas pequeñas y verificables que referencian requisitos `[R1]`. | sonnet |
 | `/sdd:run [feature] [scope]` | Implementa en orden, verifica antes de marcar `[x]`, para si la realidad contradice la spec. Scope opcional: `next [N]`, una sección (`2`), una tarea (`2.3`), `solo` (sin panel), `tournament <tarea>`. | sonnet |
 | `/sdd:archive [feature]` | Exige PR mergeado verificable; después fusiona specs vivas, consolida métricas, finaliza roadmap y archiva. | haiku |
-| `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y roadmap. Con feature: vista quirúrgica de su `tasks.md`. | haiku |
-| `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
+| `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y las vistas del roadmap (frontera paralelizable, olas, camino crítico, grafo). Con feature: vista quirúrgica de su `tasks.md`. | haiku |
+| `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap y su grafo de dependencias, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
 | `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR`. | sonnet |
-| `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
+| `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: coge N entradas de la frontera del roadmap, implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
 
@@ -342,6 +343,12 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD015` | error | La metadata local ya contiene evidencia de merge pero conserva `state: PR_OPEN`; debe reanudarse `/sdd:archive`. |
 | `SDD016` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` afirma tareas completas, pero `tasks.md` tiene casillas sin marcar (o no existe). El lifecycle exige ese gate al escribir el estado; esta regla lo revalida después. |
 | `SDD017` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` convive con un `BLOCKED.md` sin resolver. |
+| `SDD018` | error | El roadmap declara la misma feature en más de una entrada. |
+| `SDD019` | error | Una entrada declara una relación (`needs`, `completes`, `informs-from`, `inherits-from`) con una feature que no es entrada del roadmap. |
+| `SDD020` | error | Las relaciones del roadmap forman un ciclo de dependencias. |
+| `SDD021` | error | Una entrada cerrada declara una dependencia que sigue abierta: se entregó antes de aquello de lo que dijo depender. |
+| `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
+| `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -362,8 +369,17 @@ El validador está organizado como funciones de comprobación independientes en
 3. Clasifica como error solo una contradicción inequívoca. Usa warning si el estado
    puede representar una excepción deliberada o si la detección es heurística.
 4. Añade un fixture mínimo y verifica código, severidad, ubicación, exit code y
-   ausencia de modificaciones.
+   ausencia de modificaciones. Registra su expectativa en
+   `tests/fixture_expectations.json` y amplía el rango de `SDD###` que
+   `tests/test_sdd_doctor.py` exige cubrir — el registro de fixtures debe cubrir
+   *todos* los códigos publicados, y ese test es el que lo obliga.
 5. Documenta el nuevo código en esta tabla.
+
+Las reglas del grafo del roadmap (`SDD018`-`SDD023`) son la excepción a la
+estructura: viven en `scripts/sdd_roadmap.py` y `sdd-doctor.py` solo convierte
+sus `Finding` en `Diagnostic` (`graph_checks()`). Están ahí porque las fases
+necesitan las mismas respuestas de las que se derivan (frontera, olas) —
+duplicar el parser en el doctor es como los dos se desincronizarían.
 
 Esta estructura mantiene separadas detección, presentación y política de salida;
 una futura reparación, si se diseña, deberá seguir siendo una operación explícita
@@ -463,7 +479,8 @@ proyecto/
 ├── CLAUDE.md                   # puntero SDD (bloque idempotente)
 └── sdd/                        # ← LA CAPA DE PERSISTENCIA
     ├── project.md              # steering core: stack, comandos (se lee siempre)
-    ├── roadmap.md              # (opcional) backlog ordenado de futuros changes
+    ├── roadmap.md              # (opcional) índice de futuros changes: stages + dependencias
+    ├── roadmap/<feature>.md    # (opcional) análisis largo de una entrada; lo lee solo su /sdd:new
     ├── metrics.md              # (opcional) tokens/coste por feature archivada
     ├── steering/               # reglas ricas de carga selectiva (frontmatter applies_to/phases)
     ├── specs/                  # verdad viva, una capability por .md
@@ -490,6 +507,38 @@ Un cambio de FE nunca carga la guía de infra; la visión pesa al proponer/dise�
 
 - **Brownfield**: `/sdd:init` genera steering desde el código y ofrece baseline de las 3-6 capabilities core; el resto se documenta al tocarlo (`/sdd:archive` → spec on first touch). Trabajo a medias se adopta pre-marcando tareas verificadas.
 - **Greenfield con plan**: `/sdd:init plan.md` triaja: visión → steering, decisiones → project/architecture, features → `roadmap.md`. Los proposals se escriben just-in-time, anclados a las specs ya construidas. Re-ingestas posteriores hacen merge (lo hecho es historia; lo que contradice specs construidas se señala como candidato a `/sdd:new`).
+
+## Roadmap: índice, dependencias y vistas derivadas
+
+`sdd/roadmap.md` es un **índice**, no un documento: una línea por entrada, agrupada en `## Stage N — <resultado>`, con una sub-línea de metadatos. El análisis largo de una entrada vive en `sdd/roadmap/<feature>.md` y solo lo lee su `/sdd:new` — el índice lo leen *todas* las fases, así que su tamaño se paga en cada run.
+
+```markdown
+## Stage 2 — reservas reales entrando por webhook
+
+- [ ] reservations-webhooks — [BE] recepción de webhooks del PMS
+      needs: domain-foundation, celery-jobs · size: M · kind: feature
+- [ ] pms-adapter — [BE] adaptador real
+      needs: celery-jobs · informs-from: pms-spike · size: L · kind: feature
+- [ ] api-ingress — [INFRA] camino desde internet para la API
+      deferred-until: el frontend invoque getServerConfig() de verdad · size: M
+```
+
+Un **stage es un resultado** ("PMS real en producción"), no una categoría: agrupar por `[FE]`/`[BE]` esconde las cadenas, porque las cadenas cruzan categorías. Cuatro relaciones ordenan el grafo — `needs` (dura), `completes` (cierra lo que otra dejó a medias), `informs-from` (la otra es entrada de diseño), `inherits-from` (hereda un requisito aplazado) — y `deferred-until` es texto libre que **no** es arista: una condición externa, no otra entrada.
+
+El grafo es un **DAG, no un árbol** (una entrada puede necesitar dos padres), así que la jerarquía no se expresa con sangría: una línea indentada que empiece por `- [` se parsea como entrada independiente.
+
+Nada de esto se dibuja a mano. `scripts/sdd_roadmap.py` lo calcula y `/sdd:status` lo enseña:
+
+| Vista | Qué responde |
+|---|---|
+| **frontera** | qué se puede atacar **ya, en paralelo** — con cuántas entradas desbloquea cada una, para elegir |
+| **olas** | niveles topológicos: la ola N necesita la N-1 cerrada |
+| **camino crítico** | la cadena por stage que el paralelismo no puede acortar (pesada por `size`) |
+| **grafo** | un bloque ` ```mermaid ` — se renderiza en GitHub y visores de markdown, sin instalar nada |
+
+Y **solo se dibuja donde hay aristas**: un roadmap sin relaciones declaradas lo dice explícitamente en vez de fingir un árbol de un nivel. Eso hace que un roadmap plano siga funcionando sin migrar — sin relaciones, toda entrada abierta está en la frontera, que es el comportamiento de siempre.
+
+La frontera no es decorativa: `/sdd:new` avisa si abres una entrada cuyas dependencias siguen abiertas, y `/sdd:auto N` coge N entradas **de la frontera** en vez de las N primeras del fichero (releyéndola entre features, porque cerrar una abre las que la esperaban). `/sdd:doctor` valida el grafo (`SDD018`-`SDD023`): ciclos, dependencias a entradas inexistentes y el check que caza errores reales — una entrada cerrada cuya dependencia sigue abierta.
 
 ## Panel multiagente de calidad
 
@@ -525,7 +574,8 @@ Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía hea
 **Una feature = una rama `sdd/<feature>` = un dueño.** El código, los documentos del change y `STATE.md` viajan juntos en el PR. El merge integra la implementación y su evidencia local; el archive posterior actualiza specs/roadmap y convierte el change en historia solo cuando ese merge ya es objetivo.
 
 - **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros". Con el gate de merge, una rama remota ya no implica un dueño ajeno: si existe `sdd/changes/<feature>/` en local, es un change propio esperando merge o archive, y auto lo reanuda o lo reporta por su estado en vez de saltarlo como "cogido por otro".
-- **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `roadmap.md`/`metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
+- **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
+- **`roadmap.md` ya no es un punto de conflicto, y lo era**: dos ramas anotando entradas **adyacentes** daban conflicto garantizado (medido, git 2.52) — y trabajar en paralelo coge justamente entradas consecutivas. Se eliminó la causa, no el síntoma: ninguna fase escribe el roadmap durante el ciclo, porque el progreso ya vive en `STATE.md`/`BLOCKED.md` y `/sdd:status` lo deriva. Solo `/sdd:archive` lo tickea, y eso es post-merge y serializado. Ver [ADR 0001](docs/adr/0001-roadmap-structure-and-concurrency.md) D5.
 - **Distribución**: `.claude/settings.json` versionado con `extraKnownMarketplaces` + `enabledPlugins` hace que quien clone reciba el prompt de instalar el plugin al confiar en la carpeta.
 
 ## Métricas de uso por feature
@@ -561,7 +611,7 @@ agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · mcp-catalog · lsp-catalog · metrics
-scripts/            # sdd-doctor.py · sdd_lifecycle.py · validate_toolkit.py · usage-{mark,phase,sink,sync}
+scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · validate_toolkit.py · usage-{mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
 docs/guide.md       # guía de uso narrativa

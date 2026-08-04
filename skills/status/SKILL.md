@@ -1,7 +1,7 @@
 ---
 name: status
 model: haiku
-description: Show the state of SDD changes - active changes, phase, task progress, and the roadmap as a to-do view. With a feature name, drills into that change's tasks.md - full plan, or filtered by section/pending/done/requirement, for surgical navigation of large task lists. Use when the user runs /sdd:status or asks where a change/the roadmap/a specific task stands.
+description: Show the state of SDD changes - active changes, phase, task progress, and the roadmap as derived views (what is workable now in parallel, dependency waves, critical path per stage, dependency graph). With a feature name, drills into that change's tasks.md - full plan, or filtered by section/pending/done/requirement, for surgical navigation of large task lists. Use when the user runs /sdd:status or asks where a change/the roadmap/a specific task stands, or what can be worked on next.
 ---
 
 Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
@@ -22,10 +22,18 @@ Report the state of the SDD workflow. Read-only — change nothing. Arguments: n
    - **Pending queue**: if `BLOCKED.md` exists, this change has unresolved entries — show these FIRST, each with its type (`decision`: needs the user / `deferred`: resumable — show its resume command) and one-line reason. This is the user's inbox: decisions to make and deferred work to pick up.
 2. **In progress by others** (only if the repo has a git remote): `git ls-remote --heads origin "sdd/*"` — list remote SDD branches that don't correspond to a local active change, as "en curso por otros" (branch name; add author/date via `git log -1` on the fetched ref if cheap). This completes the picture: claims live as remote branches before they're merged.
 3. Count capability specs in `sdd/specs/` and recent entries in `sdd/changes/archive/`.
-4. If `sdd/roadmap.md` exists, render it as a to-do view preserving order — one line per entry with its state: `✔` done only when archived, `PR` remote review (`PR_OPEN`), `✓` ready (`READY_FOR_PR`), `▶` in progress, `⛔` blocked, `·` pending. A checked roadmap entry whose change is still active is inconsistent, not done.
+4. If `sdd/roadmap.md` exists, get the derived roadmap views — do not hand-render them, and never infer order from line position:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . report
+   ```
+
+   Relay its sections as they come: **frontera** (what can be worked right now, in parallel — each entry annotated with how many others it unblocks, so the user can choose), **olas** (topological levels), **camino crítico** per stage (the chain that parallel work cannot shorten), **aplazadas**, and the **grafo** as a fenced ```mermaid block. The status symbols (`✔` archived, `PR` `PR_OPEN`, `✓` `READY_FOR_PR`, `▶` active, `⛔` blocked, `·` pending) are derived from each change's `STATE.md` and `BLOCKED.md`, never from the roadmap text — a checked entry whose change is still active is inconsistent, not done, and `/sdd:doctor` is what reports it.
+
+   When the roadmap declares no relations (a flat legacy roadmap), the report says so explicitly instead of drawing a one-level graph that would fake information. Pass `--stage <n>` to narrow to one stage. If the report's **Problemas** section is non-empty, show it and point to `/sdd:doctor`.
 5. Present a compact table: change · lifecycle · document phase · tasks done/total · PR · suggested next action. Use `/sdd:design`, `/sdd:tasks`, or `/sdd:run` for active work; open/record a PR for `READY_FOR_PR`; wait for merge then `/sdd:archive` for `PR_OPEN`; `/sdd:archive` for `MERGED`. Never suggest archive merely because all local tasks are checked.
 
-If `sdd/` doesn't exist, say so and point to `/sdd:init`. If there are no active changes, say so and point to `/sdd:new` (suggesting the next roadmap entry if there is one).
+If `sdd/` doesn't exist, say so and point to `/sdd:init`. If there are no active changes, say so and point to `/sdd:new` (suggesting the first entry of the frontier if there is one — not the first line of the roadmap).
 
 ## Task plan view (`<feature> [filter]`)
 

@@ -736,6 +736,14 @@ def update_roadmap(root: Path, feature: str, archive_relative: str) -> str:
                 + archive_relative
                 + body[pointer.end("path") :]
             )
+        else:
+            # No pointer to rewrite: /sdd:new stopped annotating in-flight changes
+            # (ADR 0001, D5), because that annotation was derived state duplicated
+            # into a shared file and it conflicted on merge between adjacent
+            # entries. Archive is post-merge and serialized, so it is the right
+            # place to record where the change ended up — append it here, or the
+            # roadmap would tick without leaving any trace of the archive.
+            body = f"{body.rstrip()} → {archive_relative}"
         newline = "\n" if line.endswith("\n") else ""
         updated = f"{match.group('prefix')}[x]{body}{newline}"
         output.append(updated)
