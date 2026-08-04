@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -80,6 +81,62 @@ class DoctorFixtureTests(unittest.TestCase):
                     (root / filename).write_text(content, encoding="utf-8")
                 result = run_doctor(root)
                 self.assertEqual(0, result.returncode, result.stdout)
+
+
+class WorktreeIgnoreTests(unittest.TestCase):
+    """SDD024 must ask git, not just read .gitignore."""
+
+    def project(self, root: Path) -> None:
+        (root / "sdd").mkdir()
+        (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+        (root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] alpha — pendiente\n", encoding="utf-8"
+        )
+        (root / ".claude" / "worktrees" / "alpha").mkdir(parents=True)
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD024" in line]
+
+    def test_an_unignored_worktree_directory_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root)
+            self.assertEqual(1, len(self.diagnose(root)))
+
+    def test_gitignore_silences_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root)
+            (root / ".gitignore").write_text(".claude/worktrees/\n", encoding="utf-8")
+            self.assertEqual([], self.diagnose(root))
+
+    def test_git_info_exclude_silences_it_too(self) -> None:
+        """A machine-local exclude is a legitimate way to ignore a local dir —
+        reading only .gitignore reported a correct project as broken."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root)
+            exclude = root / ".git" / "info" / "exclude"
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            exclude.write_text(".claude/worktrees/\n", encoding="utf-8")
+            self.assertEqual([], self.diagnose(root))
+
+    def test_no_worktrees_directory_means_no_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "sdd").mkdir()
+            (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+            (root / "sdd" / "roadmap.md").write_text(
+                "# Roadmap\n\n- [ ] alpha — pendiente\n", encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+            )
+            self.assertEqual([], self.diagnose(root))
 
 
 if __name__ == "__main__":
