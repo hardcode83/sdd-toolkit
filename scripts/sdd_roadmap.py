@@ -61,6 +61,47 @@ DEFAULT_WEIGHT = 2
 # Views stay scannable: the full text lives in the roadmap and its per-entry note.
 SUMMARY_LIMIT = 110
 
+# --- candidate detection ------------------------------------------------------
+# Relations get WRITTEN by a human, but they do not have to be FOUND by one: the
+# prose already states them, and finding a reference is plain text matching — no
+# model, no guessing, repeatable. So candidates are rediscovered on every run
+# (they stay live as the prose changes) while declared edges remain the only
+# thing the frontier, the waves and /sdd:auto ever order by. A misread paragraph
+# must never be able to change execution order; it may only raise a question.
+#
+# A reference is a backticked feature name, which is how the roadmap already
+# cites entries. The cue decides the proposed relation: these are the formulas
+# real roadmaps repeat, matched inside the sentence holding the reference.
+REFERENCE_RE = re.compile(r"`([A-Za-z0-9._-]+)`")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;:])\s+")
+# (pattern, relation, reversed). `reversed` marks the formulas where the mentioned
+# entry comes AFTER the one doing the mentioning ("va antes de `X`"): there the
+# edge runs target → source. Getting direction wrong is worse than not proposing
+# at all, since a backwards edge would order the work incorrectly, so the reverse
+# cues are matched first and listed explicitly rather than inferred.
+CUES: tuple[tuple[str, str, bool], ...] = (
+    # Reverse: this entry precedes the mentioned one.
+    (r"\bva\s+antes\s+de\b|\bva\s+por\s+delante\b|\bantes\s+que\b", "needs", True),
+    (r"\bes\s+la\s+entrada\s+de\s+dise(?:ñ|n)o\s+de\b", "informs-from", True),
+    # Forward: the mentioned entry must close first.
+    (r"\bdepende(?:n)?\s+de\b|\bdepends?\s+on\b", "needs", False),
+    (r"\bnecesita\b|\brequiere\b|\brequires?\b|\bneeds?\b", "needs", False),
+    (r"\bbloquead[ao]s?\s+por\b|\bblocked\s+by\b", "needs", False),
+    (r"\bse\s+apoya\s+en\b|\bbuilds?\s+on\b", "needs", False),
+    (r"\bdependencias?\s+dura", "needs", False),
+    (r"\bva\s+detr(?:á|a)s\s+de\b|\bva\s+despu(?:é|e)s\s+de\b", "needs", False),
+    (r"\bcierra\b|\bcloses\b", "completes", False),
+    (r"\bsale\s+de\b|\bcomes?\s+from\b", "completes", False),
+    (r"\bsepara(?:d[ao])?\s+de\b|\bsplit\s+from\b", "completes", False),
+    (r"\bhereda\b|\binherits?\b", "inherits-from", False),
+    (r"\bentrada\s+de\s+dise", "informs-from", False),
+    (r"\ba(?:ñ|n)adid[ao]\s+tras\b|\banotad[ao]\s+al\s+archivar\b", "informs-from", False),
+    (r"\bmitigar\b|\bresidual\b", "completes", False),
+)
+COMPILED_CUES = tuple(
+    (re.compile(p, re.IGNORECASE), relation, flip) for p, relation, flip in CUES
+)
+
 # Lifecycle state → the symbol /sdd:status already uses for it.
 STATE_SYMBOL = {
     "ARCHIVED": "✔",
@@ -115,6 +156,26 @@ class Entry:
     @property
     def weight(self) -> int:
         return SIZE_WEIGHT.get(self.size, DEFAULT_WEIGHT)
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A relation the prose states but the metadata does not declare.
+
+    Carries the sentence that suggested it, because a candidate has to be
+    *checkable*: the reader confirms or rejects it by reading the quote, never by
+    trusting the detector.
+    """
+
+    source: str
+    target: str
+    relation: str  # "" when no cue matched — a bare mention
+    quote: str
+    line: int
+
+    @property
+    def declared_shape(self) -> str:
+        return f"{self.relation or 'needs'}: {self.target}"
 
 
 @dataclass(frozen=True)
@@ -500,6 +561,82 @@ class Graph:
                 resolved.add(entry.feature)
         return levels
 
+    # --- candidates ----------------------------------------------------------
+
+    def entry_prose(self, entry: Entry) -> list[tuple[str, int]]:
+        """The text a candidate can be found in: the entry line and its note.
+
+        The note (`sdd/roadmap/<feature>.md`) matters more than the line once a
+        roadmap is a proper index — that is where the reasoning moved, so that is
+        where the relations are stated.
+        """
+        chunks = [(entry.body, entry.line)]
+        note = self.root / "sdd" / "roadmap" / f"{entry.feature}.md"
+        if note.is_file():
+            try:
+                chunks.append((note.read_text(encoding="utf-8", errors="replace"), 0))
+            except OSError:
+                pass
+        return chunks
+
+    def candidates(self, include_closed_targets: bool = True) -> list[Candidate]:
+        """Relations the prose states and the metadata does not declare.
+
+        Deterministic and recomputed every call, so it tracks the prose instead of
+        going stale. Never consulted by `frontier`, `waves` or `critical_path`:
+        those order only by declared edges, because a heuristic must not be able
+        to change what gets built next.
+        """
+        found: list[Candidate] = []
+        seen: set[tuple[str, str]] = set()
+        for entry in self.open_entries():
+            declared = set(entry.predecessors)
+            for text, line in self.entry_prose(entry):
+                for sentence in SENTENCE_SPLIT_RE.split(" ".join(text.split())):
+                    targets = [
+                        name
+                        for name in REFERENCE_RE.findall(sentence)
+                        if name in self.by_feature and name != entry.feature
+                    ]
+                    if not targets:
+                        continue
+                    relation, flip = next(
+                        (
+                            (rel, rev)
+                            for cue, rel, rev in COMPILED_CUES
+                            if cue.search(sentence)
+                        ),
+                        ("", False),
+                    )
+                    for mentioned in targets:
+                        # A reverse cue means the mentioned entry comes after this
+                        # one, so the edge belongs on the mentioned entry.
+                        source, target = (
+                            (mentioned, entry.feature) if flip else (entry.feature, mentioned)
+                        )
+                        if not flip and target in declared:
+                            continue
+                        if flip and entry.feature in set(
+                            self.by_feature[mentioned].predecessors
+                        ):
+                            continue
+                        if not include_closed_targets and self.closed.get(target):
+                            continue
+                        key = (source, target)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        found.append(
+                            Candidate(
+                                source=source,
+                                target=target,
+                                relation=relation,
+                                quote=shorten(sentence, 150),
+                                line=line or entry.line,
+                            )
+                        )
+        return found
+
     def successors(self, feature: str) -> tuple[str, ...]:
         """Open entries waiting on this one — what closing it would unblock."""
         return tuple(
@@ -802,6 +939,44 @@ def shorten(text: str, limit: int = SUMMARY_LIMIT) -> str:
     return collapsed[: limit - 1].rstrip() + "…"
 
 
+def render_candidates(graph: Graph, only_open: bool = False) -> list[str]:
+    """Candidates grouped by entry, each with the sentence that suggested it.
+
+    Presented as questions, never as facts: the reader confirms by reading the
+    quote. An open target is listed first because that is the one that would
+    actually change the order once declared.
+    """
+    found = graph.candidates(include_closed_targets=not only_open)
+    if not found:
+        return []
+    out = ["## Posibles dependencias sin declarar", ""]
+    out.append(
+        "Detectadas en la prosa, NO usadas para ordenar nada. Confirma leyendo la "
+        "cita y, si procede, añade la relación a la sub-línea de metadatos."
+    )
+    out.append("")
+    by_source: dict[str, list[Candidate]] = {}
+    for candidate in found:
+        by_source.setdefault(candidate.source, []).append(candidate)
+    for source, items in by_source.items():
+        items.sort(key=lambda c: (graph.closed.get(c.target, False), c.target))
+        out.append(f"▸ {source}")
+        for candidate in items:
+            done = " ✔ (ya cerrada)" if graph.closed.get(candidate.target) else ""
+            proposed = candidate.relation or "¿?"
+            out.append(f"    {proposed}: {candidate.target}{done}")
+            out.append(f"      «{candidate.quote}»")
+        out.append("")
+    unresolved = sum(1 for c in found if not c.relation)
+    if unresolved:
+        out.append(
+            f"{unresolved} sin tipo propuesto: la frase menciona la entrada pero no "
+            "usa una fórmula reconocible. Ahí hay que leer y decidir."
+        )
+        out.append("")
+    return out
+
+
 def render_entry(graph: Graph, entry: Entry, annotate: bool = False) -> str:
     parts = [f"{status_symbol(graph.status[entry.feature])} {entry.feature}"]
     tags = [t for t in (entry.size, entry.kind) if t]
@@ -903,6 +1078,8 @@ def render_report(graph: Graph, stage: str | None = None) -> str:
         out.append("(Sin dependencias declaradas: no hay grafo que dibujar.)")
         out.append("")
 
+    out.extend(render_candidates(graph))
+
     if findings:
         out.append("## Problemas")
         out.append("")
@@ -990,6 +1167,20 @@ def build_parser() -> argparse.ArgumentParser:
         "graph", help="the dependency graph as terminal text, by wave"
     )
     text_graph.add_argument("--stage", default=None)
+    suggest = subparsers.add_parser(
+        "suggest",
+        help="relations the prose states but the metadata does not declare",
+    )
+    suggest.add_argument(
+        "--feature",
+        default=None,
+        help="only candidates whose source is this entry",
+    )
+    suggest.add_argument(
+        "--only-open",
+        action="store_true",
+        help="skip targets already closed (those cannot change the order)",
+    )
     diagram = subparsers.add_parser("mermaid", help="mermaid source for the graph")
     diagram.add_argument("--stage", default=None)
     diagram.add_argument(
@@ -1013,6 +1204,27 @@ def main(argv: list[str] | None = None) -> int:
     except RoadmapError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
+
+    # `suggest` renders its own JSON, so it must be dispatched before the global
+    # dump below — otherwise `--json suggest` silently returned the graph instead
+    # of the candidates, which is a wrong answer rather than a missing one.
+    if args.command == "suggest":
+        found = graph.candidates(include_closed_targets=not args.only_open)
+        if args.feature:
+            found = [c for c in found if c.source == args.feature]
+        if args.json:
+            print(json.dumps([vars(c) for c in found], indent=2, ensure_ascii=False))
+        elif not found:
+            print("Sin candidatas: la prosa no menciona entradas sin declarar.")
+        else:
+            for candidate in found:
+                done = " ✔" if graph.closed.get(candidate.target) else ""
+                print(
+                    f"{candidate.source} → {candidate.relation or '¿?'}: "
+                    f"{candidate.target}{done}"
+                )
+                print(f"    «{candidate.quote}»")
+        return 0
 
     if args.json:
         print(as_json(graph))
