@@ -383,6 +383,53 @@ class CriticalPathTests(unittest.TestCase):
             ["first", "last"], [e.feature for e in graph.critical_path()]
         )
 
+    def test_the_report_shows_the_global_chain_when_stages_exist(self) -> None:
+        """Dependencies cross stage boundaries, so a per-stage chain understates
+        the real long pole — and the global one used to be unreachable."""
+        content = (
+            "## Stage 1 — cimientos\n\n"
+            "- [ ] a — x\n      size: S\n"
+            "- [ ] b — x\n      needs: a · size: M\n"
+            "## Stage 2 — despliegue\n\n"
+            "- [ ] c — x\n      needs: b · size: L\n"
+            "- [ ] d — x\n      needs: c · size: L\n"
+        )
+        graph = graph_of(content)
+        self.assertEqual(
+            ["a", "b", "c", "d"], [e.feature for e in graph.critical_path()]
+        )
+        report = sdd_roadmap.render_report(graph)
+        self.assertIn("Camino crítico — todo el roadmap", report)
+        self.assertIn("a → b → c → d", report)
+
+    def test_a_stage_chain_inside_the_global_one_is_not_repeated(self) -> None:
+        graph = graph_of(
+            "## Stage 1 — cimientos\n\n"
+            "- [ ] a — x\n      size: S\n"
+            "- [ ] b — x\n      needs: a · size: M\n"
+        )
+        report = sdd_roadmap.render_report(graph)
+        self.assertEqual(1, report.count("Camino crítico"))
+
+    def test_a_stage_chain_outside_the_global_one_is_shown(self) -> None:
+        graph = graph_of(
+            "## Stage 1 — cimientos\n\n"
+            "- [ ] a — x\n      size: S\n"
+            "- [ ] b — x\n      needs: a · size: L\n"
+            "- [ ] c — x\n      needs: b · size: L\n"
+            "## Stage 2 — lateral\n\n"
+            "- [ ] x1 — x\n      needs: a · size: L\n"
+            "- [ ] x2 — x\n      needs: x1 · size: L\n"
+        )
+        report = sdd_roadmap.render_report(graph)
+        self.assertIn("Camino crítico — todo el roadmap", report)
+        self.assertIn("x1 → x2", report)
+
+    def test_contiguous_slice_detection(self) -> None:
+        self.assertTrue(sdd_roadmap._is_contiguous_slice(["b", "c"], ["a", "b", "c", "d"]))
+        self.assertFalse(sdd_roadmap._is_contiguous_slice(["b", "d"], ["a", "b", "c", "d"]))
+        self.assertFalse(sdd_roadmap._is_contiguous_slice([], ["a"]))
+
     def test_an_absent_size_counts_as_medium(self) -> None:
         graph = graph_of("- [ ] alpha — sin size\n")
         self.assertEqual(

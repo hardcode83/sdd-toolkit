@@ -977,6 +977,16 @@ def render_candidates(graph: Graph, only_open: bool = False) -> list[str]:
     return out
 
 
+def _is_contiguous_slice(inner: list[str], outer: list[str]) -> bool:
+    """Whether `inner` appears as a consecutive run inside `outer`."""
+    if not inner or len(inner) > len(outer):
+        return False
+    return any(
+        outer[i : i + len(inner)] == inner
+        for i in range(len(outer) - len(inner) + 1)
+    )
+
+
 def render_entry(graph: Graph, entry: Entry, annotate: bool = False) -> str:
     parts = [f"{status_symbol(graph.status[entry.feature])} {entry.feature}"]
     tags = [t for t in (entry.size, entry.kind) if t]
@@ -1021,23 +1031,43 @@ def render_report(graph: Graph, stage: str | None = None) -> str:
             out.append(f"{index}. {names}")
         out.append("")
 
-    # One critical path per named stage; a roadmap with no stages gets a single
-    # global one, rather than a chain mislabelled as belonging to "no stage".
-    if stage is not None:
-        scopes: list[tuple[str, str | None]] = [(stage, stage)]
-    else:
-        named = [title for title in graph.stages() if title]
-        scopes = [(title, title) for title in named] or [("global", None)]
-    for title, selector in scopes:
+    # The GLOBAL path first, always. Dependencies cross stage boundaries, so a
+    # per-stage chain understates the real long pole — and three per-stage numbers
+    # invite adding them up, which only happens to work when the chain passes
+    # through each stage contiguously. The global one is what answers "how long
+    # until all of this is done, at best".
+    def render_path(title: str, selector: str | None) -> None:
         path = graph.critical_path(selector)
         if len(path) < 2:
-            continue
+            return
         cost = sum(e.weight for e in path)
         chain = " → ".join(e.feature for e in path)
-        out.append(f"## Camino crítico — {stage_goal(title) or title}")
+        out.append(f"## Camino crítico — {title}")
         out.append("")
         out.append(f"{chain}  (peso {cost})")
         out.append("")
+
+    if stage is not None:
+        render_path(stage_goal(stage) or stage, stage)
+    else:
+        global_path = graph.critical_path()
+        render_path("todo el roadmap", None)
+        named = [title for title in graph.stages() if title]
+        if not named:
+            pass
+        else:
+            # Per-stage detail, but only where it says something the global chain
+            # does not: a stage whose long pole IS a slice of the global one adds
+            # noise, not information.
+            global_features = [e.feature for e in global_path]
+            for title in named:
+                path = graph.critical_path(title)
+                if len(path) < 2:
+                    continue
+                features = [e.feature for e in path]
+                if _is_contiguous_slice(features, global_features):
+                    continue
+                render_path(stage_goal(title) or title, title)
 
     deferred = graph.deferred()
     if deferred:

@@ -571,7 +571,7 @@ Nada de esto se dibuja a mano. `scripts/sdd_roadmap.py` lo calcula y `/sdd:statu
 |---|---|
 | **frontera** | qué se puede atacar **ya, en paralelo** — con cuántas entradas desbloquea cada una, para elegir |
 | **olas** | niveles topológicos: la ola N necesita la N-1 cerrada |
-| **camino crítico** | la cadena por stage que el paralelismo no puede acortar (pesada por `size`) |
+| **camino crítico** | la cadena que el paralelismo no puede acortar, pesada por `size`. **Global primero** — las dependencias cruzan stages, así que el cuello real casi nunca cabe dentro de uno; el detalle por stage se muestra solo cuando no es un trozo del global |
 | **grafo** | **en texto, por olas**: cada entrada nombra lo que espera (`◂ necesita`) y lo que desbloquea (`▸ desbloquea`). Más un enlace a mermaid.live para verlo dibujado |
 
 Y **solo se dibuja donde hay aristas**: un roadmap sin relaciones declaradas lo dice explícitamente en vez de fingir un árbol de un nivel. Eso hace que un roadmap plano siga funcionando sin migrar — sin relaciones, toda entrada abierta está en la frontera, que es el comportamiento de siempre.
