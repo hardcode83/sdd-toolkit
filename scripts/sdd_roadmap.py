@@ -15,9 +15,11 @@ single wave: with no declared edges, every open entry is in the frontier.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import sys
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -685,11 +687,90 @@ class Graph:
 # --- rendering ---------------------------------------------------------------
 
 
-def mermaid(graph: Graph, stage: str | None = None) -> str:
+def diagram_nodes(
+    graph: Graph, stage: str | None = None, include_all: bool = False
+) -> list[Entry]:
+    """What the diagram should show: open work, plus the closed entries it waits on.
+
+    A mature roadmap is mostly history — in a real project this was 52 nodes of
+    which 31 were archived, carrying 5 edges. Dumping all of it buries the part
+    that is still actionable, so closed entries appear only when an open one
+    still points at them (useful: it says the blocker is already done).
+    `include_all` restores the full picture for auditing.
+    """
+    scoped = [e for e in graph.nodes() if graph.in_stage(e, stage)]
+    if include_all:
+        return scoped
+    open_scoped = [e for e in scoped if not graph.closed[e.feature]]
+    keep = {e.feature for e in open_scoped}
+    for entry in open_scoped:
+        keep.update(graph.known_predecessors(entry))
+    return [e for e in scoped if e.feature in keep]
+
+
+def mermaid_link(diagram: str) -> str:
+    """A mermaid.live URL that renders `diagram`.
+
+    The whole diagram travels inside the URL fragment (deflated, then
+    base64url) — mermaid.live decodes it client-side, so nothing is uploaded by
+    generating the link. Opening it does send it to that site, which is why the
+    caller is told the link carries the content.
+    """
+    state = json.dumps(
+        {"code": diagram, "mermaid": {"theme": "default"}, "autoSync": True},
+        ensure_ascii=False,
+    )
+    packed = zlib.compress(state.encode("utf-8"), 9)
+    return "https://mermaid.live/edit#pako:" + base64.urlsafe_b64encode(
+        packed
+    ).decode("ascii").rstrip("=")
+
+
+def render_text_graph(graph: Graph, stage: str | None = None) -> list[str]:
+    """The dependency graph as terminal text, laid out by wave.
+
+    Deliberately not ASCII art: the graph is a DAG, and drawing crossing edges
+    in characters is unreadable well before it is useful. Instead each entry
+    names what it waits on and what it unblocks, which is the same information
+    an arrow would carry and survives any number of parents.
+    """
+    waves = graph.waves()
+    scoped = [[e for e in level if graph.in_stage(e, stage)] for level in waves]
+    scoped = [level for level in scoped if level]
+    if not scoped:
+        return []
+
+    width = max(len(e.feature) for level in scoped for e in level)
+    out: list[str] = []
+    for index, level in enumerate(scoped, start=1):
+        header = "se puede empezar ya" if index == 1 else f"tras la ola {index - 1}"
+        out.append(f"Ola {index} · {header}")
+        for entry in level:
+            tags = " · ".join(t for t in (entry.size, entry.kind) if t)
+            label = f"  {status_symbol(graph.status[entry.feature])} {entry.feature:<{width}}"
+            if tags:
+                label += f"  ({tags})"
+            out.append(label)
+            waiting = [
+                f"{target}{' ✔' if graph.closed.get(target) else ''}"
+                for target in graph.known_predecessors(entry)
+            ]
+            if waiting:
+                out.append(f"      ◂ necesita  {', '.join(waiting)}")
+            unblocks = graph.successors(entry.feature)
+            if unblocks:
+                out.append(f"      ▸ desbloquea {', '.join(unblocks)}")
+        out.append("")
+    return out
+
+
+def mermaid(
+    graph: Graph, stage: str | None = None, include_all: bool = False
+) -> str:
     """A flowchart of the open graph. Emitted as source, not a rendered image:
     a fenced ```mermaid block renders in GitHub and markdown viewers with zero
     dependencies, which is what makes it usable inside an unattended run."""
-    scope = [e for e in graph.nodes() if graph.in_stage(e, stage)]
+    scope = diagram_nodes(graph, stage, include_all)
     if not scope:
         return ""
     lines = ["flowchart TD"]
@@ -804,13 +885,19 @@ def render_report(graph: Graph, stage: str | None = None) -> str:
         out.append("")
 
     if graph.has_edges(stage):
-        diagram = mermaid(graph, stage)
-        if diagram:
+        text = render_text_graph(graph, stage)
+        if text:
             out.append("## Grafo")
             out.append("")
-            out.append("```mermaid")
-            out.append(diagram)
-            out.append("```")
+            out.extend(text)
+        diagram = mermaid(graph, stage)
+        if diagram:
+            # A link, not a fenced block: the terminal cannot render mermaid, and
+            # the text view above already answered the question. The diagram
+            # travels inside the URL fragment, so say so — opening it hands the
+            # feature names to that site.
+            out.append(f"Ver dibujado (el enlace lleva el diagrama dentro): {mermaid_link(diagram)}")
+            out.append("Fuente mermaid para pegar en GitHub: `sdd_roadmap.py mermaid`")
             out.append("")
     else:
         out.append("(Sin dependencias declaradas: no hay grafo que dibujar.)")
@@ -899,8 +986,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("leaves", help="open entries with no relations")
     critical = subparsers.add_parser("critical-path")
     critical.add_argument("--stage", default=None)
-    diagram = subparsers.add_parser("mermaid")
+    text_graph = subparsers.add_parser(
+        "graph", help="the dependency graph as terminal text, by wave"
+    )
+    text_graph.add_argument("--stage", default=None)
+    diagram = subparsers.add_parser("mermaid", help="mermaid source for the graph")
     diagram.add_argument("--stage", default=None)
+    diagram.add_argument(
+        "--link",
+        action="store_true",
+        help="print a mermaid.live URL instead of the source (carries the diagram)",
+    )
+    diagram.add_argument(
+        "--all",
+        action="store_true",
+        dest="include_all",
+        help="include closed entries nothing open waits on (default: omit them)",
+    )
     return parser
 
 
@@ -940,10 +1042,16 @@ def main(argv: list[str] | None = None) -> int:
         path = graph.critical_path(args.stage)
         if path:
             print(" → ".join(e.feature for e in path))
+    elif args.command == "graph":
+        text = render_text_graph(graph, args.stage)
+        if text:
+            print("\n".join(text).rstrip() + "\n", end="")
+        else:
+            print("Sin dependencias declaradas: no hay grafo que dibujar.")
     elif args.command == "mermaid":
-        diagram = mermaid(graph, args.stage)
+        diagram = mermaid(graph, args.stage, args.include_all)
         if diagram:
-            print(diagram)
+            print(mermaid_link(diagram) if args.link else diagram)
 
     return 1 if any(f.severity == "ERROR" for f in graph.validate()) else 0
 
