@@ -48,6 +48,27 @@ Nadie decidió nada creativo: es la regla del paso 3 de `run` — *última tarea
 
 `agents/` contiene **solo revisores**: identidades persistentes, read-only, con contrato de findings. Los 3 implementadores del tournament son **efímeros** — agentes genéricos lanzados con worktree aislado y un ángulo distinto cada uno (simple-correcto / performance / defensivo); escriben código y desaparecen. En tournament, los revisores hacen de *juez* de los 3 diffs. Mnemotécnica: `agents/` = quien verifica; tournament = quien compite.
 
+## Un compañero lleva semanas con una versión vieja del plugin y nadie se enteró — ¿por qué?
+
+Porque `autoUpdate` viene **apagado** para todo marketplace que no sea oficial de Anthropic, y sin él una instalación se queda clavada en la versión con la que nació. Sin aviso, sin prompt, sin nada. Medido en una instalación real: tres días y dos releases de retraso antes de que alguien lo notara, y solo porque fue a mirar.
+
+El arreglo es un campo en el `.claude/settings.json` **versionado del proyecto** (no en el tuyo personal), hermano de `source`:
+
+```json
+"extraKnownMarketplaces": {
+  "sdd-toolkit": {
+    "source": { "source": "github", "repo": "hardcode83/sdd-toolkit" },
+    "autoUpdate": true
+  }
+}
+```
+
+`/sdd:init` lo escribe por ti al configurar la distribución de equipo, y al re-ejecutarlo sobre un proyecto que no lo tenga te ofrece añadirlo.
+
+Y no es cosmético: las garantías del flujo —reglas compartidas, códigos del doctor, gates del lifecycle— **solo se sostienen si todo el equipo corre la misma versión**. Un `STATE.md` que escribe una versión con campos que otra no conoce, o un `SDD0xx` que una reporta y la otra no, convierte "el flujo lo valida" en "el flujo lo valida en mi máquina". Quien quiera control manual lo desactiva en su `.claude/settings.local.json`, que es gitignorado y tiene precedencia.
+
+Detalle de comportamiento, verificado: refresca marketplace **e** instalación en una sola operación, **al arrancar sesión** (la sesión en curso no se entera), y solo para el proyecto en el que abres la sesión.
+
 ## ¿Cómo llegan las actualizaciones del plugin a quien lo usa?
 
 Si el marketplace se registró **desde git** (`/plugin marketplace add hardcode83/sdd-toolkit`): pull en background automático, y el campo `version` de `plugin.json` marca cuándo hay release (subir el número = distribuir). Solo distribuye lo que está en **`main`** — una PR sin mergear no le llega a nadie. Registrado por **ruta local**: siempre manual (`/plugin marketplace update` + `/plugin update`). Y el plugin se instala **por usuario**, no por repo: lo que el proyecto versiona (`enabledPlugins` en settings) es la *declaración* de que lo usa.
