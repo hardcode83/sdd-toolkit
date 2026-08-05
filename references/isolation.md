@@ -181,15 +181,19 @@ The most common blocker after the first worktree works is a **dev stack that onl
 binds once**: `make up` in the second worktree hits `address already in use`, so
 concurrent sessions cannot run tests and the whole point of isolating is lost.
 
-Reaching for per-worktree ports is the obvious move and usually the wrong first
-one. Three questions decide it, and they are answered by **measuring**, not by
-discussing — "I don't know" is the normal starting state:
+Reaching for per-worktree ports is the obvious move, and it may not be the
+cheapest one. Three questions decide it, and every one is answered by
+**measuring**, not by discussing — "I don't know" is the normal starting state,
+and none of these can be settled by reading this file:
 
-1. **Do the tests need published host ports at all?** Many suites run *inside* the
-   stack (`docker compose exec …`, `kubectl exec`, a test container on the same
-   network) and reach services by name. If so, the second worktree does not need
-   to publish anything, and the collision disappears rather than being managed.
-   Measure it: bring the stack up without publishing and run the suite.
+1. **Do the tests need published host ports at all?** A suite that runs *inside*
+   the stack (`docker compose exec …`, `kubectl exec`, a test container on the
+   same network) reaches services by name, and then the second worktree needs to
+   publish nothing — the collision disappears instead of being managed. Whether
+   that holds for a given project is a **hypothesis to test, not a safe
+   assumption**: bring the stack up without publishing, run the suite, and look
+   for the one test that pokes `localhost` (an integration probe against an
+   external API is the usual culprit).
 2. **Are the data services shareable?** If the runner already isolates per
    process — a database name per pid, a queue prefix per run, a temp dir per
    worker — one Postgres can serve every worktree. Check whether that isolation

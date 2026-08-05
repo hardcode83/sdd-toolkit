@@ -684,9 +684,10 @@ trabajo a medias también). Cada fase posterior encuentra su sitio con
   síntoma no se parece a un fichero ausente: es `address already in use`, o una
   suite que pasa sola y falla con otro worktree arriba. Antes de inventar puertos
   por worktree, [`references/isolation.md`](references/isolation.md) plantea las
-  tres preguntas que lo deciden — y la primera («¿los tests necesitan puertos del
-  host, o corren dentro de la red del stack?») suele hacer desaparecer el
-  problema en vez de gestionarlo.
+  tres preguntas que lo deciden. Ninguna se responde leyendo: se miden. La primera
+  («¿los tests necesitan puertos del host, o corren dentro de la red del stack?»)
+  es la que **puede** hacer desaparecer el problema en vez de gestionarlo — si la
+  respuesta es sí, lo hace; y averiguarlo es una tarde, no un design.
 - `worktree.baseRef` por defecto es `fresh`: rama desde `origin/<base>`, ignorando
   commits locales sin pushear. El flujo compara antes y te avisa, para no grabar
   en `STATE.md` un BASE del que el worktree no salió.
