@@ -63,6 +63,16 @@ Conflict evidence, in the order it matters:
    bootstrap steps in `project.md`, and do not paper over it by guessing which
    files to copy.
 
+   **And check what the project cannot have twice.** Bootstrap has a second
+   dimension that "copy these files" does not cover: *exclusive resources*. A
+   project can need nothing copied and still be unable to run two dev stacks,
+   because something in it can only exist once on the machine — a published port,
+   a fixed container name, a daemon on a known socket, a database with a fixed
+   name, a lockfile. The failure looks nothing like a missing file: it is
+   `address already in use`, or a suite that passes alone and fails when a
+   sibling worktree is up. If `project.md` declares such a constraint, say it
+   **before** the user runs the tests, not after they debug the collision.
+
 4. **Record the binding** so later phases can find it:
 
    ```bash
@@ -164,6 +174,47 @@ nothing to unlock by hand.
 It holds two different things on purpose: **sessions** (pruned by liveness) and
 **worktree bindings** (they outlive the session, because the unfinished work
 does).
+
+## When two worktrees cannot both run the app
+
+The most common blocker after the first worktree works is a **dev stack that only
+binds once**: `make up` in the second worktree hits `address already in use`, so
+concurrent sessions cannot run tests and the whole point of isolating is lost.
+
+Reaching for per-worktree ports is the obvious move, and it may not be the
+cheapest one. Three questions decide it, and every one is answered by
+**measuring**, not by discussing — "I don't know" is the normal starting state,
+and none of these can be settled by reading this file:
+
+1. **Do the tests need published host ports at all?** A suite that runs *inside*
+   the stack (`docker compose exec …`, `kubectl exec`, a test container on the
+   same network) reaches services by name, and then the second worktree needs to
+   publish nothing — the collision disappears instead of being managed. Whether
+   that holds for a given project is a **hypothesis to test, not a safe
+   assumption**: bring the stack up without publishing, run the suite, and look
+   for the one test that pokes `localhost` (an integration probe against an
+   external API is the usual culprit).
+2. **Are the data services shareable?** If the runner already isolates per
+   process — a database name per pid, a queue prefix per run, a temp dir per
+   worker — one Postgres can serve every worktree. Check whether that isolation
+   already exists before duplicating the service; projects often built it for
+   concurrent CI and never noticed it solves this too.
+3. **What does the container runtime already isolate?** Compose derives its
+   project name from the directory, so containers, networks and named volumes are
+   *already* per worktree. Usually the only thing left colliding is the host port
+   binding — a much smaller problem than it first looks, and worth confirming
+   before designing around it.
+
+Two consequences worth stating up front, because they surprise people: per-project
+named volumes mean each worktree starts with an **empty database** and reinstalls
+dependencies (slow first run, no seed data), and N stacks cost N sets of volumes
+on disk.
+
+Whatever the project decides goes in its **Worktree bootstrap** section — the
+decision is the project's (shared rule 9), and a change this shape usually
+deserves its own roadmap entry with a design phase: it touches the compose file,
+the task runner, and possibly CI, and getting it wrong breaks the path to
+production. What the toolkit owns is the questions, not the answer.
 
 ## Limits worth stating
 
