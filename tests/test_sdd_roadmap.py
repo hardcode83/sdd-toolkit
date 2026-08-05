@@ -264,6 +264,106 @@ class FrontierTests(unittest.TestCase):
         self.assertEqual((), graph.successors("hardening"))
 
 
+class CandidateTests(unittest.TestCase):
+    """Relations found in the prose. Deterministic detection, human confirmation."""
+
+    def candidates(self, content: str, **files: str):
+        return graph_of(content, **files).candidates()
+
+    def test_a_cue_proposes_the_relation(self) -> None:
+        found = self.candidates(
+            "- [ ] alpha — depende de `beta` para el modelo\n- [ ] beta — el modelo\n"
+        )
+        self.assertEqual(1, len(found))
+        self.assertEqual(("alpha", "beta", "needs"), (found[0].source, found[0].target, found[0].relation))
+
+    def test_every_forward_cue_family_is_recognised(self) -> None:
+        for prose, relation in (
+            ("depende de `beta`", "needs"),
+            ("requiere `beta` antes de empezar", "needs"),
+            ("bloqueada por `beta`", "needs"),
+            ("se apoya en `beta`", "needs"),
+            ("va detrás de `beta` porque", "needs"),
+            ("cierra el cuarto ítem de `beta`", "completes"),
+            ("sale de `beta`", "completes"),
+            ("separada de `beta` el 2026-08-01", "completes"),
+            ("hereda la regla 12 de `beta`", "inherits-from"),
+            ("añadido tras `beta`", "informs-from"),
+        ):
+            with self.subTest(prose=prose):
+                found = self.candidates(f"- [ ] alpha — {prose}\n- [ ] beta — x\n")
+                self.assertEqual([relation], [c.relation for c in found], prose)
+
+    def test_a_reverse_cue_flips_the_direction(self) -> None:
+        """"va antes de `X`" means this entry precedes X — a backwards edge would
+        order the work wrongly, which is worse than proposing nothing."""
+        found = self.candidates(
+            "- [ ] alpha — va antes de `beta` a propósito\n- [ ] beta — x\n"
+        )
+        self.assertEqual([("beta", "alpha")], [(c.source, c.target) for c in found])
+
+    def test_a_bare_mention_has_no_proposed_relation(self) -> None:
+        found = self.candidates("- [ ] alpha — algo sobre `beta`\n- [ ] beta — x\n")
+        self.assertEqual([""], [c.relation for c in found])
+
+    def test_an_already_declared_relation_is_not_proposed_again(self) -> None:
+        found = self.candidates(
+            "- [ ] alpha — depende de `beta`\n      needs: beta\n- [ ] beta — x\n"
+        )
+        self.assertEqual([], found)
+
+    def test_self_references_and_unknown_names_are_ignored(self) -> None:
+        self.assertEqual(
+            [], self.candidates("- [ ] alpha — depende de `alpha` y de `no-existe`\n")
+        )
+
+    def test_the_per_entry_note_is_scanned_too(self) -> None:
+        """Once the roadmap is an index, that note is where the reasoning lives."""
+        found = self.candidates(
+            "- [ ] alpha — resumen corto\n- [ ] beta — x\n",
+            **{"sdd/roadmap/alpha.md": "El análisis largo: depende de `beta`.\n"},
+        )
+        self.assertEqual([("alpha", "beta", "needs")], [(c.source, c.target, c.relation) for c in found])
+
+    def test_each_candidate_carries_the_sentence_that_suggested_it(self) -> None:
+        found = self.candidates(
+            "- [ ] alpha — depende de `beta` por la entidad X\n- [ ] beta — x\n"
+        )
+        self.assertIn("depende de `beta`", found[0].quote)
+
+    def test_only_open_skips_targets_that_cannot_change_the_order(self) -> None:
+        content = "- [x] beta — cerrada\n- [ ] alpha — depende de `beta`\n"
+        graph = graph_of(content)
+        self.assertEqual(1, len(graph.candidates(include_closed_targets=True)))
+        self.assertEqual(0, len(graph.candidates(include_closed_targets=False)))
+
+    def test_candidates_never_change_the_order(self) -> None:
+        """The invariant the whole design rests on: a heuristic may raise a
+        question, never decide what gets built next."""
+        content = (
+            "- [ ] alpha — depende de `beta`, pero sin declararlo\n- [ ] beta — x\n"
+        )
+        graph = graph_of(content)
+        self.assertTrue(graph.candidates())
+        self.assertEqual(
+            ["beta", "alpha"], sorted((e.feature for e in graph.frontier()), reverse=True)
+        )
+        self.assertEqual(1, len(graph.waves()))
+        self.assertFalse(graph.has_edges())
+
+    def test_the_report_presents_candidates_as_questions(self) -> None:
+        report = sdd_roadmap.render_report(
+            graph_of("- [ ] alpha — depende de `beta`\n- [ ] beta — x\n")
+        )
+        self.assertIn("Posibles dependencias sin declarar", report)
+        self.assertIn("NO usadas para ordenar nada", report)
+
+    def test_json_output_returns_candidates_not_the_graph(self) -> None:
+        """`--json suggest` used to dump the graph — a wrong answer, not a gap."""
+        root = build("- [ ] alpha — depende de `beta`\n- [ ] beta — x\n")
+        self.assertEqual(0, sdd_roadmap.main(["--root", str(root), "--json", "suggest"]))
+
+
 class CriticalPathTests(unittest.TestCase):
     def test_weights_the_chain_by_size(self) -> None:
         graph = graph_of(NEW_FORMAT)

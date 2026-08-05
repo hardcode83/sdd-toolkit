@@ -595,6 +595,18 @@ Para verlo dibujado, el informe imprime un enlace a **mermaid.live** con el diag
 
 La frontera no es decorativa: `/sdd:new` avisa si abres una entrada cuyas dependencias siguen abiertas, y `/sdd:auto N` coge N entradas **de la frontera** en vez de las N primeras del fichero (releyéndola entre features, porque cerrar una abre las que la esperaban). `/sdd:doctor` valida el grafo (`SDD018`-`SDD023`): ciclos, dependencias a entradas inexistentes y el check que caza errores reales — una entrada cerrada cuya dependencia sigue abierta.
 
+### Las dependencias no hace falta descubrirlas a mano
+
+Las aristas las **escribe** un humano, pero no hace falta que las **encuentre**: la prosa de las entradas ya las afirma, y localizar una referencia es coincidencia de texto — sin modelo, repetible, testeable.
+
+`sdd_roadmap.py suggest` escanea el cuerpo de cada entrada abierta y su nota (`sdd/roadmap/<feature>.md`) buscando referencias a otras entradas, y propone el tipo a partir de las fórmulas que los roadmaps repiten de verdad — *"depende de"*, *"bloqueada por"*, *"cierra el cuarto ítem de"*, *"hereda de"*, *"añadido tras"*. Cada candidata viene **con la frase que la sugirió**, porque tiene que ser comprobable: confirmas leyendo la cita, no fiándote del detector.
+
+La dirección también se detecta: *"va antes de `X`"* significa que la arista va al revés, y declararla invertida ordenaría el trabajo mal — peor que no proponer nada. Lo que no encaja en ninguna fórmula sale como `¿?`: hay mención, no hay veredicto.
+
+**Y una línea que no se cruza: las candidatas no ordenan nada.** `frontier`, `waves`, `critical-path` y `/sdd:auto` leen **solo aristas declaradas**. Es lo que impide que un párrafo mal redactado cambie qué se construye a continuación: una heurística puede plantear una pregunta, nunca tomar la decisión. Por eso son *candidatas* y no aristas, y por eso se recalculan en cada ejecución en vez de guardarse — así siguen a la prosa en vez de quedarse rancias.
+
+Dónde aparecen: en `/sdd:status` como sección propia, y en `/sdd:new` acotadas a la entrada que abres, que es el momento más barato de arreglar el grafo porque ya la estás leyendo.
+
 ## Panel multiagente de calidad
 
 `/sdd:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
