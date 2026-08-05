@@ -355,6 +355,53 @@ def fixture_contract_errors() -> list[str]:
     return errors
 
 
+# What a consumer actually executes. Touching any of it changes the behaviour a
+# user gets, and the installer only offers an update when `version` changes — so
+# shipping a change here without a bump publishes it to nobody. That has now
+# happened twice (the tag job's own comment records the first time), which is why
+# it is a check and not a habit.
+DISTRIBUTED_PREFIXES = (
+    "skills/",
+    "agents/",
+    "scripts/",
+    "templates/",
+    "references/",
+    "hooks/",
+)
+DISTRIBUTED_FILES = ("rules.md",)
+# The repository's own CI tooling and fixtures: copied to consumers, never run by
+# them, so a change here alters nothing a user experiences. Docs are excluded for
+# the same reason — a typo fix should not force a release.
+DISTRIBUTION_EXEMPT = ("scripts/validate_toolkit.py",)
+
+
+def changes_behaviour(path: str) -> bool:
+    if path in DISTRIBUTION_EXEMPT:
+        return False
+    return path in DISTRIBUTED_FILES or path.startswith(DISTRIBUTED_PREFIXES)
+
+
+def release_guard_errors(changed: list[str], version_changed: bool) -> list[str]:
+    """Refuse a change to distributed behaviour that declares no new version.
+
+    Pure on purpose: the rule is unit-tested here, and the workflow only supplies
+    the diff and whether `version` moved.
+    """
+    if version_changed:
+        return []
+    behaviour = sorted({path for path in changed if changes_behaviour(path)})
+    if not behaviour:
+        return []
+    listed = ", ".join(behaviour[:5]) + (" …" if len(behaviour) > 5 else "")
+    return [
+        f"{len(behaviour)} distributed file(s) changed with no version bump "
+        f"({listed}). Raise `version` in BOTH .claude-plugin/plugin.json and "
+        ".codex-plugin/plugin.json in this same change: the installer only offers "
+        "an update when the declared version changes, so merging this as-is "
+        "publishes it to nobody."
+    ]
+
+
 VALIDATORS = {
     "boundary": validate_project_boundary,
     "manifests": validate_manifests,
@@ -365,8 +412,34 @@ VALIDATORS = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=(*VALIDATORS, "all"))
+    parser.add_argument("target", choices=(*VALIDATORS, "all", "release-guard"))
+    parser.add_argument(
+        "--changed",
+        type=Path,
+        help="release-guard: file holding the changed paths, one per line",
+    )
+    parser.add_argument(
+        "--version-changed",
+        action="store_true",
+        help="release-guard: the declared version differs from the base's",
+    )
     args = parser.parse_args(argv)
+
+    if args.target == "release-guard":
+        if not args.changed:
+            parser.error("release-guard requires --changed")
+        paths = [
+            line.strip()
+            for line in args.changed.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        errors = release_guard_errors(paths, args.version_changed)
+        for error in errors:
+            print(f"ERROR [release-guard] {error}")
+        if not errors:
+            print("PASS [release-guard]")
+        return 1 if errors else 0
+
     targets = VALIDATORS if args.target == "all" else {args.target: VALIDATORS[args.target]}
     failed = False
     for name, validator in targets.items():

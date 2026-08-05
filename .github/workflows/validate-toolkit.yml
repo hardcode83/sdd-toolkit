@@ -29,6 +29,38 @@ jobs:
       - name: Confirm validation is read-only
         run: git diff --exit-code
 
+  # The other half of the same problem. `tag` below automates the tag once the
+  # version moves; this refuses to let distributed behaviour reach `main` without
+  # the version moving at all — which had already happened twice, publishing work
+  # the installer would never offer. The bump belongs in the feature's own PR:
+  # one change, one version.
+  release-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needs the base commit to diff against and to read its version.
+          fetch-depth: 0
+      - name: Require a version bump when distributed behaviour changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          read_version() {
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+          }
+          git diff --name-only "${BASE_SHA}...HEAD" > /tmp/changed.txt
+          base=$(git show "${BASE_SHA}:.claude-plugin/plugin.json" | read_version)
+          head=$(read_version < .claude-plugin/plugin.json)
+          echo "version: ${base} (base) -> ${head} (head)"
+          if [ "${base}" = "${head}" ]; then
+            python3 scripts/validate_toolkit.py release-guard --changed /tmp/changed.txt
+          else
+            python3 scripts/validate_toolkit.py release-guard \
+              --changed /tmp/changed.txt --version-changed
+          fi
+
   # A release is a version bump, and the installer only offers an update when the
   # declared version changes — so the tag has to follow the bump automatically or
   # it gets forgotten, which is how `main` ended up three commits ahead of the

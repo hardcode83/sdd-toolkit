@@ -120,7 +120,18 @@ No se copian al proyecto los tests internos ni la configuración Python.
 
 Después, en cada proyecto: `/sdd:init` (acepta un doc de planificación: `/sdd:init docs/plan.md`).
 
-Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit` (con el repo en git, cada commit es una versión; el campo `version` de `plugin.json` marca releases explícitas).
+Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit`. Son **dos pasos distintos**: el primero refresca el clon del marketplace, el segundo mueve tu instalación, que está clavada en `~/.claude/plugins/cache/sdd-toolkit/sdd/<version>/`. Comprueba el resultado en `installed_plugins.json`, no en el número que muestra el menú del marketplace.
+
+Y el **auto-update no viene activado** por registrar el marketplace desde git: es un toggle por marketplace (*Enable auto-update* en `/plugin`). Sin él, el clon se queda como estuviera y no te llega nada.
+
+### Cómo se publica una release
+
+El campo `version` de `plugin.json` **es** la release: el instalador solo ofrece actualizar cuando ese número cambia. De ahí dos automatismos en `.github/workflows/validate-toolkit.yml`, que cubren las dos mitades del mismo despiste:
+
+- **`release-guard`** (en cada PR): falla si el PR toca lo que un consumidor ejecuta —`skills/`, `agents/`, `scripts/`, `templates/`, `references/`, `hooks/`, `rules.md`— sin subir `version`. La regla es `release_guard_errors()` en `scripts/validate_toolkit.py`, unit-testeada; el workflow solo aporta el diff. Docs, tests y el propio tooling de CI están exentos: no cambian nada que el usuario experimente.
+- **`tag`** (al pushear a `main`): crea `sdd--v<version>` cuando la versión declarada cambia respecto al commit anterior. Gated en `validate`, porque un tag es la promesa de que la especificación ejecutable pasaba en ese commit.
+
+Regla de trabajo que hacen cumplir: **el bump va en la PR de la propia feature**. Un cambio, una versión. Tratarlo como paso posterior al merge ya dejó dos veces trabajo en `main` que el instalador nunca habría ofrecido. Y hay que subirlo en **los dos** manifiestos (`.claude-plugin` y `.codex-plugin`); `validate_toolkit.py manifests` exige que coincidan.
 
 ## Comandos
 
