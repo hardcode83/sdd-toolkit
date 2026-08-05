@@ -630,7 +630,11 @@ def retire(
         messages.append(
             f"WARNING: git unregistered the worktree but {target.path} still exists "
             "on disk and is no longer tracked by git — delete it by hand: "
-            f"rm -rf {target.path}"
+            f"rm -rf {target.path}. If that fails with 'Permission denied' on "
+            "directories that are EMPTY and yours (typically node_modules, .venv, "
+            ".next — the mountpoints of named container volumes), the blocker is an "
+            "ACL, not a mode: check `ls -lde <dir>` for a `deny delete` entry and "
+            "drop it with `chmod -a# 0 <dir>` before retrying."
         )
     else:
         messages.append(f"Removed worktree {target.path}.")
