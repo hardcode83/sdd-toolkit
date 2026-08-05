@@ -15,11 +15,9 @@ single wave: with no declared edges, every open entry is in the frontier.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import re
 import sys
-import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -824,45 +822,6 @@ class Graph:
 # --- rendering ---------------------------------------------------------------
 
 
-def diagram_nodes(
-    graph: Graph, stage: str | None = None, include_all: bool = False
-) -> list[Entry]:
-    """What the diagram should show: open work, plus the closed entries it waits on.
-
-    A mature roadmap is mostly history — in a real project this was 52 nodes of
-    which 31 were archived, carrying 5 edges. Dumping all of it buries the part
-    that is still actionable, so closed entries appear only when an open one
-    still points at them (useful: it says the blocker is already done).
-    `include_all` restores the full picture for auditing.
-    """
-    scoped = [e for e in graph.nodes() if graph.in_stage(e, stage)]
-    if include_all:
-        return scoped
-    open_scoped = [e for e in scoped if not graph.closed[e.feature]]
-    keep = {e.feature for e in open_scoped}
-    for entry in open_scoped:
-        keep.update(graph.known_predecessors(entry))
-    return [e for e in scoped if e.feature in keep]
-
-
-def mermaid_link(diagram: str) -> str:
-    """A mermaid.live URL that renders `diagram`.
-
-    The whole diagram travels inside the URL fragment (deflated, then
-    base64url) — mermaid.live decodes it client-side, so nothing is uploaded by
-    generating the link. Opening it does send it to that site, which is why the
-    caller is told the link carries the content.
-    """
-    state = json.dumps(
-        {"code": diagram, "mermaid": {"theme": "default"}, "autoSync": True},
-        ensure_ascii=False,
-    )
-    packed = zlib.compress(state.encode("utf-8"), 9)
-    return "https://mermaid.live/edit#pako:" + base64.urlsafe_b64encode(
-        packed
-    ).decode("ascii").rstrip("=")
-
-
 def render_text_graph(graph: Graph, stage: str | None = None) -> list[str]:
     """The dependency graph as terminal text, laid out by wave.
 
@@ -899,35 +858,6 @@ def render_text_graph(graph: Graph, stage: str | None = None) -> list[str]:
                 out.append(f"      ▸ desbloquea {', '.join(unblocks)}")
         out.append("")
     return out
-
-
-def mermaid(
-    graph: Graph, stage: str | None = None, include_all: bool = False
-) -> str:
-    """A flowchart of the open graph. Emitted as source, not a rendered image:
-    a fenced ```mermaid block renders in GitHub and markdown viewers with zero
-    dependencies, which is what makes it usable inside an unattended run."""
-    scope = diagram_nodes(graph, stage, include_all)
-    if not scope:
-        return ""
-    lines = ["flowchart TD"]
-    ids = {e.feature: f"n{index}" for index, e in enumerate(scope)}
-    for entry in scope:
-        status = graph.status[entry.feature]
-        label = f"{status_symbol(status)} {entry.feature}"
-        if entry.size:
-            label += f" ({entry.size})"
-        shape = f'["{label}"]' if not entry.deferred_until else f'("{label}")'
-        lines.append(f"    {ids[entry.feature]}{shape}")
-    for entry in scope:
-        for key in EDGE_KEYS:
-            for target in entry.edges.get(key, ()):
-                if target not in ids:
-                    continue
-                # Hard dependencies solid, ordering relations dashed and labelled.
-                arrow = "-->" if key in HARD_EDGE_KEYS else f"-.->|{key}|"
-                lines.append(f"    {ids[target]} {arrow} {ids[entry.feature]}")
-    return "\n".join(lines)
 
 
 def shorten(text: str, limit: int = SUMMARY_LIMIT) -> str:
@@ -1090,20 +1020,14 @@ def render_report(graph: Graph, stage: str | None = None) -> str:
         out.append("")
 
     if graph.has_edges(stage):
+        # Terminal text is the ONLY rendering. A diagram format the terminal
+        # cannot draw meant leaving the tool to see your own graph, and the wave
+        # layout with `necesita`/`desbloquea` already carries what an arrow would.
         text = render_text_graph(graph, stage)
         if text:
             out.append("## Grafo")
             out.append("")
             out.extend(text)
-        diagram = mermaid(graph, stage)
-        if diagram:
-            # A link, not a fenced block: the terminal cannot render mermaid, and
-            # the text view above already answered the question. The diagram
-            # travels inside the URL fragment, so say so — opening it hands the
-            # feature names to that site.
-            out.append(f"Ver dibujado (el enlace lleva el diagrama dentro): {mermaid_link(diagram)}")
-            out.append("Fuente mermaid para pegar en GitHub: `sdd_roadmap.py mermaid`")
-            out.append("")
     else:
         out.append("(Sin dependencias declaradas: no hay grafo que dibujar.)")
         out.append("")
@@ -1211,19 +1135,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip targets already closed (those cannot change the order)",
     )
-    diagram = subparsers.add_parser("mermaid", help="mermaid source for the graph")
-    diagram.add_argument("--stage", default=None)
-    diagram.add_argument(
-        "--link",
-        action="store_true",
-        help="print a mermaid.live URL instead of the source (carries the diagram)",
-    )
-    diagram.add_argument(
-        "--all",
-        action="store_true",
-        dest="include_all",
-        help="include closed entries nothing open waits on (default: omit them)",
-    )
     return parser
 
 
@@ -1290,10 +1201,6 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(text).rstrip() + "\n", end="")
         else:
             print("Sin dependencias declaradas: no hay grafo que dibujar.")
-    elif args.command == "mermaid":
-        diagram = mermaid(graph, args.stage, args.include_all)
-        if diagram:
-            print(mermaid_link(diagram) if args.link else diagram)
 
     return 1 if any(f.severity == "ERROR" for f in graph.validate()) else 0
 

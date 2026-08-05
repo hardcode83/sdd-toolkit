@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import base64
-import json
 import sys
 import tempfile
 import unittest
-import zlib
 from pathlib import Path
 
 
@@ -525,56 +522,11 @@ class ValidationTests(unittest.TestCase):
 
 
 class RenderingTests(unittest.TestCase):
-    def test_hard_dependencies_are_solid_and_ordering_ones_dashed(self) -> None:
-        diagram = sdd_roadmap.mermaid(graph_of(NEW_FORMAT))
-        self.assertIn("-.->|informs-from|", diagram)
-        self.assertRegex(diagram, r"n\d+ --> n\d+")
-
-    def test_a_deferred_entry_gets_a_distinct_shape(self) -> None:
-        diagram = sdd_roadmap.mermaid(graph_of(NEW_FORMAT))
-        self.assertRegex(diagram, r'n\d+\("· ingress \(M\)"\)')
-
-    def test_stage_filter_narrows_the_diagram(self) -> None:
-        diagram = sdd_roadmap.mermaid(graph_of(NEW_FORMAT), stage="Stage 1")
-        self.assertIn("domain", diagram)
-        self.assertNotIn("adapter", diagram)
-
     def test_long_summaries_are_shortened(self) -> None:
         graph = graph_of(f"- [ ] alpha — {'x' * 400}\n")
         rendered = sdd_roadmap.render_entry(graph, graph.by_feature["alpha"])
         self.assertLess(len(rendered), 200)
         self.assertTrue(rendered.endswith("…"))
-
-    def test_the_diagram_omits_history_nothing_open_waits_on(self) -> None:
-        """A mature roadmap is mostly archived entries; showing them all buries
-        the actionable part (measured: 52 nodes, 31 archived, for 5 edges)."""
-        graph = graph_of(
-            "- [x] old — cerrada hace tiempo, nadie la espera\n"
-            "- [x] domain — cerrada pero `jobs` la declara\n"
-            "- [ ] jobs — abierta\n      needs: domain\n"
-        )
-        diagram = sdd_roadmap.mermaid(graph)
-        self.assertIn("jobs", diagram)
-        self.assertIn("domain", diagram)
-        self.assertNotIn("old", diagram)
-
-    def test_all_restores_the_full_history(self) -> None:
-        graph = graph_of(
-            "- [x] old — nadie la espera\n- [ ] jobs — abierta\n"
-        )
-        self.assertNotIn("old", sdd_roadmap.mermaid(graph))
-        self.assertIn("old", sdd_roadmap.mermaid(graph, include_all=True))
-
-    def test_the_link_round_trips_to_the_diagram(self) -> None:
-        """It must decode client-side, so the payload has to be recoverable."""
-        graph = graph_of(NEW_FORMAT)
-        diagram = sdd_roadmap.mermaid(graph)
-        url = sdd_roadmap.mermaid_link(diagram)
-        self.assertTrue(url.startswith("https://mermaid.live/edit#pako:"))
-        payload = url.split("#pako:", 1)[1]
-        payload += "=" * (-len(payload) % 4)
-        state = json.loads(zlib.decompress(base64.urlsafe_b64decode(payload)))
-        self.assertEqual(diagram, state["code"])
 
     def test_the_text_graph_lays_entries_out_by_wave(self) -> None:
         text = "\n".join(sdd_roadmap.render_text_graph(graph_of(NEW_FORMAT)))
@@ -592,16 +544,17 @@ class RenderingTests(unittest.TestCase):
         text = "\n".join(sdd_roadmap.render_text_graph(graph_of(NEW_FORMAT)))
         self.assertIn("domain ✔", text)
 
-    def test_report_shows_the_text_graph_and_a_link_not_a_fenced_block(self) -> None:
+    def test_report_renders_the_graph_only_as_terminal_text(self) -> None:
+        """Console is the only rendering: a format the terminal cannot draw meant
+        leaving the tool to see your own graph."""
         report = sdd_roadmap.render_report(graph_of(NEW_FORMAT))
         self.assertIn("Ola 1 · se puede empezar ya", report)
-        self.assertIn("https://mermaid.live/edit#pako:", report)
-        self.assertNotIn("```mermaid", report)
+        self.assertNotIn("mermaid", report)
+        self.assertNotIn("http", report)
 
     def test_report_names_the_absence_of_a_graph_instead_of_faking_one(self) -> None:
         report = sdd_roadmap.render_report(graph_of(LEGACY_FORMAT))
         self.assertIn("Sin dependencias declaradas", report)
-        self.assertNotIn("```mermaid", report)
 
     def test_report_covers_the_derived_views(self) -> None:
         report = sdd_roadmap.render_report(graph_of(NEW_FORMAT))
