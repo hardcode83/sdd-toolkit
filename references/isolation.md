@@ -152,6 +152,22 @@ before deleting it, so a failed deletion leaves files git no longer tracks and
 nothing would report again; when that happens the command says so and prints the
 `rm -rf` that finishes the job.
 
+**When `rm -rf` is not enough (macOS + container volumes).** If the deletion fails
+with `Permission denied` on directories that are **empty and owned by you** —
+typically `node_modules`, `.venv`, `.next`, the mountpoints of named container
+volumes — the blocker is an **ACL, not a mode**, so neither `chmod -R` nor `sudo`
+is the answer and no amount of staring at `rwx` explains it:
+
+```bash
+ls -lde <dir>          # look for:  0: user:<you> deny delete
+chmod -a# 0 <dir>      # drop that ACL entry, then retry the rm -rf
+```
+
+Docker Desktop sets it when it creates the mountpoint, and it **survives the
+container, the volume and the compose project**. Worth knowing before spending
+half an hour on permissions: measured on a real cleanup, the leftover was 52 KB of
+three empty directories that refused to go.
+
 `--force` exists and discards whatever the blockers were protecting. It is the
 user's call, never the flow's.
 
