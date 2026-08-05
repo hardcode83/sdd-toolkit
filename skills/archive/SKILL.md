@@ -96,15 +96,21 @@ Write spec updates in the same language as the existing specs (or the user's lan
    consolidated row in `sdd/metrics.md` with the archive date. Report its
    WARNING lines verbatim: they mean a recorded row holds more than the log can
    account for, and it was deliberately kept.
-7. **Retire the feature's worktree, if it had one.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path, the merge is proven and that isolated copy has no further use — **offer** to retire it (AskUserQuestion, recommend yes):
+7. **Retire the worktrees whose work has shipped.** Ask what git knows, not what the registry knows — a worktree created by hand never registered, and asking the registry is why one survived archive indefinitely:
 
    ```bash
-   git worktree remove <path>
-   git branch -d sdd/<feature>
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . release <feature>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees
    ```
 
-   Use plain git, not `ExitWorktree` — that tool only touches worktrees created by `EnterWorktree` in the *same* session, and archive normally runs in another. Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`. `git worktree remove` refuses a dirty tree: surface that refusal instead of forcing it, because uncommitted work there is work that never reached the merge. If the user declines removal, still run `release` only if they also want the binding dropped — otherwise leave both, and say `/sdd:doctor` will report the worktree as an orphan of an archived change.
+   Each line is marked `RETIRABLE` or `en uso` with its blockers. `RETIRABLE` means all of it is proven: the change is archived, the branch is contained in its base, the tree is clean, nothing is unpushed, and **no other live session is inside**. For each one, **offer** to retire it (AskUserQuestion, recommend yes):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
+   ```
+
+   That removes the worktree, deletes its branch and releases the binding in one step, and it **verifies the directory is actually gone** — git unregisters before deleting, so a failed deletion used to leave a directory git no longer tracks and nobody would report again. If it warns that the path survived, relay the `rm -rf` it prints: at that point git is already clean and only the files remain.
+
+   Never pass `--force` on the user's behalf, and never retire a worktree the command refuses: every blocker names work that did not reach the merge, or a session that would break. **A refusal is the answer, not an obstacle.** If the user declines, leave everything as is and say `/sdd:doctor` will keep reporting it. Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 8. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together, **staged with `git add -A sdd/`**: `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped.
 9. **Verify the commit, not the working tree.** Once the archive is committed, run
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.

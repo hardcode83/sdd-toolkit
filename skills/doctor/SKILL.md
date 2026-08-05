@@ -31,12 +31,16 @@ Then check **machine state**, which the validator above deliberately does not
 cover (it lives in the shared git directory, not in the committed project):
 
 ```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . orphans
 ```
 
-Each line is a worktree binding to clean up — `missing` (the worktree is gone;
-`sdd_session.py release <feature>`) or `archived` (the change already shipped;
-`git worktree remove <path>` plus `git branch -d sdd/<feature>` and `release`).
-Report them alongside the diagnostics, labelled as machine-local so nobody looks
-for them in the repository. Outside a git repository the command errors: say so
-and move on, it is not a project problem.
+`worktrees` lists every worktree **git** knows about (not just the registered
+ones) with `RETIRABLE` or `en uso` plus its blockers. Report the retirable ones:
+their work has shipped and they are only taking up disk — `sdd_session.py retire
+<feature>` closes each. `orphans` adds bindings pointing at a worktree that no
+longer exists, which only need `release`.
+
+Label all of it as **machine-local** so nobody looks for it in the repository, and
+never retire anything from here: `/sdd:doctor` is read-only. Outside a git
+repository both commands error: say so and move on, it is not a project problem.

@@ -323,6 +323,165 @@ class OrphanTests(SessionTestCase):
         self.assertEqual([], sdd_session.orphan_bindings(self.root))
 
 
+LIVE_PID = 1  # launchd/init: always running, and kill(0) raises PermissionError
+
+
+class RetirementTests(SessionTestCase):
+    """Decommissioning a worktree once its work shipped.
+
+    Three failures this closes, all lived in a real repo: a hand-made worktree
+    invisible to the cleanup, a retirement that broke a live session, and a
+    removal that unregistered the worktree but left 88 MB on disk.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.archive("alpha")
+        self.linked = self.root / ".claude" / "worktrees" / "sdd+alpha"
+        self.git("worktree", "add", "-q", str(self.linked), "-b", "sdd/alpha")
+
+    def archive(self, feature: str, base: str = "main") -> Path:
+        path = self.root / "sdd" / "changes" / "archive" / f"2026-01-01-{feature}"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "STATE.md").write_text(
+            f"---\nschema: 1\nstate: ARCHIVED\nbase_branch: {base}\n---\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def status_for(self, path: Path) -> sdd_session.WorktreeStatus:
+        found = [
+            s
+            for s in sdd_session.worktree_status(self.root)
+            if Path(s.path) == path.resolve()
+        ]
+        self.assertEqual(1, len(found), f"no status for {path}")
+        return found[0]
+
+    def test_a_hand_made_worktree_is_seen_without_any_claim(self) -> None:
+        """It never registered, so the registry-only cleanup never offered it."""
+        status = self.status_for(self.linked)
+        self.assertFalse(status.registered)
+        self.assertEqual("alpha", status.feature)
+        self.assertTrue(status.retirable, status.blockers)
+
+    def test_the_feature_is_recovered_from_an_archive_branch_name(self) -> None:
+        """Archive work happens on sdd/<feature>-archive; it still belongs to
+        <feature>, and a naive lookup finds nothing."""
+        other = self.root / ".claude" / "worktrees" / "sdd+beta-archive"
+        self.git("worktree", "add", "-q", str(other), "-b", "sdd/beta-archive")
+        self.assertEqual("beta", self.status_for(other).feature)
+
+    def test_the_main_worktree_is_never_retirable(self) -> None:
+        status = self.status_for(self.root)
+        self.assertTrue(status.is_main)
+        self.assertFalse(status.retirable)
+
+    def test_a_live_session_blocks_retirement(self) -> None:
+        self.write_registry(
+            {
+                "schema": 1,
+                "sessions": {
+                    "sess": {"pid": LIVE_PID, "feature": "alpha", "worktree": str(self.linked)}
+                },
+                "worktrees": {"alpha": {"path": str(self.linked)}},
+            }
+        )
+        status = self.status_for(self.linked)
+        self.assertEqual("sess", status.occupied_by)
+        with self.assertRaises(SessionError) as caught:
+            sdd_session.retire(self.root, "alpha")
+        self.assertIn("live session", str(caught.exception))
+        self.assertTrue(self.linked.is_dir(), "the worktree must survive a refusal")
+
+    def test_the_calling_session_does_not_block_itself(self) -> None:
+        """/sdd:archive runs from the main worktree while still holding the claim;
+        counting itself as an occupant made it refuse to retire its own work."""
+        sdd_session.claim(self.root, "alpha", worktree=self.linked)
+        status = self.status_for(self.linked)
+        self.assertEqual("", status.occupied_by)
+        self.assertTrue(status.retirable, status.blockers)
+
+    def test_you_cannot_retire_the_worktree_you_are_standing_in(self) -> None:
+        blockers = sdd_session.worktree_status(self.linked)
+        mine = [s for s in blockers if Path(s.path) == self.linked.resolve()][0]
+        self.assertTrue(any("inside it" in b for b in mine.blockers), mine.blockers)
+
+    def test_a_dead_session_does_not_block(self) -> None:
+        self.write_registry(
+            {
+                "schema": 1,
+                "sessions": {
+                    "gone": {"pid": DEAD_PID, "feature": "alpha", "worktree": str(self.linked)}
+                },
+                "worktrees": {"alpha": {"path": str(self.linked)}},
+            }
+        )
+        self.assertTrue(self.status_for(self.linked).retirable)
+
+    def test_an_unarchived_change_blocks(self) -> None:
+        other = self.root / ".claude" / "worktrees" / "sdd+gamma"
+        self.git("worktree", "add", "-q", str(other), "-b", "sdd/gamma")
+        blockers = self.status_for(other).blockers
+        self.assertTrue(any("not archived" in b for b in blockers), blockers)
+
+    def test_uncommitted_work_blocks(self) -> None:
+        (self.linked / "sdd" / "roadmap.md").write_text("# cambiado\n", encoding="utf-8")
+        blockers = self.status_for(self.linked).blockers
+        self.assertTrue(any("uncommitted" in b for b in blockers), blockers)
+
+    def test_a_branch_not_contained_in_the_base_blocks(self) -> None:
+        (self.linked / "extra.txt").write_text("nuevo\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.linked, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "trabajo sin mergear"],
+            cwd=self.linked, check=True, capture_output=True,
+        )
+        blockers = self.status_for(self.linked).blockers
+        self.assertTrue(any("not contained" in b for b in blockers), blockers)
+
+    def test_no_remote_falls_back_to_the_local_base(self) -> None:
+        """A repo with no remote is a workflow the merge gate already supports."""
+        status = self.status_for(self.linked)
+        self.assertTrue(status.merged)
+        self.assertTrue(status.retirable, status.blockers)
+
+    def test_retire_removes_worktree_branch_and_binding(self) -> None:
+        sdd_session.claim(self.root, "alpha", worktree=self.linked)
+        message = sdd_session.retire(self.root, "alpha")
+        self.assertFalse(self.linked.exists())
+        self.assertNotIn("sdd/alpha", self.git("branch").stdout)
+        self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
+        self.assertIn("Removed worktree", message)
+
+    def test_retire_accepts_a_path_when_no_feature_is_known(self) -> None:
+        other = self.root / ".claude" / "worktrees" / "loose"
+        self.git("worktree", "add", "-q", str(other), "--detach")
+        message = sdd_session.retire(self.root, path=other, force=True)
+        self.assertFalse(other.exists())
+        self.assertIn("Removed worktree", message)
+
+    def test_retiring_something_unknown_is_an_actionable_error(self) -> None:
+        with self.assertRaises(SessionError) as caught:
+            sdd_session.retire(self.root, "no-such-feature")
+        self.assertIn("No worktree found", str(caught.exception))
+
+    def test_force_overrides_the_blockers(self) -> None:
+        (self.linked / "extra.txt").write_text("sin commitear\n", encoding="utf-8")
+        self.assertTrue(self.status_for(self.linked).blockers)
+        sdd_session.retire(self.root, "alpha", force=True)
+        self.assertFalse(self.linked.exists())
+
+    def test_the_cli_lists_and_retires(self) -> None:
+        self.assertEqual(0, sdd_session.main(["--root", str(self.root), "worktrees"]))
+        self.assertEqual(
+            0, sdd_session.main(["--root", str(self.root), "retire", "alpha"])
+        )
+        self.assertEqual(
+            2, sdd_session.main(["--root", str(self.root), "retire"])
+        )
+
+
 class CommandLineTests(SessionTestCase):
     def test_check_exits_one_on_conflict_and_zero_when_clear(self) -> None:
         self.assertEqual(

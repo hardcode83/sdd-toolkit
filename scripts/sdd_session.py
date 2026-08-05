@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -325,8 +326,12 @@ def claim(
     if me:
         data["sessions"][me] = {
             "pid": current_pid(),
-            "worktree": str(target),
-            "branch": current_branch(target, runner),
+            # Where this SESSION is, which is not necessarily the feature's
+            # worktree: `claim --worktree <p>` can bind a path the caller is not
+            # standing in. Conflating the two made the occupancy check read a
+            # binding as "somebody is in there".
+            "worktree": str(root.resolve()),
+            "branch": current_branch(root, runner),
             "feature": feature,
             "started": (data["sessions"].get(me) or {}).get("started", now()),
             "last_seen": now(),
@@ -372,6 +377,277 @@ def release(root: Path, feature: str, runner: Runner = subprocess.run) -> str:
     if not removed:
         return f"No worktree binding for '{feature}'."
     return f"Released '{feature}' (was {removed.get('path')})."
+
+
+def git_worktrees(root: Path, runner: Runner = subprocess.run) -> list[dict]:
+    """Every worktree git knows about, parsed from `--porcelain`.
+
+    Git is the authority on what EXISTS; the registry only says whose it is. The
+    cleanup used to ask the registry, so a worktree created by hand — before the
+    registry existed, or outside the flow — was invisible and survived archive
+    forever. Enumerating from git is what closes that hole.
+    """
+    listed = try_git(["worktree", "list", "--porcelain"], root, runner)
+    if listed is None:
+        return []
+    found: list[dict] = []
+    current: dict = {}
+    for line in listed.splitlines() + [""]:
+        if not line.strip():
+            if current:
+                found.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current = {"path": value, "branch": "", "head": "", "locked": False}
+        elif key == "branch":
+            current["branch"] = value.removeprefix("refs/heads/")
+        elif key == "HEAD":
+            current["head"] = value
+        elif key == "locked":
+            current["locked"] = True
+        elif key == "detached":
+            current["branch"] = ""
+    return found
+
+
+def feature_of_worktree(entry: dict, bindings: dict) -> str:
+    """Which feature a worktree belongs to.
+
+    The registry is consulted first; failing that the branch name is the clue,
+    since the flow names branches `sdd/<feature>`. A trailing `-archive` is
+    stripped: archive work happens on `sdd/<feature>-archive`, and that worktree
+    still belongs to `<feature>` — a real case, and the reason a naive lookup
+    finds nothing.
+    """
+    for feature, binding in bindings.items():
+        if binding.get("path") and Path(binding["path"]) == Path(entry["path"]):
+            return feature
+    feature = feature_of_branch(entry.get("branch", ""))
+    return feature.removesuffix("-archive") if feature else ""
+
+
+def archived_feature(root: Path, feature: str) -> bool:
+    archive = root / "sdd" / "changes" / "archive"
+    if not feature or not archive.is_dir():
+        return False
+    return any(
+        path.is_dir() and path.name.split("-", 3)[-1] == feature
+        for path in archive.iterdir()
+    )
+
+
+def base_branch_for(root: Path, feature: str, runner: Runner = subprocess.run) -> str:
+    """The branch a worktree's work had to land in.
+
+    Prefers what the change itself recorded — that is the base the merge gate
+    already certified against — and only then falls back to the repository's
+    default branch.
+    """
+    archive = root / "sdd" / "changes" / "archive"
+    if feature and archive.is_dir():
+        for path in sorted(archive.iterdir()):
+            if path.is_dir() and path.name.split("-", 3)[-1] == feature:
+                state = path / "STATE.md"
+                if state.is_file():
+                    for line in state.read_text(encoding="utf-8", errors="replace").splitlines():
+                        if line.startswith("base_branch:"):
+                            recorded = line.split(":", 1)[1].strip()
+                            if recorded:
+                                return recorded
+    head = try_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, runner)
+    if head:
+        return head.removeprefix("origin/")
+    return "main"
+
+
+@dataclass(frozen=True)
+class WorktreeStatus:
+    path: str
+    branch: str
+    feature: str
+    is_main: bool
+    registered: bool
+    locked: bool
+    archived: bool
+    merged: bool
+    clean: bool
+    unpushed: int
+    occupied_by: str
+    blockers: tuple[str, ...]
+
+    @property
+    def retirable(self) -> bool:
+        return not self.blockers and not self.is_main
+
+
+def worktree_status(
+    root: Path, runner: Runner = subprocess.run
+) -> list[WorktreeStatus]:
+    """Every worktree with the objective evidence for retiring it.
+
+    Same standard as the merge gate: retirement is permitted by facts, never by
+    assumption. Each unmet condition becomes a named blocker, so a refusal always
+    says which one.
+    """
+    data = read_registry(registry_path(root, runner))
+    prune(data)
+    bindings = data["worktrees"]
+    # Occupancy means SOMEBODY ELSE is in there. Counting the calling session
+    # would make it block itself: /sdd:archive runs from the main worktree while
+    # still holding the feature's claim, and would refuse to retire its own work.
+    me = current_session()
+    live = {
+        str(entry.get("worktree", "")): session_id
+        for session_id, entry in data["sessions"].items()
+        if entry.get("worktree") and session_id != me
+    }
+    main = common_dir(root, runner).parent.resolve()
+    here = root.resolve()
+
+    out: list[WorktreeStatus] = []
+    for entry in git_worktrees(root, runner):
+        path = Path(entry["path"]).resolve()
+        is_main = path == main
+        feature = feature_of_worktree(entry, bindings)
+        archived = archived_feature(root, feature)
+        base = base_branch_for(root, feature, runner)
+        branch = entry.get("branch", "")
+        # Prefer the published base, fall back to the local one — same order as
+        # sdd_lifecycle.resolve_base_ref, because a repo with no remote is a
+        # legitimate workflow the merge gate already supports.
+        base_ref = next(
+            (
+                candidate
+                for candidate in (f"origin/{base}", base)
+                if try_git(
+                    ["rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+                    root,
+                    runner,
+                )
+                is not None
+            ),
+            "",
+        )
+        merged = bool(branch) and bool(base_ref) and (
+            try_git(["merge-base", "--is-ancestor", branch, base_ref], root, runner)
+            is not None
+        )
+        clean = not is_dirty(path, runner) if path.is_dir() else True
+        ahead = try_git(["rev-list", "--count", "@{upstream}..HEAD"], path, runner)
+        unpushed = int(ahead) if ahead and ahead.isdigit() else 0
+        occupied = live.get(str(path), "")
+
+        blockers: list[str] = []
+        if is_main:
+            blockers.append("this is the main worktree")
+        else:
+            if path == here:
+                # Removing the directory you are standing in leaves the caller
+                # with a cwd that no longer exists and a git that cannot answer.
+                blockers.append("you are inside it — retire it from another worktree")
+            if occupied:
+                blockers.append(f"a live session ({occupied}) is working in it")
+            if not feature:
+                blockers.append("no feature could be determined (branch is not sdd/<feature>)")
+            elif not archived:
+                blockers.append(f"change '{feature}' is not archived yet")
+            if branch and not merged:
+                blockers.append(
+                    f"branch '{branch}' is not contained in {base_ref or base}"
+                )
+            if not clean:
+                blockers.append("the working tree has uncommitted changes")
+            if unpushed:
+                blockers.append(f"{unpushed} commit(s) never pushed")
+            if entry.get("locked"):
+                blockers.append("git has it locked (`git worktree unlock` first)")
+
+        out.append(
+            WorktreeStatus(
+                path=str(path),
+                branch=branch,
+                feature=feature,
+                is_main=is_main,
+                registered=str(path) in {str(Path(b["path"])) for b in bindings.values() if b.get("path")},
+                locked=bool(entry.get("locked")),
+                archived=archived,
+                merged=merged,
+                clean=clean,
+                unpushed=unpushed,
+                occupied_by=occupied,
+                blockers=tuple(blockers),
+            )
+        )
+    return out
+
+
+def retire(
+    root: Path,
+    feature: str | None = None,
+    path: Path | None = None,
+    force: bool = False,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Retire a worktree: remove it, delete its branch, drop its binding.
+
+    Refuses on any unmet condition unless `force`, and NEVER reports success it
+    cannot see: git unregisters the worktree before deleting the directory, so a
+    failed deletion used to leave an orphan directory nobody would report again.
+    This verifies the directory is actually gone and says so loudly when it is
+    not, with the exact command to finish the job.
+    """
+    statuses = worktree_status(root, runner)
+    target = None
+    for status in statuses:
+        if path and Path(status.path) == path.resolve():
+            target = status
+        elif feature and status.feature == feature and not status.is_main:
+            target = status
+    if target is None:
+        raise SessionError(
+            f"No worktree found for {'path ' + str(path) if path else 'feature ' + str(feature)}. "
+            "`sdd_session.py worktrees` lists what git knows about."
+        )
+    if target.blockers and not force:
+        listed = "; ".join(target.blockers)
+        raise SessionError(
+            f"Refusing to retire {target.path}: {listed}. Resolve it, or pass "
+            "--force if you are certain the work is expendable."
+        )
+
+    messages: list[str] = []
+    removal = ["worktree", "remove"] + (["--force"] if force else []) + [target.path]
+    if try_git(removal, root, runner) is None:
+        raise SessionError(
+            f"`git worktree remove {target.path}` failed. Nothing was changed; "
+            "check the path is writable and no process is inside it."
+        )
+    # The check that stops F3 from recurring: git may unregister and still leave
+    # the tree behind, and a directory git no longer tracks is one nothing reports.
+    if Path(target.path).exists():
+        messages.append(
+            f"WARNING: git unregistered the worktree but {target.path} still exists "
+            "on disk and is no longer tracked by git — delete it by hand: "
+            f"rm -rf {target.path}"
+        )
+    else:
+        messages.append(f"Removed worktree {target.path}.")
+
+    if target.branch:
+        deletion = try_git(["branch", "-d", target.branch], root, runner)
+        if deletion is None and force:
+            deletion = try_git(["branch", "-D", target.branch], root, runner)
+        messages.append(
+            f"Deleted branch {target.branch}."
+            if deletion is not None
+            else f"Kept branch {target.branch} (git refused; it may hold unmerged work)."
+        )
+    if target.feature:
+        release(root, target.feature, runner)
+        messages.append(f"Released the binding for '{target.feature}'.")
+    return " ".join(messages)
 
 
 def orphan_bindings(root: Path, runner: Runner = subprocess.run) -> list[dict]:
@@ -439,6 +715,20 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("list", help="live sessions and worktree bindings")
     subparsers.add_parser("prune", help="drop sessions whose process is gone")
     subparsers.add_parser("orphans", help="bindings with no worktree, or already archived")
+    subparsers.add_parser(
+        "worktrees",
+        help="every worktree git knows about, with whether it can be retired",
+    )
+    retirement = subparsers.add_parser(
+        "retire", help="remove a finished worktree, its branch and its binding"
+    )
+    retirement.add_argument("feature", nargs="?", default=None)
+    retirement.add_argument("--path", type=Path, default=None)
+    retirement.add_argument(
+        "--force",
+        action="store_true",
+        help="override the blockers — discards whatever the worktree still holds",
+    )
     return parser
 
 
@@ -465,6 +755,23 @@ def main(argv: list[str] | None = None) -> int:
             dead = prune(data)
             write_registry(path, data)
             print(f"Pruned {len(dead)} dead session(s).")
+        elif args.command == "worktrees":
+            statuses = worktree_status(root)
+            if args.json:
+                print(json.dumps([vars(s) for s in statuses], indent=2))
+            else:
+                for status in statuses:
+                    mark = "RETIRABLE" if status.retirable else "en uso   "
+                    label = status.feature or status.branch or "(detached)"
+                    print(f"{mark}  {label}  {status.path}")
+                    for blocker in status.blockers:
+                        print(f"           · {blocker}")
+            return 0
+        elif args.command == "retire":
+            if not args.feature and not args.path:
+                print("ERROR: retire needs a feature or --path", file=sys.stderr)
+                return 2
+            print(retire(root, args.feature, args.path, args.force))
         elif args.command == "orphans":
             orphans = orphan_bindings(root)
             if args.json:
