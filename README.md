@@ -546,9 +546,26 @@ Nada de esto se dibuja a mano. `scripts/sdd_roadmap.py` lo calcula y `/sdd:statu
 | **frontera** | qué se puede atacar **ya, en paralelo** — con cuántas entradas desbloquea cada una, para elegir |
 | **olas** | niveles topológicos: la ola N necesita la N-1 cerrada |
 | **camino crítico** | la cadena por stage que el paralelismo no puede acortar (pesada por `size`) |
-| **grafo** | un bloque ` ```mermaid ` — se renderiza en GitHub y visores de markdown, sin instalar nada |
+| **grafo** | **en texto, por olas**: cada entrada nombra lo que espera (`◂ necesita`) y lo que desbloquea (`▸ desbloquea`). Más un enlace a mermaid.live para verlo dibujado |
 
 Y **solo se dibuja donde hay aristas**: un roadmap sin relaciones declaradas lo dice explícitamente en vez de fingir un árbol de un nivel. Eso hace que un roadmap plano siga funcionando sin migrar — sin relaciones, toda entrada abierta está en la frontera, que es el comportamiento de siempre.
+
+El grafo se lee **en la consola**, que es donde estás. No es arte ASCII: un DAG con aristas que se cruzan es ilegible en caracteres mucho antes de ser útil, así que cada entrada nombra sus relaciones — lo mismo que diría una flecha, y aguanta cualquier número de padres.
+
+```
+Ola 1 · se puede empezar ya
+  · jobs       (M · infra)
+      ◂ necesita  domain ✔
+      ▸ desbloquea webhooks, adapter
+  · spike      (S · spike)
+      ▸ desbloquea adapter
+
+Ola 2 · tras la ola 1
+  · adapter    (L · feature)
+      ◂ necesita  jobs, spike
+```
+
+Para verlo dibujado, el informe imprime un enlace a **mermaid.live** con el diagrama comprimido en el fragmento de la URL (se decodifica en el navegador; generar el enlace no sube nada, pero abrirlo entrega los nombres de tus features a ese sitio — por eso se avisa). La fuente cruda para pegar en GitHub sigue en `sdd_roadmap.py mermaid`, y `--all` incluye el historial cerrado que por defecto se omite: en un roadmap maduro medimos 52 nodos de los que 31 eran archivados, para 5 aristas.
 
 La frontera no es decorativa: `/sdd:new` avisa si abres una entrada cuyas dependencias siguen abiertas, y `/sdd:auto N` coge N entradas **de la frontera** en vez de las N primeras del fichero (releyéndola entre features, porque cerrar una abre las que la esperaban). `/sdd:doctor` valida el grafo (`SDD018`-`SDD023`): ciclos, dependencias a entradas inexistentes y el check que caza errores reales — una entrada cerrada cuya dependencia sigue abierta.
 

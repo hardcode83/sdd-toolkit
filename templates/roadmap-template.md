@@ -36,7 +36,7 @@
 
      Vistas derivadas (nunca se escriben a mano): `/sdd:status` imprime la
      frontera (qué se puede atacar ya, en paralelo), las olas, el camino crítico
-     del stage y las entradas sin dependencias. -->
+     del stage y el grafo en texto, con un enlace para verlo dibujado. -->
 
 Categorías del proyecto (opcional — define las tuyas): `[FE]` frontend · `[BE]` backend · `[INFRA]` infra · `[TECH]` deuda técnica
 

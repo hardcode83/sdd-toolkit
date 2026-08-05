@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 
@@ -394,6 +397,59 @@ class RenderingTests(unittest.TestCase):
         rendered = sdd_roadmap.render_entry(graph, graph.by_feature["alpha"])
         self.assertLess(len(rendered), 200)
         self.assertTrue(rendered.endswith("…"))
+
+    def test_the_diagram_omits_history_nothing_open_waits_on(self) -> None:
+        """A mature roadmap is mostly archived entries; showing them all buries
+        the actionable part (measured: 52 nodes, 31 archived, for 5 edges)."""
+        graph = graph_of(
+            "- [x] old — cerrada hace tiempo, nadie la espera\n"
+            "- [x] domain — cerrada pero `jobs` la declara\n"
+            "- [ ] jobs — abierta\n      needs: domain\n"
+        )
+        diagram = sdd_roadmap.mermaid(graph)
+        self.assertIn("jobs", diagram)
+        self.assertIn("domain", diagram)
+        self.assertNotIn("old", diagram)
+
+    def test_all_restores_the_full_history(self) -> None:
+        graph = graph_of(
+            "- [x] old — nadie la espera\n- [ ] jobs — abierta\n"
+        )
+        self.assertNotIn("old", sdd_roadmap.mermaid(graph))
+        self.assertIn("old", sdd_roadmap.mermaid(graph, include_all=True))
+
+    def test_the_link_round_trips_to_the_diagram(self) -> None:
+        """It must decode client-side, so the payload has to be recoverable."""
+        graph = graph_of(NEW_FORMAT)
+        diagram = sdd_roadmap.mermaid(graph)
+        url = sdd_roadmap.mermaid_link(diagram)
+        self.assertTrue(url.startswith("https://mermaid.live/edit#pako:"))
+        payload = url.split("#pako:", 1)[1]
+        payload += "=" * (-len(payload) % 4)
+        state = json.loads(zlib.decompress(base64.urlsafe_b64decode(payload)))
+        self.assertEqual(diagram, state["code"])
+
+    def test_the_text_graph_lays_entries_out_by_wave(self) -> None:
+        text = "\n".join(sdd_roadmap.render_text_graph(graph_of(NEW_FORMAT)))
+        self.assertIn("Ola 1 · se puede empezar ya", text)
+        self.assertIn("Ola 2 · tras la ola 1", text)
+
+    def test_the_text_graph_names_dependencies_and_dependants(self) -> None:
+        """Not ASCII art: a DAG's crossing edges are unreadable as characters,
+        and naming them survives any number of parents."""
+        text = "\n".join(sdd_roadmap.render_text_graph(graph_of(NEW_FORMAT)))
+        self.assertIn("▸ desbloquea webhooks, adapter", text)
+        self.assertIn("◂ necesita  domain ✔, jobs", text)
+
+    def test_a_closed_dependency_is_marked_as_already_done(self) -> None:
+        text = "\n".join(sdd_roadmap.render_text_graph(graph_of(NEW_FORMAT)))
+        self.assertIn("domain ✔", text)
+
+    def test_report_shows_the_text_graph_and_a_link_not_a_fenced_block(self) -> None:
+        report = sdd_roadmap.render_report(graph_of(NEW_FORMAT))
+        self.assertIn("Ola 1 · se puede empezar ya", report)
+        self.assertIn("https://mermaid.live/edit#pako:", report)
+        self.assertNotIn("```mermaid", report)
 
     def test_report_names_the_absence_of_a_graph_instead_of_faking_one(self) -> None:
         report = sdd_roadmap.render_report(graph_of(LEGACY_FORMAT))
