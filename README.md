@@ -122,7 +122,22 @@ Después, en cada proyecto: `/sdd:init` (acepta un doc de planificación: `/sdd:
 
 Actualizar: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit`. Son **dos pasos distintos**: el primero refresca el clon del marketplace, el segundo mueve tu instalación, que está clavada en `~/.claude/plugins/cache/sdd-toolkit/sdd/<version>/`. Comprueba el resultado en `installed_plugins.json`, no en el número que muestra el menú del marketplace.
 
-Y el **auto-update no viene activado** por registrar el marketplace desde git: es un toggle por marketplace (*Enable auto-update* en `/plugin`). Sin él, el clon se queda como estuviera y no te llega nada.
+Y el **auto-update no viene activado** por registrar el marketplace desde git: es un toggle **por marketplace**, y su defecto es `false` para todo lo que no sea marketplace oficial de Anthropic. Sin él te quedas en la versión que instalaste, sin aviso ninguno — medido en una instalación real: tres días y dos releases de retraso, en silencio.
+
+Se activa con un campo, hermano de `source`:
+
+```json
+"extraKnownMarketplaces": {
+  "sdd-toolkit": {
+    "source": { "source": "github", "repo": "hardcode83/sdd-toolkit" },
+    "autoUpdate": true
+  }
+}
+```
+
+Verificado de punta a punta: al arrancar sesión refresca el marketplace **y** la instalación en la misma operación. Aplica *on startup*, así que la sesión en curso no se entera; y solo actualiza la instalación del proyecto en el que abres la sesión.
+
+**En repo compartido esto va en el `.claude/settings.json` versionado del proyecto**, no en tu `~/.claude/settings.json` — así lo recibe todo el equipo al clonar, y `/sdd:init` lo escribe por ti. Es la diferencia entre que el flujo garantice algo y que lo garantice *para ti solo*: dos personas en versiones distintas es como un `STATE.md` escrito por una deja de ser legible para la otra. Quien quiera control manual lo desactiva en su `.claude/settings.local.json` (gitignorado), que tiene precedencia sobre el del proyecto.
 
 ### Cómo se publica una release
 
@@ -673,7 +688,7 @@ evidencia y alternativas en [ADR 0001](docs/adr/0001-roadmap-structure-and-concu
 - **El claim es la rama remota**: `/sdd:new` comprueba si `origin/sdd/<feature>` existe (feature cogida → avisa con el dueño y para) y ofrece pushear la rama como candado antes de escribir nada. El modo auto lo hace siempre, publicando el claim *antes* de trabajar. `/sdd:status` lista las ramas `sdd/*` remotas como "en curso por otros". Con el gate de merge, una rama remota ya no implica un dueño ajeno: si existe `sdd/changes/<feature>/` en local, es un change propio esperando merge o archive, y auto lo reanuda o lo reporta por su estado en vez de saltarlo como "cogido por otro".
 - **Perfil de conflictos**: `changes/<feature>/` ~nunca choca (carpeta por feature); `metrics.md` conflictos triviales de línea; `specs/<capability>.md` es el punto real — y ahí un conflicto es *señal*, no ruido: dos features tocaron el mismo comportamiento y había que coordinarse igualmente. Mitigación estructural: changes pequeños = ventanas de merge cortas.
 - **`roadmap.md` ya no es un punto de conflicto, y lo era**: dos ramas anotando entradas **adyacentes** daban conflicto garantizado (medido, git 2.52) — y trabajar en paralelo coge justamente entradas consecutivas. Se eliminó la causa, no el síntoma: ninguna fase escribe el roadmap durante el ciclo, porque el progreso ya vive en `STATE.md`/`BLOCKED.md` y `/sdd:status` lo deriva. Solo `/sdd:archive` lo tickea, y eso es post-merge y serializado. Ver [ADR 0001](docs/adr/0001-roadmap-structure-and-concurrency.md) D5.
-- **Distribución**: `.claude/settings.json` versionado con `extraKnownMarketplaces` + `enabledPlugins` hace que quien clone reciba el prompt de instalar el plugin al confiar en la carpeta.
+- **Distribución**: `.claude/settings.json` versionado con `extraKnownMarketplaces` + `enabledPlugins` hace que quien clone reciba el prompt de instalar el plugin al confiar en la carpeta. Y `"autoUpdate": true` dentro de la entrada del marketplace es lo que mantiene al equipo **en la misma versión**: su defecto es `false`, así que sin él cada uno se queda en la que instaló. Importa más de lo que parece — las garantías del flujo (reglas compartidas, códigos del doctor, gates del lifecycle) solo se sostienen si todos corren la misma.
 
 ## Métricas de uso por feature
 

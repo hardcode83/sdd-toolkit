@@ -118,14 +118,27 @@ When re-running this step on an already-initialized project, first diff against 
 2. **LSPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/lsp-catalog.md`; offer code intelligence for the languages detected in the repo (or planned in the stack).
 3. **CLAUDE.md pointer** — whether to add the SDD block (below) to the project's `CLAUDE.md`.
 4. **Usage metrics** — optional plugin-side per-feature token/cost tracking from conception to archive (see `${CLAUDE_PLUGIN_ROOT}/references/metrics.md`, including its honest limitations). Its helper runtime may use `jq` and Python 3 on the machine; this does not define the consumer project's stack or validation commands.
-5. **Team distribution** (shared repos): declare the plugin in the project's versioned `.claude/settings.json` so whoever clones and trusts the folder gets the install prompt automatically. BOTH keys are needed — `enabledPlugins` alone says "you need this" without saying where to get it:
+5. **Team distribution** (shared repos): declare the plugin in the project's versioned `.claude/settings.json` so whoever clones and trusts the folder gets the install prompt automatically. THREE keys, and each one earns its place — `enabledPlugins` alone says "you need this" without saying where to get it, and the first two together still leave everyone frozen on whatever version they installed:
 
    ```json
-   "extraKnownMarketplaces": { "sdd-toolkit": { "source": { "source": "github", "repo": "hardcode83/sdd-toolkit" } } },
+   "extraKnownMarketplaces": {
+     "sdd-toolkit": {
+       "source": { "source": "github", "repo": "hardcode83/sdd-toolkit" },
+       "autoUpdate": true
+     }
+   },
    "enabledPlugins": { "sdd@sdd-toolkit": true }
    ```
 
+   **`autoUpdate` is not optional in a shared repo, and it is the one people get wrong.** It defaults to `false` for every marketplace that is not an official Anthropic one, so without it a teammate stays on the version they first installed *forever* — no prompt, no notice. Measured on a real install: three days and two releases behind, silently. With it, startup refreshes the marketplace **and** the installed plugin in one operation (verified end to end), so a release reaches the team on their next session.
+
+   Say this to the user when you write it: everyone on the team ends up on the same version automatically, and the flow's own guarantees (shared rules, doctor codes, lifecycle gates) only hold if they are all running the same one. Two people on different versions is how a `STATE.md` written by one becomes unreadable to the other.
+
+   The opt-out exists and is worth naming: settings load user → project → local, so anyone who wants manual control sets `"autoUpdate": false` in their gitignored `.claude/settings.local.json` without touching the team's file.
+
    (Adjust repo if installing from a fork.) Merge into existing settings, never clobber.
+
+   **Re-running on an already-initialized project**: if `extraKnownMarketplaces` is there but `autoUpdate` is missing, offer to add just that field — it is the single most common gap, since it did not exist when earlier projects were initialized.
 6. **Official plugins** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/plugin-catalog.md`; offer the entries relevant to the detected stack/team, watching the overlap rules it documents (LSPs live in their own catalog; integrations must not be offered both as plugin and raw MCP). You cannot install plugins yourself — print the exact `/plugin install <name>@claude-plugins-official` commands for the user, and point them to the `/plugin` Discover tab as the browsable catalog.
 7. **rtk (token savings)** — only if `which rtk` finds nothing. The plugin already ships a PreToolUse hook that rewrites Bash commands through [rtk](https://www.rtk-ai.app) (60-90% token savings on dev operations) and silently no-ops when the binary is absent — so the only thing to set up is the binary itself: offer to install it (`brew install rtk-ai/tap/rtk`, or `cargo install rtk`). If rtk is already installed, skip this item entirely (the hook is already working). If the user's global `~/.claude/settings.json` also wires an rtk hook, mention the duplication is harmless (the second rewrite is a no-op) but they can remove the global one.
 
