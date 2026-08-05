@@ -107,16 +107,43 @@ After `/sdd:archive` proves the merge, the worktree and its branch have no
 further use. Archive offers to remove them:
 
 ```bash
-path=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>)
-git worktree remove "$path"
-git branch -d sdd/<feature>
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . release <feature>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees   # what exists, and what can go
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
 ```
 
-**Always take the path from `resolve`, never build it.** `EnterWorktree` flattens
-the `/` in a worktree name, so `sdd/<feature>` lands in
-`.claude/worktrees/sdd+<feature>` — a hardcoded `.claude/worktrees/sdd/<feature>`
-does not exist. The registry holds the real path; use it.
+**Never build the path by hand.** `EnterWorktree` flattens the `/` in a worktree
+name, so `sdd/<feature>` lands in `.claude/worktrees/sdd+<feature>` — a hardcoded
+`.claude/worktrees/sdd/<feature>` does not exist. `worktrees` and `retire` take
+the real path from git.
+
+### What "retirable" means
+
+Retirement follows the same standard as the merge gate: permitted by facts, never
+by assumption. `worktrees` marks an entry `RETIRABLE` only when all of these hold,
+and names every one that does not:
+
+| Condition | Why it blocks |
+|---|---|
+| Its change is `ARCHIVED` | Work still in flight has nowhere else to live |
+| Its branch is contained in its base | Commits not in the base would be discarded |
+| The tree is clean | Uncommitted work never reached the merge |
+| Nothing unpushed | Same, one step later |
+| **No other live session inside** | Removing a worktree under a running session leaves it with a cwd git cannot read — its `.git` points at metadata git just pruned |
+| You are not standing in it | Same failure, applied to yourself |
+| Git has not locked it | `git worktree unlock` is a deliberate decision, not an obstacle |
+
+Enumeration comes from `git worktree list`, **not** from the registry: git is the
+authority on what exists, and a worktree created by hand never registered. The
+feature is recovered from the binding or, failing that, from the branch name —
+including `sdd/<feature>-archive`, which still belongs to `<feature>`.
+
+`retire` also **verifies the directory is gone**. Git unregisters the worktree
+before deleting it, so a failed deletion leaves files git no longer tracks and
+nothing would report again; when that happens the command says so and prints the
+`rm -rf` that finishes the job.
+
+`--force` exists and discards whatever the blockers were protecting. It is the
+user's call, never the flow's.
 
 Use plain git, not `ExitWorktree`: that tool only touches worktrees created by
 `EnterWorktree` **in the same session**, and archive normally runs in a different
