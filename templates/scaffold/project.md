@@ -22,20 +22,32 @@
 
 ## Worktree bootstrap
 
-<!-- Qué necesita un worktree recién creado que git NO se lleva, y el comando
-     exacto para conseguirlo. Sin esto, la verificación del proyecto falla dentro
-     de un worktree y el fallo parece un problema de código (regla compartida 10).
+<!-- Dos cosas distintas, y la segunda se olvida siempre (regla compartida 10).
 
-     Rellena con lo que este proyecto necesite de verdad, p. ej.:
-       - copiar `.env` desde el worktree principal
-       - `make setup` / `npm ci` / `uv sync`
-       - servicio compartido que ya corre en el principal (no duplicar puertos)
+     (1) QUÉ FALTA — lo que git no se lleva y hay que traer:
+           - copiar `.env` desde el worktree principal
+           - `make setup` / `npm ci` / `uv sync`
+         Si no falta nada, dilo explícitamente: un "nada que copiar" escrito vale
+         más que una sección ausente, porque la fase siguiente ya tiene la
+         respuesta en vez de volver a preguntar.
 
-     Si no necesita nada, dilo explícitamente: un "nada que copiar" escrito vale
-     más que una sección ausente, porque la fase siguiente ya tiene la respuesta.
+     (2) QUÉ NO PUEDE HABER DOS VECES — recursos exclusivos de la máquina:
+           - puertos publicados (`make up` en el segundo worktree → address in use)
+           - nombres fijos de contenedor, un daemon en un socket conocido
+           - una BD con nombre fijo, un lockfile, un puerto de debugger
+         Un proyecto puede no necesitar copiar NADA y aun así no poder levantar
+         dos stacks. El síntoma no se parece a un fichero que falta: es
+         "address already in use", o una suite que pasa sola y falla cuando otro
+         worktree está arriba.
 
-     Si la verificación falla en un worktree por un fichero local que esta
-     sección no menciona, eso ES el hallazgo: se documenta aquí, no se adivina. -->
+     Si hay una restricción de exclusividad, escribe la regla operativa concreta
+     ("un stack a la vez: `make down` allí antes de `make up` aquí") y, si vale la
+     pena arreglarla, que sea una entrada de roadmap con design — toca compose,
+     el task runner y quizá CI. Las tres preguntas que lo deciden están en
+     `references/isolation.md`.
+
+     Si la verificación falla en un worktree por algo que esta sección no
+     menciona, eso ES el hallazgo: se documenta aquí, no se adivina. -->
 
 ## Conventions
 

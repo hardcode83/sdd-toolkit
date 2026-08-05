@@ -75,9 +75,16 @@ Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.
 Two things the project has to own, because the plugin cannot guess either (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
 
 1. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing.
-2. **Declare the bootstrap.** Write a **Worktree bootstrap** section in `sdd/project.md` listing what a fresh worktree needs that git does not carry, and the exact command to get it. This is the number-one practical friction of worktrees: without `.env` / `.venv` / `node_modules` / a local database, the project's own verification fails there and the failure looks like a code problem.
+2. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
 
-   Ask the user (AskUserQuestion) rather than guessing, and seed the options from what you can actually see: gitignored files at the repo root (`.env*`, `*.local`), a lockfile implying an install step, a `Makefile` target like `setup`/`bootstrap`, a compose file implying a shared service. Record only what they confirm. If the project genuinely needs nothing, write the section saying exactly that — an explicit "nothing to copy" is worth more than a missing section, because the next phase then knows the answer instead of asking again.
+   - **What is missing**: what a fresh worktree does not carry (`.env`, `.venv`, `node_modules`, a local database) and the exact command to get it. Without this the project's own verification fails there and the failure looks like a code problem.
+   - **What cannot exist twice**: *exclusive resources*. A published port, a fixed container name, a daemon on a known socket, a database with a fixed name, a lockfile. **A project can need nothing copied and still be unable to run two dev stacks** — the symptom is `address already in use`, or a suite that passes alone and fails while a sibling worktree is up. This half gets forgotten precisely because it is not a missing file.
+
+   Ask the user (AskUserQuestion) rather than guessing, and seed the options from what you can see: gitignored files at the repo root (`.env*`, `*.local`), a lockfile implying an install step, a `Makefile` target like `setup`/`bootstrap`, and — for the second half — **published ports in a compose file**, fixed `container_name`, a hardcoded database name, anything binding a known socket. Record only what they confirm.
+
+   If the project genuinely needs nothing and has no exclusive resource, write the section saying exactly that: an explicit "nothing to copy, nothing exclusive" is worth more than a missing section, because the next phase then knows the answer instead of asking again.
+
+   When there **is** an exclusivity constraint, write the operational rule it implies ("one stack at a time: `make down` there before `make up` here") — and say that fixing it properly is a roadmap entry with a design phase, not a note here: it touches the compose file, the task runner and possibly CI. The three questions that decide the shape of that fix are in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`; do not pick per-worktree ports reflexively, since the tests often need no published ports at all.
 
 ### 4. Steering docs
 
