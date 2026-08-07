@@ -20,6 +20,13 @@ Write spec updates in the same language as the existing specs (or the user's lan
    serialization point of the whole flow. Being post-merge, the base branch is
    also where the merged content actually is.
 
+   **And in a fresh session** (shared rule 11). Archive reads the merged code and
+   the change's documents from disk; it needs nothing the conversation holds. Run
+   after a long day of `/sdd:run` it averaged 634k of context per request in the
+   measured corpus — the most expensive phase in the flow, for pure bookkeeping.
+   If this session already carries other work, say so and recommend `/clear`
+   before continuing.
+
    Check where you are: `git rev-parse --git-dir` returning a path under
    `.git/worktrees/` means this is a linked worktree. Leave it first
    (`EnterWorktree` with the main worktree's `path`, or `ExitWorktree` with

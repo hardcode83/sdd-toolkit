@@ -738,6 +738,45 @@ python3 scripts/usage-sync.py --root /ruta/al/proyecto sync <feature>  # reconst
 
 Es conservador por diseño: nunca baja una cifra que el log no pueda explicar (la conserva y avisa con `WARNING`), y mantiene las filas de fases que el log no conoce. Lo único que ninguna reconstrucción arregla a posteriori es la **atribución**: el sink etiqueta con la fase marcada en ese instante, así que una fase que no se marque va a parar a la anterior — por eso cada skill de fase se marca y la suite lo verifica.
 
+## Presupuesto de contexto: por qué las fases terminales estrenan sesión
+
+El coste del flujo lo manda **dónde** corre una fase, no lo que hace. Medido
+sobre 38 sesiones de un proyecto real (27 features de `/sdd:new` a archivado):
+
+| fase | requests | contexto leído | % | **ctx medio/request** |
+|---|---:|---:|---:|---:|
+| `run` | 7.215 | 2,96 B | 39,9% | 411k |
+| `review` | 3.314 | 1,89 B | 25,5% | **571k** |
+| `auto` | 2.402 | 0,83 B | 11,2% | 345k |
+| `archive` | 1.043 | 0,66 B | 8,9% | **634k** |
+| `new` + `design` + `tasks` | 2.756 | 0,49 B | **6,6%** | 157–239k |
+
+Las fases que *piensan* cuestan el 6,6% del total. `archive` —mover directorios,
+fusionar specs, tickear el roadmap— quemó 660M de tokens a 634k de media por
+request: no porque archivar sea caro, sino porque va **al final**, encima de todo
+lo que la sesión ya acumuló. Y las 15 sesiones que tocaron tres o más features
+quemaron 5,09 B de los 7,42 B totales. Relecturas duplicadas dentro de una
+sesión: 5% — el desperdicio no es repetición, los topes de las rondas de fix
+aguantan; es acumulación.
+
+La regla 11 lo convierte en contrato, y la regla 1 es lo que lo hace seguro: si
+todo lo que una fase necesita está en `sdd/`, empezar con el contexto vacío no
+pierde nada. Una fase que se rompiera en sesión limpia sería un incumplimiento de
+la regla 1, no un motivo para conservar la conversación.
+
+- **Interactivo**: el gate de cada fase recomienda `/clear` antes de la
+  siguiente. El modelo no puede vaciarse el contexto —`/clear` es un comando del
+  cliente, no una herramienta—, así que decirlo en el gate *es* el mecanismo.
+- **Desatendido**: `/sdd:auto` corre cada feature y su review en una **sesión
+  headless nueva** (`claude -p`), y lee lo que volvió de `STATE.md`, no de la
+  prosa de la sub-sesión — evidencia sobre afirmaciones, como en la regla 8. Con
+  fallback: si `claude` no está o falla, lo hace en línea y lo dice en el informe.
+  Una optimización de coste nunca bloquea una feature.
+- Las métricas siguen cuadrando: `.sdd-usage/` es **un sink por repositorio**, así
+  que la sub-sesión exporta al mismo log y su fase se marca sola.
+
+Medición completa y mecanismos disponibles: `references/context-budget.md`.
+
 ## Extras por proyecto
 
 `/sdd:init` ofrece según el stack detectado, con diff contra lo ya activado en re-ejecuciones:

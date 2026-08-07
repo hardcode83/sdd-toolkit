@@ -85,3 +85,19 @@
     - `/sdd:archive` runs **only in the main worktree, on the base branch, one
       change at a time**: it mutates `sdd/specs/`, ticks the roadmap and moves
       directories. Being post-merge, that was already true in practice.
+11. **A phase does not inherit the previous phase's context.** Rule 1 already
+    makes this safe: everything a phase needs is in `sdd/`, so starting with an
+    empty context loses nothing — and a phase that *would* break without the
+    conversation is a rule 1 violation, not a reason to keep it. It matters
+    because cost follows position, not work: measured over 38 sessions of a real
+    project, `review` averaged 571k of context per request and `archive` 634k,
+    while `new`/`design`/`tasks` together accounted for 6.6% of all spend. The
+    terminal phases are expensive only because they run last.
+    - Interactive: each phase gate recommends `/clear` before the next phase.
+      The model cannot clear its own context; saying so at the gate is the whole
+      mechanism.
+    - Unattended: `/sdd:auto` runs its terminal phases in a **fresh headless
+      session** (`claude -p`), and reads what came back from `STATE.md`, not
+      from the sub-session's prose — evidence over claims, as in rule 8.
+    - Full measurement and the available mechanisms:
+      `${CLAUDE_PLUGIN_ROOT}/references/context-budget.md`.

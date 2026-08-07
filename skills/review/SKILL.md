@@ -27,6 +27,14 @@ Two modes, chosen by argument:
 
 ## Change review
 
+0. **Prefer a fresh session** (shared rule 11). Everything this phase needs —
+   proposal, design, tasks, the diff, `STATE.md` — is on disk, and it is the most
+   expensive phase per request in the flow (571k of context on average in the
+   measured corpus) precisely because it usually runs on top of a long `/sdd:run`.
+   If the session already carries the implementation it is about to review, say
+   so once and recommend `/clear`; then continue either way — this is advice, not
+   a gate.
+
 1. **Worktree first** (shared rule 10): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`) — this phase records `implementation_sha` from HEAD, so reviewing from the wrong working directory would certify the wrong commit. Nothing printed means the feature has no worktree; continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 
    Then read the change's `proposal.md`, `design.md` (if any), and `tasks.md`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> review` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, review's spend is attributed to whichever phase ran last.

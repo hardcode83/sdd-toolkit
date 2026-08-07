@@ -82,7 +82,39 @@ Re-read the frontier before each feature: closing one opens the entries that
 were waiting on it, so a run of `N` can legitimately reach features that were
 not workable when it started. Deferred entries (`deferred-until`) are never in
 the frontier and auto never picks them — their trigger is a human judgement.
-Then:
+
+### One session per feature
+
+**A multi-feature run must not carry feature 1 into feature 4.** Measured over
+38 sessions of a real project, the sessions that touched three or more features
+burned 5.09 B of the 7.42 B total: every request while building the fourth
+feature re-read the diffs, tests and panel reports of the first three, none of
+which it needs — the frontier, the branch and the change's documents are all on
+disk (shared rules 1 and 11).
+
+So when `N > 1`, run **each feature in its own session** and stay a thin
+orchestrator here:
+
+```bash
+SDD_AUTO_DELEGATED=1 claude -p "/sdd:auto <feature>" --permission-mode acceptEdits
+```
+
+- **The guard matters**: `SDD_AUTO_DELEGATED` is what stops a delegated run from
+  delegating again. If it is already set in the environment, you *are* the
+  delegated run — execute the pipeline below inline and never spawn another.
+- **Read the outcome from disk**, never from the sub-session's prose:
+  `STATE.md` (`PR_OPEN`, `READY_FOR_PR`, `MERGED`) and `BLOCKED.md` are the
+  facts; its final text is a summary for the human. Fold both into your report.
+- **Between features, re-read the frontier here** — that is the orchestration
+  that cannot be delegated, since closing one feature opens others.
+- **Fallback**: no `claude` on PATH, or the command fails before touching
+  `STATE.md` → run that feature's pipeline inline and say so in the report. This
+  is a cost optimisation; it never blocks a feature and never aborts a run.
+
+A single-feature run (`/sdd:auto` with `N = 1` or a named feature) is already one
+session per feature: execute the pipeline inline.
+
+Then, for the feature at hand:
 
 1. **Branch + claim**: check `git ls-remote --heads origin "sdd/<feature>"`. If
    the branch exists, establish **whose** it is before calling it a claim —
@@ -126,10 +158,33 @@ Then:
    is forbidden in auto; `tournament` only if the roadmap entry explicitly
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.
-6. **review + READY_FOR_PR** — follow the review skill at feature scale.
-   Verdict must pass; otherwise BLOCK. Record the two lifecycle milestones
-   yourself, passing BASE explicitly — auto recorded it in the preconditions,
-   so the base is **never** ambiguous here and must never be asked:
+6. **review + READY_FOR_PR** — **in a fresh session** (shared rule 11). By this
+   point the run has filled this context with diffs, test output and panel
+   reports, and review is the most expensive phase per request in the flow. It
+   needs none of that: its referents are on disk. So delegate it, from the
+   feature's working directory:
+
+   ```bash
+   claude -p "/sdd:review <feature>. The base branch is <BASE>; do not ask about it." --permission-mode acceptEdits
+   ```
+
+   Then **read the result from disk, not from the prose it printed** (rule 11,
+   and rule 8's evidence-over-claims): `STATE.md` at `READY_FOR_PR` with a
+   recorded `implementation_sha` is the pass. A `BLOCKED.md` written by the
+   sub-session is a real block — adopt it and move on to the next feature. Any
+   other outcome is a failed verdict: BLOCK.
+
+   The sub-session marks its own usage and exports to the same per-repository
+   sink, so metrics stay attributed (`${CLAUDE_PLUGIN_ROOT}/references/metrics.md`).
+
+   **Fallback, stated in the report**: if `claude` is not on PATH, the command
+   fails, or it returns without touching `STATE.md`, do the review inline right
+   here — a degraded, expensive review beats an abandoned feature. Never let this
+   optimisation abort a run.
+
+   Either way the milestones are recorded with BASE explicit — auto recorded it
+   in the preconditions, so the base is **never** ambiguous and must never be
+   asked. If the sub-session did not record them (or you reviewed inline):
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
