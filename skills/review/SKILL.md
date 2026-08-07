@@ -8,12 +8,40 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Review
 
-Two modes, chosen by argument:
+Two modes:
 
-- no argument — **drift check**: compare `sdd/specs/` against the codebase.
 - `<feature>` — **change review**: verify the implementation of `sdd/changes/<feature>/` against its proposal.
+- no argument — **drift check**: compare `sdd/specs/` against the codebase.
 
-**Fallback when drift check would be vacuous:** if no argument was given and `sdd/specs/` is missing or empty, there's nothing to drift-check. If exactly one non-archived change exists in `sdd/changes/`, do a change review of it instead (say so explicitly). Otherwise, report that there's nothing to check yet and point to `/sdd:new`.
+## Choosing the mode when no argument was given
+
+**Look before choosing, and across every worktree.** A feature isolated in its own
+worktree committed `sdd/changes/<feature>/` on its branch, so from the main
+worktree that change does not exist — and picking the mode by what this directory
+happens to contain is how `/sdd:review` silently ran a drift check on somebody who
+had just finished implementing. That was survivable while the conversation
+remembered which feature was in flight. Once phases start in a fresh context
+(shared rule 11) nothing remembers, so ask git:
+
+```bash
+git worktree list
+```
+
+For this directory and every other worktree, read each `sdd/changes/*/STATE.md`
+that is not archived — the same enumeration `/sdd:status` does, and for the same
+reason. Then:
+
+- **No active change anywhere** → drift check. If `sdd/specs/` is also missing or
+  empty there is nothing to check at all: say so and point to `/sdd:new`.
+- **One or more active changes** → both modes are legitimate and you cannot tell
+  which was meant, so **ask** (`AskUserQuestion`): the active changes as options,
+  each labelled with its state and the worktree it lives in, plus "drift check" as
+  the alternative. Recommend the change whose tasks are all checked — that is the
+  one waiting for exactly this phase. Guessing here is not a small error: a drift
+  check reports on specs instead of certifying an implementation, and it does it
+  without failing, so the user reads a report about the wrong thing.
+
+**Never applies under `/sdd:auto`**, which always passes the feature name.
 
 ## Drift check
 

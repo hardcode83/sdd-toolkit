@@ -111,6 +111,18 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("both questions in the same call", archive)
         self.assertIn("Never pass `--force` on the user's behalf", archive)
 
+    def test_review_looks_across_worktrees_before_picking_a_mode(self) -> None:
+        """A feature isolated in a worktree committed its change directory on its
+        branch, so the main worktree cannot see it. Choosing the mode by what
+        this directory contains ran a drift check on someone who had just
+        finished implementing — and reported successfully on the wrong thing.
+        """
+        review = self.read_skill("review")
+        self.assertIn("git worktree list", review)
+        self.assertIn("every other worktree", review)
+        self.assertIn("AskUserQuestion", review)
+        self.assertIn("Never applies under `/sdd:auto`", review)
+
     def test_the_phases_that_touch_the_change_guard_the_branch(self) -> None:
         """Run needs it because it writes; review needs it because it certifies.
 
