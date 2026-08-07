@@ -224,7 +224,7 @@ Then, for the feature at hand:
 - `proposal.md` + `design.md` → continue at tasks.
 - `tasks.md` with unchecked tasks → continue at run.
 - All tasks checked, no lifecycle metadata → continue at review.
-- `state: READY_FOR_PR` → push/open the PR and record it; do not re-review.
+- `state: READY_FOR_PR` → run the ship skill (push, PR, `record-pr`); do not re-review.
 - `state: PR_OPEN` → report the PR and wait for remote review/merge.
 - `state: MERGED` → point to `/sdd:archive <feature>`; auto does not archive.
 
@@ -241,7 +241,7 @@ run or turn into a question. For every one of them:
    on `sdd/<feature>` before auto moves on, so the handoff is a branch the user
    can push, not a dirty tree they must reconstruct.
 2. **Leave the next action on disk, not in the conversation.** `STATE.md` is the
-   record: `READY_FOR_PR` means "push and open the PR", `PR_OPEN` means "merge
+   record: `READY_FOR_PR` means "`/sdd:ship <feature>`", `PR_OPEN` means "merge
    it", `MERGED` means "`/sdd:archive <feature>`". `/sdd:status` reads exactly
    that, so the handoff survives the session ending (shared rule 1).
 3. **Name it in the report** with the exact command, per feature.
