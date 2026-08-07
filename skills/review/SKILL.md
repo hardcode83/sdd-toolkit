@@ -85,6 +85,18 @@ Two modes, chosen by argument:
    consolidated row in `sdd/metrics.md`, so a change waiting for its merge
    already has complete metrics instead of none until archive.
 
+7. **Offer to publish — one question, not five instructions.** On a passing
+   verdict, `READY_FOR_PR` is a change that is finished locally and invisible to
+   everyone else: the branch is unpushed and no PR exists. Ask once
+   (`AskUserQuestion`, recommend yes) whether to run `/sdd:ship <feature>` now,
+   and if the user accepts, follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`.
+   Ship stays a separate phase — review is report-only and must not grow a
+   publishing contract — but *reaching* it should cost one tap, not a sequence
+   of typed orders. If the user declines, say that `STATE.md` holds the next
+   action and `/sdd:status` will keep surfacing it (shared rule 1).
+   **Skip this question entirely under `/sdd:auto`**, which drives ship itself.
+
 Do not fix findings in either mode. A passing change review may write the
-lifecycle metadata above and the metrics ledger; all other review behavior
-remains report-only.
+lifecycle metadata above and the metrics ledger, and may hand off to
+`/sdd:ship` with the user's explicit yes; all other review behavior remains
+report-only.

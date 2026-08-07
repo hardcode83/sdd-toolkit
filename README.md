@@ -14,7 +14,8 @@ flowchart LR
     RU <--> P{{"panel por sección<br/>architect·security·qa"}}
     RU --> V["/sdd:review<br/>LOCAL_VERIFIED"]
     V --> RP["READY_FOR_PR"]
-    RP --> PR["PR_OPEN"]
+    RP --> SH["/sdd:ship<br/>push + PR"]
+    SH --> PR["PR_OPEN"]
     PR --> M["MERGED"]
     M --> A["/sdd:archive"]
     A --> S[("specs/ vivas")]
@@ -160,7 +161,8 @@ Regla de trabajo que hacen cumplir: **el bump va en la PR de la propia feature**
 | `/sdd:archive [feature]` | Exige PR mergeado verificable; después fusiona specs vivas, consolida métricas, finaliza roadmap y archiva. | haiku |
 | `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y las vistas del roadmap (frontera paralelizable, olas, camino crítico, grafo). Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap y su grafo de dependencias, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
-| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR`. | sonnet |
+| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR` y ofrece publicar con `/sdd:ship`. | sonnet |
+| `/sdd:ship [feature]` | Publica un change en `READY_FOR_PR`: push, PR y evidencia registrada (`record-pr`). No revisa, no mergea, no archiva. Sin remoto o sin `gh`, entrega la acción manual exacta en vez de fallar. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: coge N entradas de la frontera del roadmap, implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
@@ -195,7 +197,7 @@ automáticamente ninguno de los dos.
 | `ACTIVE` | `/sdd:new <feature>` inicia el change. | Existe trabajo local en curso; todavía no ha superado revisión. |
 | `LOCAL_VERIFIED` | `/sdd:review <feature>` termina con tests y panel aprobados. | La implementación cumple localmente proposal, design y tareas. |
 | `READY_FOR_PR` | La misma review registra la identidad Git revisada. | El change está completo localmente y listo para abrir PR; no implica CI, aprobación remota ni merge. |
-| `PR_OPEN` | `/sdd:auto` —o el flujo manual equivalente— crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
+| `PR_OPEN` | `/sdd:ship <feature>` —que es también el paso de publicación de `/sdd:auto`— hace push, crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
 | `MERGED` | `/sdd:archive <feature>` consulta GitHub y `verify-merge` valida la evidencia. | GitHub confirma el merge y su commit; aún pueden faltar la actualización documental y el movimiento físico. |
 | `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap y finaliza el archive. | El merge ya está reflejado en todas las fuentes de verdad SDD. |
 
@@ -204,6 +206,16 @@ ambos hitos son inequívocos aunque normalmente ocurran en una misma invocación
 `/sdd:auto` ejecuta implementación y review como antes, abre o reutiliza el PR,
 registra `PR_OPEN` y se detiene. No mueve el change, no actualiza specs vivas y
 no marca definitivamente el roadmap.
+
+**Por qué existe `/sdd:ship`.** Condicionar el archivado a un merge probado fue
+correcto, pero abrió un tramo que no tenía dueño: `/sdd:review` se detiene en
+`READY_FOR_PR` y `/sdd:archive` se niega a empezar antes del merge. Solo
+`/sdd:auto` lo cruzaba, así que el camino manual había que conducirlo a mano —
+«haz push», «abre el PR», «registra el PR»— una orden por paso. `/sdd:ship` es
+ese tramo, y `/sdd:auto` ejecuta esta misma skill en su paso 7: un solo hogar
+para la lógica (regla 1), no dos copias que divergen. Review lo ofrece con una
+sola pregunta al pasar el verdict, de modo que llegar hasta ahí cuesta un tap y
+no una secuencia de instrucciones.
 
 ### Estado y evidencia
 

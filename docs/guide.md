@@ -12,6 +12,7 @@ Todo el estado vive en `sdd/` dentro de tu repo — **specs** (qué hace el sist
 /sdd:tasks ──► checklist verificable         ── tú apruebas ──►
 /sdd:run ──► implementa + panel de revisores por sección
 /sdd:review ──► valida localmente y deja READY_FOR_PR
+/sdd:ship ──► push + PR + evidencia registrada  (review te lo ofrece)
 Pull Request ──► revisión remota + CI ──► MERGED
 /sdd:archive ──► verifica el merge, fusiona specs/ y archiva
 ```
@@ -73,7 +74,9 @@ Durante el run: cada tarea se verifica (tests/lint del proyecto) antes de marcar
 
 ```
 /sdd:review    # panel a escala feature; si pasa, registra READY_FOR_PR
-# abre y mergea el PR; STATE.md conserva URL, ramas y SHA revisado
+               # y te ofrece publicar en la misma pregunta
+/sdd:ship      # push + PR + record-pr → PR_OPEN. STATE.md conserva URL, ramas y SHA
+# mergeas el PR (eso sigue siendo tuyo)
 /sdd:archive   # exige MERGED verificable; entonces actualiza specs/roadmap/archive
 ```
 

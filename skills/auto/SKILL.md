@@ -139,34 +139,20 @@ Then:
    The change's single `STATE.md` then holds `READY_FOR_PR` with BASE, head
    branch, repository, and reviewed implementation SHA. Commit:
    `sdd(<feature>): ready for PR`.
-7. **Publish**: if a remote exists, push; if both a remote and `gh` are
-   available, open a PR from `sdd/<feature>` to BASE — title
-   `SDD: <feature>`, body = the proposal's
-   Why/What + panel verdict + link to the **active** change. **Attribution
-   follows the project's settings**: only append the Claude Code attribution
-   line (and co-author trailers in commits) if `includeCoAuthoredBy` is not
-   disabled in the effective settings — never hardcode signatures against
-   the user's configuration.
-8. **Record PR evidence**: take the URL returned by `gh pr create` and run:
-
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-pr <feature> --url <PR-URL>
-   ```
-
-   This re-queries `gh`, validates repository/base/head/implementation SHA,
-   records `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is
-   idempotent. No remote, no `gh`, or a failing push (no permission, protected
-   branch) → this is a handoff, not a failure: leave `READY_FOR_PR`, report the
-   exact manual action (push, open the PR, or merge into the base branch
-   yourself), and continue with the next feature. Never fabricate a URL and
-   never stop the run over it. Such a change is archived later through local git
-   evidence — the reviewed commit contained in the base, or a base commit
-   carrying the same change after a squash or rebase.
-9. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
+7. **Publish** — follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`: push,
+   open the PR from `sdd/<feature>` to BASE, and record the PR evidence with
+   `record-pr`. That skill is the single home for this stretch (shared rule 1);
+   auto used to carry its own copy, and two copies of a publishing contract
+   drift. Auto's own conversions still apply on top of it: never ask anything,
+   and treat every environment limit (no remote, no `gh`, push refused) as a
+   **handoff, not a failure** — leave `READY_FOR_PR`, name the exact manual
+   action, and continue with the next feature. Never fabricate a URL and never
+   stop the run over it.
+8. **STOP before archive.** Do not call `/sdd:archive`, update living specs,
    check off the roadmap, consolidate archive metrics, or move the change.
    Those final effects are permitted only once the merge is objectively proven
    — a `MERGED` PR, or the reviewed commit contained in the base branch.
-10. **Return to base and continue.** If this feature ran in its own worktree,
+9. **Return to base and continue.** If this feature ran in its own worktree,
     go back to the main worktree (`EnterWorktree` with the original `path`, or
     `ExitWorktree` with `action: "keep"` when auto created it this session) and
     leave the worktree **on disk** — the change is not merged yet, so its work
@@ -221,7 +207,7 @@ When blocking a feature:
    `/sdd:status` derives `⛔` from it; annotating the entry too would duplicate
    derived state into a shared file, which is what makes parallel runs conflict
    (`docs/adr/0001-roadmap-structure-and-concurrency.md`, D5).
-4. Return to base as in pipeline step 10 (leaving any worktree on disk — the
+4. Return to base as in pipeline step 9 (leaving any worktree on disk — the
    blocked work lives there) and continue with the next entry, or finish if none.
 
 Unblocking is human: the user answers in BLOCKED.md's terms, deletes the

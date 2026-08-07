@@ -37,8 +37,9 @@
    is already checked `[x]`, regenerating destroys verified progress —
    call that out explicitly before letting the user pick regenerate.
 7. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
-   → `/sdd:tasks` → `/sdd:run` → `/sdd:review` → Pull Request → merge
-   → `/sdd:archive`. Review proves local readiness; only objective merge
+   → `/sdd:tasks` → `/sdd:run` → `/sdd:review` → `/sdd:ship` (push + PR +
+   recorded evidence) → merge → `/sdd:archive`. Review proves local readiness;
+   ship publishes it; only objective merge
    evidence permits archive, living-spec updates, and the final roadmap tick.
    Support: `/sdd:status`
    (read-only, includes the BLOCKED queue), `/sdd:doctor` (read-only,

@@ -14,12 +14,41 @@ class LifecycleSkillContractTests(unittest.TestCase):
     def test_auto_stops_after_recording_pr(self) -> None:
         auto = self.read_skill("auto")
         self.assertIn("**STOP before archive.**", auto)
-        self.assertIn("record-pr <feature>", auto)
+        self.assertIn("record-pr", auto)
         self.assertNotIn("**archive** — follow the archive skill", auto)
         self.assertIn("Do not call `/sdd:archive`", auto)
-        self.assertIn("Re-running is", auto)
         self.assertIn("leave `READY_FOR_PR`", auto)
         self.assertIn("Never fabricate a URL", auto)
+
+    def test_publishing_has_one_home_and_auto_delegates_to_it(self) -> None:
+        """Two copies of a publishing contract drift; the PR evidence is the one
+        fact the merge gate later depends on, so it gets a single owner."""
+        ship = self.read_skill("ship")
+        self.assertIn("record-pr <feature> --url <PR-URL>", ship)
+        self.assertIn("Re-running is idempotent", ship)
+        self.assertIn("Never fabricate a URL", ship)
+        self.assertIn("leave the change at `READY_FOR_PR`", ship)
+        # Ship publishes and nothing else: no review, no merge, no archive.
+        self.assertIn("never merges and never archives", ship)
+        self.assertIn("/sdd:archive <feature>", ship)
+        # Auto reaches it by reference, not by copy.
+        auto = self.read_skill("auto")
+        self.assertIn("skills/ship/SKILL.md", auto)
+        self.assertNotIn("gh pr create", auto.split("## Final report")[0])
+
+    def test_ship_refuses_to_publish_an_unreviewed_range(self) -> None:
+        """mark-ready recorded the SHA the verdict covers; if HEAD moved past it,
+        the PR would carry an approved verdict over unreviewed commits."""
+        ship = self.read_skill("ship")
+        self.assertIn("implementation_sha", ship)
+        self.assertIn("`/sdd:review <feature>`", ship)
+        self.assertIn("Never ask for the base branch", ship)
+
+    def test_review_offers_to_publish_but_stays_report_only(self) -> None:
+        review = self.read_skill("review")
+        self.assertIn("skills/ship/SKILL.md", review)
+        self.assertIn("remains\nreport-only", review)
+        self.assertIn("Skip this question entirely under `/sdd:auto`", review)
 
     def test_auto_never_asks_for_the_base_branch(self) -> None:
         """The base is a precondition of the run, not a question mid-flight."""
@@ -70,6 +99,18 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertLess(specs, finalize)
         self.assertIn("has no override", archive)
 
+    def test_archive_commits_what_it_moved_instead_of_suggesting_it(self) -> None:
+        """finalize-archive stages the move and leaves specs/roadmap/metrics
+        unstaged; stopping there is how a half-committed archive — an orphaned
+        STATE.md on the base branch — reaches somebody else's run."""
+        archive = self.read_skill("archive")
+        self.assertIn("git add -A sdd/", archive)
+        self.assertIn("Commit the archive?", archive)
+        self.assertNotIn("Suggest committing", archive)
+        # One closing question, not one turn per decision.
+        self.assertIn("both questions in the same call", archive)
+        self.assertIn("Never pass `--force` on the user's behalf", archive)
+
     def test_review_persists_ready_for_pr(self) -> None:
         review = self.read_skill("review")
         self.assertIn("mark-local-verified <feature>", review)
@@ -84,7 +125,7 @@ class LifecycleSkillContractTests(unittest.TestCase):
     def test_every_phase_skill_records_its_own_usage(self) -> None:
         """An uninstrumented phase does not lose its spend — it misattributes it
         to whichever phase marked itself last, silently."""
-        for phase in ("new", "design", "tasks", "run", "review", "archive"):
+        for phase in ("new", "design", "tasks", "run", "review", "ship", "archive"):
             skill = self.read_skill(phase)
             with self.subTest(phase=phase):
                 self.assertIn(f'usage-mark.sh" {phase}', skill.replace("<feature> ", ""))
