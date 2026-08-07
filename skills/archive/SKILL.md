@@ -20,6 +20,13 @@ Write spec updates in the same language as the existing specs (or the user's lan
    serialization point of the whole flow. Being post-merge, the base branch is
    also where the merged content actually is.
 
+   **And in a fresh session** (shared rule 11). Archive reads the merged code and
+   the change's documents from disk; it needs nothing the conversation holds. Run
+   after a long day of `/sdd:run` it averaged 634k of context per request in the
+   measured corpus — the most expensive phase in the flow, for pure bookkeeping.
+   If this session already carries other work, say so and recommend `/clear`
+   before continuing.
+
    Check where you are: `git rev-parse --git-dir` returning a path under
    `.git/worktrees/` means this is a linked worktree. Leave it first
    (`EnterWorktree` with the main worktree's `path`, or `ExitWorktree` with
@@ -102,7 +109,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees
    ```
 
-   Each line is marked `RETIRABLE` or `en uso` with its blockers. `RETIRABLE` means all of it is proven: the change is archived, the branch is contained in its base, the tree is clean, nothing is unpushed, and **no other live session is inside**. For each one, **offer** to retire it (AskUserQuestion, recommend yes):
+   Each line is marked `RETIRABLE` or `en uso` with its blockers. `RETIRABLE` means all of it is proven: the change is archived, the branch is contained in its base, the tree is clean, nothing is unpushed, and **no other live session is inside**. Note which ones are retirable and **carry the decision to the closing question in step 8** — do not spend a separate turn on it. Retiring is one command per worktree:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
@@ -110,8 +117,13 @@ Write spec updates in the same language as the existing specs (or the user's lan
 
    That removes the worktree, deletes its branch and releases the binding in one step, and it **verifies the directory is actually gone** — git unregisters before deleting, so a failed deletion used to leave a directory git no longer tracks and nobody would report again. If it warns that the path survived, relay the `rm -rf` it prints: at that point git is already clean and only the files remain.
 
-   Never pass `--force` on the user's behalf, and never retire a worktree the command refuses: every blocker names work that did not reach the merge, or a session that would break. **A refusal is the answer, not an obstacle.** If the user declines, leave everything as is and say `/sdd:doctor` will keep reporting it. Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
-8. **Summarize.** List the spec files created/updated, PR URL, merge SHA, and archive location. Suggest committing the post-merge specs + archive together, **staged with `git add -A sdd/`**: `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped.
+   Every blocker names work that did not reach the merge, or a session that would break: **a refusal is the answer, not an obstacle.** Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
+8. **Summarize, then close in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then ask **once** (`AskUserQuestion`, both questions in the same call, recommending yes to both):
+
+   1. **Commit the archive?** — and if yes, do it: stage with `git add -A sdd/` and commit. `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped. Leaving a half-staged archive as an instruction for the user is how an orphaned `STATE.md` reaches the base branch.
+   2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run `retire` for each.
+
+   Never pass `--force` on the user's behalf, and never retire a worktree the command refuses. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
 9. **Verify the commit, not the working tree.** Once the archive is committed, run
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.
    Run it **after** the commit: a clean doctor on an uncommitted tree proves

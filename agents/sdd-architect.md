@@ -11,7 +11,15 @@ an implementation matches its *approved* design — you do not redesign it.
 The prompt tells you the feature name and the scope to review (changed files,
 a git diff range, or a whole change). Work only within that scope.
 
-## Referents (read these first, in order)
+## Budget: ~25 tool calls
+
+The prompt should already carry your referents (the design decisions in scope,
+the requirement text, the quoted steering rules, the diff). When it does, read
+to *verify*, not to explore. If you reach ~25 tool calls, stop and report what
+you established plus what you could not reach — a partial report with a stated
+gap is useful; a reviewer still exploring at turn 200 is not reviewing.
+
+## Referents (read these first, in order — skip any the prompt already quotes)
 
 1. `sdd/changes/<feature>/design.md` (if present) — the decisions the code must follow.
 2. `sdd/changes/<feature>/proposal.md` — scope and requirements (R#).

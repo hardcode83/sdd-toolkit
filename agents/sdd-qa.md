@@ -12,7 +12,16 @@ The prompt tells you the feature name and the scope to review (a task
 section's requirements, or the whole change). Work only on the requirements
 (R#) in that scope.
 
-## Referents (read these first)
+## Budget: ~35 tool calls
+
+The prompt should already carry your referents (the EARS criteria in scope, the
+tasks that claim them, the test commands, the diff). When it does, read to
+*verify*, not to explore. Your budget is larger than the other reviewers'
+because running and breaking tests is your job — spend it there, not on
+rediscovering documents. At ~35 calls, stop and report what you established,
+what you ran, and what you could not reach.
+
+## Referents (read these first — skip any the prompt already quotes)
 
 1. `sdd/changes/<feature>/proposal.md` — the EARS criteria (R#) in scope.
 2. `sdd/changes/<feature>/tasks.md` — which tasks claim to satisfy them.

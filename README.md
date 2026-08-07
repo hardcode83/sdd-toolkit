@@ -14,7 +14,8 @@ flowchart LR
     RU <--> P{{"panel por sección<br/>architect·security·qa"}}
     RU --> V["/sdd:review<br/>LOCAL_VERIFIED"]
     V --> RP["READY_FOR_PR"]
-    RP --> PR["PR_OPEN"]
+    RP --> SH["/sdd:ship<br/>push + PR"]
+    SH --> PR["PR_OPEN"]
     PR --> M["MERGED"]
     M --> A["/sdd:archive"]
     A --> S[("specs/ vivas")]
@@ -160,7 +161,8 @@ Regla de trabajo que hacen cumplir: **el bump va en la PR de la propia feature**
 | `/sdd:archive [feature]` | Exige PR mergeado verificable; después fusiona specs vivas, consolida métricas, finaliza roadmap y archiva. | haiku |
 | `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y las vistas del roadmap (frontera paralelizable, olas, camino crítico, grafo). Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap y su grafo de dependencias, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
-| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR`. | sonnet |
+| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR` y ofrece publicar con `/sdd:ship`. | sonnet |
+| `/sdd:ship [feature]` | Publica un change en `READY_FOR_PR`: push, PR y evidencia registrada (`record-pr`). No revisa, no mergea, no archiva. Sin remoto o sin `gh`, entrega la acción manual exacta en vez de fallar. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: coge N entradas de la frontera del roadmap, implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
@@ -195,7 +197,7 @@ automáticamente ninguno de los dos.
 | `ACTIVE` | `/sdd:new <feature>` inicia el change. | Existe trabajo local en curso; todavía no ha superado revisión. |
 | `LOCAL_VERIFIED` | `/sdd:review <feature>` termina con tests y panel aprobados. | La implementación cumple localmente proposal, design y tareas. |
 | `READY_FOR_PR` | La misma review registra la identidad Git revisada. | El change está completo localmente y listo para abrir PR; no implica CI, aprobación remota ni merge. |
-| `PR_OPEN` | `/sdd:auto` —o el flujo manual equivalente— crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
+| `PR_OPEN` | `/sdd:ship <feature>` —que es también el paso de publicación de `/sdd:auto`— hace push, crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
 | `MERGED` | `/sdd:archive <feature>` consulta GitHub y `verify-merge` valida la evidencia. | GitHub confirma el merge y su commit; aún pueden faltar la actualización documental y el movimiento físico. |
 | `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap y finaliza el archive. | El merge ya está reflejado en todas las fuentes de verdad SDD. |
 
@@ -204,6 +206,16 @@ ambos hitos son inequívocos aunque normalmente ocurran en una misma invocación
 `/sdd:auto` ejecuta implementación y review como antes, abre o reutiliza el PR,
 registra `PR_OPEN` y se detiene. No mueve el change, no actualiza specs vivas y
 no marca definitivamente el roadmap.
+
+**Por qué existe `/sdd:ship`.** Condicionar el archivado a un merge probado fue
+correcto, pero abrió un tramo que no tenía dueño: `/sdd:review` se detiene en
+`READY_FOR_PR` y `/sdd:archive` se niega a empezar antes del merge. Solo
+`/sdd:auto` lo cruzaba, así que el camino manual había que conducirlo a mano —
+«haz push», «abre el PR», «registra el PR»— una orden por paso. `/sdd:ship` es
+ese tramo, y `/sdd:auto` ejecuta esta misma skill en su paso 7: un solo hogar
+para la lógica (regla 1), no dos copias que divergen. Review lo ofrece con una
+sola pregunta al pasar el verdict, de modo que llegar hasta ahí cuesta un tap y
+no una secuencia de instrucciones.
 
 ### Estado y evidencia
 
@@ -378,6 +390,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
 | `SDD024` | warning | `.claude/worktrees/` contiene worktrees pero no está en `.gitignore`, así que pueden acabar commiteados. |
+| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -502,6 +515,8 @@ Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
 | `sdd-security` | **opus** | `steering/security.md` regla a regla; sin ese doc, solo clases objetivas con evidencia | Cita la regla o el input→sink; sin evidencia no reporta |
 | `sdd-qa` | sonnet | criterios EARS del proposal + `steering/testing.md` | Por cada R#: ¿implementado? ¿testeado de verdad? ¿aguanta? — ejecuta tests, intenta romper |
 | `sdd-review-*` (del proyecto) | el que declare | su `steering/<lente>.md` | Revisores custom por repo (`.claude/agents/`), descubiertos por convención — mismo contrato |
+
+**El panel se lanza en un solo mensaje, y con los referentes dentro del prompt.** Las dos cosas están medidas sobre 38 sesiones de un proyecto real: **481 de 481 lanzamientos fueron secuenciales** pese a que la skill pedía paralelo —lo que cuesta 2N viajes del contexto de `run`/`review` en vez de 2, y deja que el prompt del segundo revisor se escriba después de leer los findings del primero, que es justo la independencia que el panel compra—; y los revisores promediaron **60 turnos de herramienta cada uno** redescubriendo documentos que la sesión que los lanzó ya tenía cargados. Por eso el prompt del panel lleva ahora el texto EARS de los R#, las decisiones D# citadas, las reglas de steering que aplican y el rango del diff, y cada agente trae un **presupuesto de turnos** (~25, ~35 para qa, que además ejecuta tests) con la obligación de reportar lo que no alcanzó. Lo que no cambia es la mejor propiedad del panel: sin referente citado, no hay finding.
 
 **Cómo cambiar la configuración**: el modelo de una fase se edita en el frontmatter `model:` de `skills/<fase>/SKILL.md`; el de un agente, en `agents/sdd-*.md`. Es configuración del plugin (no por proyecto): editar, commitear y subir versión aplica a todos tus proyectos. El override de modelo dura solo esa invocación — la sesión vuelve a tu modelo al terminar.
 
@@ -725,6 +740,45 @@ python3 scripts/usage-sync.py --root /ruta/al/proyecto sync <feature>  # reconst
 ```
 
 Es conservador por diseño: nunca baja una cifra que el log no pueda explicar (la conserva y avisa con `WARNING`), y mantiene las filas de fases que el log no conoce. Lo único que ninguna reconstrucción arregla a posteriori es la **atribución**: el sink etiqueta con la fase marcada en ese instante, así que una fase que no se marque va a parar a la anterior — por eso cada skill de fase se marca y la suite lo verifica.
+
+## Presupuesto de contexto: por qué las fases terminales estrenan sesión
+
+El coste del flujo lo manda **dónde** corre una fase, no lo que hace. Medido
+sobre 38 sesiones de un proyecto real (27 features de `/sdd:new` a archivado):
+
+| fase | requests | contexto leído | % | **ctx medio/request** |
+|---|---:|---:|---:|---:|
+| `run` | 7.215 | 2,96 B | 39,9% | 411k |
+| `review` | 3.314 | 1,89 B | 25,5% | **571k** |
+| `auto` | 2.402 | 0,83 B | 11,2% | 345k |
+| `archive` | 1.043 | 0,66 B | 8,9% | **634k** |
+| `new` + `design` + `tasks` | 2.756 | 0,49 B | **6,6%** | 157–239k |
+
+Las fases que *piensan* cuestan el 6,6% del total. `archive` —mover directorios,
+fusionar specs, tickear el roadmap— quemó 660M de tokens a 634k de media por
+request: no porque archivar sea caro, sino porque va **al final**, encima de todo
+lo que la sesión ya acumuló. Y las 15 sesiones que tocaron tres o más features
+quemaron 5,09 B de los 7,42 B totales. Relecturas duplicadas dentro de una
+sesión: 5% — el desperdicio no es repetición, los topes de las rondas de fix
+aguantan; es acumulación.
+
+La regla 11 lo convierte en contrato, y la regla 1 es lo que lo hace seguro: si
+todo lo que una fase necesita está en `sdd/`, empezar con el contexto vacío no
+pierde nada. Una fase que se rompiera en sesión limpia sería un incumplimiento de
+la regla 1, no un motivo para conservar la conversación.
+
+- **Interactivo**: el gate de cada fase recomienda `/clear` antes de la
+  siguiente. El modelo no puede vaciarse el contexto —`/clear` es un comando del
+  cliente, no una herramienta—, así que decirlo en el gate *es* el mecanismo.
+- **Desatendido**: `/sdd:auto` corre cada feature y su review en una **sesión
+  headless nueva** (`claude -p`), y lee lo que volvió de `STATE.md`, no de la
+  prosa de la sub-sesión — evidencia sobre afirmaciones, como en la regla 8. Con
+  fallback: si `claude` no está o falla, lo hace en línea y lo dice en el informe.
+  Una optimización de coste nunca bloquea una feature.
+- Las métricas siguen cuadrando: `.sdd-usage/` es **un sink por repositorio**, así
+  que la sub-sesión exporta al mismo log y su fase se marca sola.
+
+Medición completa y mecanismos disponibles: `references/context-budget.md`.
 
 ## Extras por proyecto
 

@@ -23,6 +23,6 @@ Write the technical design for a change. Argument: the feature name; if omitted 
    - Cover every requirement in the proposal — if a requirement has no design implication, say so explicitly.
    - Surface **open questions** rather than silently deciding on things the user should weigh in on.
    - No code beyond short illustrative snippets or interface signatures.
-   - If a visual would say it better (flows, state machines, component interactions), generate it with the `sdd:diagram` skill and reference the PNG from the design doc.
+   - If a visual would say it better (flows, state machines, component interactions), generate it with the `sdd:diagram` skill and reference it from the design doc. Ask for **SVG** — it lives in the repository next to the document, diffs in review and renders inline on GitHub — and **never read the rendered file back into the session** (shared rule 11: an image costs ~140k tokens of context to look at, and the design doc already says in words what the picture shows).
 5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> design` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled).
 6. **Gate.** Summarize the key decisions and open questions, resolve the open questions with the user (AskUserQuestion when they are concrete choices), and wait for approval. Then suggest `/sdd:tasks`.

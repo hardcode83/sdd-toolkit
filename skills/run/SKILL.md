@@ -34,7 +34,25 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
    - **Core reviewers (always)**: types `sdd-architect`, `sdd-security`, `sdd-qa`.
    - **Project reviewers (additive)**: every agent the project defines at `.claude/agents/sdd-review-*.md` (agent type = the file's `name`; discover with a glob before launching). They extend the panel with project-specific lenses (performance, i18n, compliance…) and follow the same contract.
 
-   Give each reviewer: the feature name, the requirement IDs (R#) the section covers, and the exact scope (files changed / git diff range since the section started).
+   **One message, every reviewer in it.** All the `Agent` calls go in a *single*
+   assistant message — one tool call each, sent together. Launching them one per
+   message is not a slower version of the same thing, it is a different and worse
+   one: it costs 2N round-trips of this context instead of 2 (measured at 411k
+   per request during run), and it lets each reviewer's prompt be written after
+   reading the previous reviewer's findings, which is exactly the independence the
+   panel exists to buy. Measured over 38 sessions of a real project, **481 of 481
+   panel launches were sequential** — so treat a lone `Agent` call in a message as
+   the bug it is.
+
+   **Give each reviewer its referents inline, don't send it hunting.** You already
+   have `proposal.md`, `design.md`, the steering rules and the diff in this
+   context; the reviewers do not, and left to rediscover them they averaged **60
+   tool-call turns each** in the same corpus. In every panel prompt include: the
+   feature name, the requirement IDs (R#) in scope **with their EARS text**, the
+   design decisions (D#) that apply **quoted**, the steering rules that bind this
+   scope **quoted**, and the exact diff range / file list. The agent files tell
+   them to read these; a prompt that already carries them turns reading into
+   verifying.
    - **Referent filter**: discard any finding that doesn't cite its referent (R#, design decision D#, or a quoted steering rule) — the agents are instructed this way, enforce it when synthesizing.
    - Fix the accepted findings, then re-run **only the reviewer(s) whose findings you fixed**, scoped to the fix. Maximum 2 fix rounds per section; if findings persist after that, stop and present them to the user.
    - A `DESIGN-CONFLICT` from the architect is not a code fix — it goes through the deviation rule (step 4).
@@ -43,6 +61,6 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
 4. **On deviation:** if implementation reveals the design or a requirement is wrong, STOP. Explain the conflict, agree the fix with the user, update `proposal.md`/`design.md`/`tasks.md` to match reality, then continue. Never silently diverge from the spec — the documents must stay true.
 5. **On blockers** (failing environment, missing credentials, ambiguous requirement): stop and ask rather than guessing around it. Whatever remains unresolved when the turn ends — including a panel that couldn't run or complete (usage limits, unavailable agents) — goes to `BLOCKED.md` per shared rule 5, with the exact resume command (an interrupted section panel is best resumed as `/sdd:review <feature>`, which covers everything at feature scale).
 6. **Tournament mode** (only when the user explicitly asked for `tournament <task>`): for that ONE task, launch 3 general-purpose agents in parallel, each with `isolation: worktree`, each implementing the same task from the same design — prompt them with different angles (e.g. simplest-correct, performance-first, defensive). When all finish, have the review panel judge the three diffs against the same referents, pick the winner, apply it to the working tree, and graft any clearly better ideas from the losers. Cost is ~3×+ — reserve it for tasks where solution variance is real (algorithms, state machines, tricky concurrency), never for CRUD.
-7. **Finish.** When all tasks are checked, run the full Verification section, report results honestly (including anything skipped or failing), then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> run` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Suggest `/sdd:review <feature>` to establish local approval and `READY_FOR_PR`; never suggest archive before PR merge.
+7. **Finish.** When all tasks are checked, run the full Verification section, report results honestly (including anything skipped or failing), then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> run` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Suggest `/sdd:review <feature>` to establish local approval and `READY_FOR_PR`; never suggest archive before PR merge. **Recommend `/clear` first** (shared rule 11): review is the most expensive phase per request in the whole flow, and run is what filled the context it would inherit — the diffs, test output and panel reports it is about to re-derive from `sdd/` anyway.
 
 Scope discipline: implement only what tasks describe. If you spot valuable extra work, note it as a candidate for a future change instead of doing it.

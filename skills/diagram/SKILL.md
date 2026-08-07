@@ -173,6 +173,10 @@ After rendering, open the file for the user:
 open "$OUTFILE"
 ```
 
+**Never `Read` the rendered image back into the session.** A diagram PNG is 275–570 KB in practice — roughly 140k tokens each, permanently in context, and re-read on every later request. In the measured corpus the six largest `Read` results of the whole history were diagram PNGs, and that alone made this the phase with the highest average context in the flow (706k per request). To check a render worked, ask the filesystem, not the model: `test -s "$OUTFILE"` plus `mmdc`/`plantuml`'s own exit code. A blank PNG is a syntax error the renderer already reported. Shared rule 11 and `${CLAUDE_PLUGIN_ROOT}/references/context-budget.md`.
+
+**Prefer SVG when the diagram is going into a repository** (`-o out.svg` in both engines). It is text: it diffs, it survives review, GitHub renders it inline next to the document that references it, and nothing has to load it back to know what it says. PNG is for sharing outside the repo.
+
 ## Interactive Mode
 
 If no description provided or description is ambiguous, ask:
