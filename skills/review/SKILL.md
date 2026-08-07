@@ -37,6 +37,8 @@ Two modes, chosen by argument:
 
 1. **Worktree first** (shared rule 10): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`) — this phase records `implementation_sha` from HEAD, so reviewing from the wrong working directory would certify the wrong commit. Nothing printed means the feature has no worktree; continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 
+   **Then the branch guard, before reading a single diff.** Verify `git branch --show-current` is `sdd/<feature>` (or the branch `STATE.md` records). If it is not, **STOP** and report it — do not "fix" it with a checkout. `/sdd:run` has carried this guard since worktrees existed because it writes code; review needs it just as much because it *certifies*: `mark-ready` records `head_branch` and `implementation_sha` as the merge gate's evidence, and a review run from the base branch would sign a range that is not the change. Until now the conversation usually carried the right directory over from run; a phase that starts in a fresh context (shared rule 11) has only what it asks for.
+
    Then read the change's `proposal.md`, `design.md` (if any), and `tasks.md`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> review` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, review's spend is attributed to whichever phase ran last.
 2. **Launch the review panel in parallel** — every `Agent` call in a **single**
    assistant message, sent together: the three core reviewers — `sdd-architect`,

@@ -111,6 +111,21 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("both questions in the same call", archive)
         self.assertIn("Never pass `--force` on the user's behalf", archive)
 
+    def test_the_phases_that_touch_the_change_guard_the_branch(self) -> None:
+        """Run needs it because it writes; review needs it because it certifies.
+
+        `mark-ready` records head_branch and implementation_sha as the merge
+        gate's evidence, so a review run from the base branch signs a range that
+        is not the change. The conversation used to carry the right directory
+        over from run; a phase starting in a fresh context (rule 11) has only
+        what it asks for.
+        """
+        for phase in ("run", "review"):
+            with self.subTest(phase=phase):
+                skill = self.read_skill(phase)
+                self.assertIn("git branch --show-current", skill)
+                self.assertIn("do not \"fix\" it with a checkout", skill.lower())
+
     def test_review_persists_ready_for_pr(self) -> None:
         review = self.read_skill("review")
         self.assertIn("mark-local-verified <feature>", review)

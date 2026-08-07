@@ -352,17 +352,46 @@ def claim(
 
 
 def resolve(root: Path, feature: str, runner: Runner = subprocess.run) -> str:
-    """The worktree bound to a feature, or "" when it has none.
+    """The worktree a feature lives in, or "" when it has none.
 
     Reports a binding whose directory has disappeared as unbound: a stale path
     would send the next phase into a directory that no longer exists.
+
+    The registry answers first, and git answers when the registry cannot. That
+    fallback is not redundancy: the registry is machine-local and only knows what
+    was `claim`ed, so a worktree created by hand, one made on another machine, or
+    one whose registry got rebuilt after corruption is invisible to it — while
+    git has known about it all along. `worktrees`/`retire` already ask git for
+    exactly this reason; `resolve` asking only the registry meant every phase
+    concluded "this feature has no worktree, work here" and carried on in the
+    main worktree, with HEAD on the base branch. That is survivable while the
+    conversation still remembers where the work is. It stops being survivable
+    once phases start in a fresh context (shared rule 11), which is why the
+    fallback landed with it.
     """
     data = read_registry(registry_path(root, runner))
     binding = data["worktrees"].get(feature) or {}
     path = binding.get("path", "")
-    if not path or not Path(path).is_dir():
+    if path and Path(path).is_dir():
+        return path
+    return worktree_of_branch(root, feature, runner)
+
+
+def worktree_of_branch(
+    root: Path, feature: str, runner: Runner = subprocess.run
+) -> str:
+    """The worktree git has checked out on `sdd/<feature>`, or "".
+
+    Matches the branch exactly rather than through `feature_of_worktree`: an
+    `sdd/<feature>-archive` worktree also belongs to the feature, but it is not
+    where the feature's phases run.
+    """
+    if not feature:
         return ""
-    return path
+    for entry in git_worktrees(root, runner):
+        if entry.get("branch") == f"sdd/{feature}" and Path(entry["path"]).is_dir():
+            return entry["path"]
+    return ""
 
 
 def release(root: Path, feature: str, runner: Runner = subprocess.run) -> str:

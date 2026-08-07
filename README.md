@@ -684,6 +684,20 @@ liveness) y **bindings feature→worktree** (sobreviven a la sesión, porque el
 trabajo a medias también). Cada fase posterior encuentra su sitio con
 `sdd_session.py resolve <feature>`, nunca adivinando una ruta.
 
+**Y `resolve` pregunta primero al registro y después a git.** El registro es
+estado de máquina y solo sabe lo que se `claim`eó: un worktree creado a mano, uno
+hecho en otra máquina o uno cuyo registro se reconstruyó tras corromperse le eran
+invisibles — mientras git lo supo desde el principio, que es justo por lo que
+`worktrees` y `retire` le preguntan a él. Importaba poco mientras todas las fases
+compartían sesión, porque la conversación arrastraba el directorio desde `run`.
+Con la regla 11 importa mucho: `resolve` pasa a ser lo **único** que sabe dónde
+está el trabajo, y responder vacío no degrada a «trabaja aquí», degrada a
+**trabajar sobre la rama base en el worktree principal**, que es otro cambio. Por
+eso el guard de rama —`git branch --show-current` debe ser `sdd/<feature>`— dejó
+de ser exclusivo de `/sdd:run`: `run` lo necesita porque *escribe*, `review`
+porque *acredita*. Y para recuperarlo a mano, `/sdd:status` ya lista los
+worktrees preguntándole a git y lee el `STATE.md` de cada uno.
+
 **Lo que hay que pagar**, y no se esconde:
 
 - Un worktree recién creado **no tiene** `.env`, `.venv`, `node_modules` ni tu
