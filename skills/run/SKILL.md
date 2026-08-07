@@ -34,7 +34,25 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
    - **Core reviewers (always)**: types `sdd-architect`, `sdd-security`, `sdd-qa`.
    - **Project reviewers (additive)**: every agent the project defines at `.claude/agents/sdd-review-*.md` (agent type = the file's `name`; discover with a glob before launching). They extend the panel with project-specific lenses (performance, i18n, compliance…) and follow the same contract.
 
-   Give each reviewer: the feature name, the requirement IDs (R#) the section covers, and the exact scope (files changed / git diff range since the section started).
+   **One message, every reviewer in it.** All the `Agent` calls go in a *single*
+   assistant message — one tool call each, sent together. Launching them one per
+   message is not a slower version of the same thing, it is a different and worse
+   one: it costs 2N round-trips of this context instead of 2 (measured at 411k
+   per request during run), and it lets each reviewer's prompt be written after
+   reading the previous reviewer's findings, which is exactly the independence the
+   panel exists to buy. Measured over 38 sessions of a real project, **481 of 481
+   panel launches were sequential** — so treat a lone `Agent` call in a message as
+   the bug it is.
+
+   **Give each reviewer its referents inline, don't send it hunting.** You already
+   have `proposal.md`, `design.md`, the steering rules and the diff in this
+   context; the reviewers do not, and left to rediscover them they averaged **60
+   tool-call turns each** in the same corpus. In every panel prompt include: the
+   feature name, the requirement IDs (R#) in scope **with their EARS text**, the
+   design decisions (D#) that apply **quoted**, the steering rules that bind this
+   scope **quoted**, and the exact diff range / file list. The agent files tell
+   them to read these; a prompt that already carries them turns reading into
+   verifying.
    - **Referent filter**: discard any finding that doesn't cite its referent (R#, design decision D#, or a quoted steering rule) — the agents are instructed this way, enforce it when synthesizing.
    - Fix the accepted findings, then re-run **only the reviewer(s) whose findings you fixed**, scoped to the fix. Maximum 2 fix rounds per section; if findings persist after that, stop and present them to the user.
    - A `DESIGN-CONFLICT` from the architect is not a code fix — it goes through the deviation rule (step 4).
