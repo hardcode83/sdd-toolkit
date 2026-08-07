@@ -139,5 +139,55 @@ class WorktreeIgnoreTests(unittest.TestCase):
             self.assertEqual([], self.diagnose(root))
 
 
+class RoadmapIndexBudgetTests(unittest.TestCase):
+    """SDD025: the roadmap is an index, and every phase pays its size.
+
+    A real project's roadmap reached 95 KB — read by new, run, review, auto and
+    status alike, on every run — because entries kept their whole rationale
+    instead of pointing at sdd/roadmap/<feature>.md.
+    """
+
+    def project(self, root: Path, entries: str) -> None:
+        (root / "sdd").mkdir()
+        (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+        (root / "sdd" / "roadmap.md").write_text(
+            f"# Roadmap\n\n{entries}", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD025" in line]
+
+    def test_a_scannable_index_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "- [ ] alpha — pendiente\n")
+            self.assertEqual([], self.diagnose(root))
+
+    def test_an_index_carrying_its_rationale_is_reported_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            body = "  " + ("razonamiento largo " * 40) + "\n"
+            self.project(
+                root, "".join(f"- [ ] f{n} — pendiente\n{body}" for n in range(60))
+            )
+            reported = self.diagnose(root)
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("WARNING", reported[0])
+
+    def test_it_is_a_warning_not_a_failure(self) -> None:
+        """Size is a cost to fix deliberately, never a reason to block a run."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            body = "  " + ("razonamiento largo " * 40) + "\n"
+            self.project(
+                root, "".join(f"- [ ] f{n} — pendiente\n{body}" for n in range(60))
+            )
+            self.assertEqual(0, run_doctor(root).returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

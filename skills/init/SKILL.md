@@ -152,6 +152,7 @@ When re-running this step on an already-initialized project, first diff against 
 ### 7. Apply choices
 
 - **MCPs**: merge the chosen entries into the project's `.mcp.json`. If the file exists, preserve every existing server — only add new keys. Mention any auth step the catalog notes.
+  **Offer only what this project needs.** Every enabled MCP server, plugin and agent adds its tool schemas and instructions to the static preamble of *every* request in the project — measured at a median of 42k tokens before a session does anything, on 19k requests. A server that belongs to another of the user's projects is pure overhead here; say so when the global config carries ones this stack has no use for, and point at per-project `.mcp.json` and `.claude/settings.json` as where that gets scoped (shared rule 11).
 - **LSPs**: per the catalog — check each chosen language server binary (`which`), install missing ones with user approval, then print the exact `/plugin install <name>` command(s) for the user to run (the agent cannot run slash commands itself).
 - **CLAUDE.md pointer**: append the block below to the project's `CLAUDE.md` (create the file if missing). Idempotent — if the markers already exist, replace the block content instead of duplicating:
 

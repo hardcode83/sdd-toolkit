@@ -390,6 +390,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
 | `SDD024` | warning | `.claude/worktrees/` contiene worktrees pero no está en `.gitignore`, así que pueden acabar commiteados. |
+| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**

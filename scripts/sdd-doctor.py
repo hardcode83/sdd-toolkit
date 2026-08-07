@@ -268,6 +268,40 @@ def worktree_checks(root: Path) -> list[Diagnostic]:
     ]
 
 
+ROADMAP_INDEX_BUDGET = 32 * 1024
+
+
+def roadmap_size_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
+    """`roadmap.md` is an index, and every phase reads it.
+
+    Its size is therefore a cost paid on every run, not once: the phase skills
+    load it to find the frontier, the entry and its metadata. A roadmap that grew
+    to hold each feature's rationale stops being an index — and `/sdd:new` reads
+    the long version anyway, from the per-entry note it is supposed to live in.
+    """
+    size = roadmap.stat().st_size
+    if size <= ROADMAP_INDEX_BUDGET:
+        return []
+    return [
+        Diagnostic(
+            "SDD025",
+            "WARNING",
+            relative(roadmap, root),
+            0,
+            (
+                f"roadmap.md is {size // 1024} KB; every phase reads it, so that "
+                f"size is paid on every run (index budget: "
+                f"{ROADMAP_INDEX_BUDGET // 1024} KB)."
+            ),
+            (
+                "Move the entries' long rationale to sdd/roadmap/<feature>.md — "
+                "read only by that entry's /sdd:new — and leave one scannable "
+                "line per entry plus its metadata sub-line."
+            ),
+        )
+    ]
+
+
 def graph_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
     """Dependency-graph consistency, delegated to the roadmap module.
 
@@ -876,6 +910,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
             pointer_checks(root, roadmap, roadmap_entries, archives_by_feature)
         )
         diagnostics.extend(graph_checks(root, roadmap))
+        diagnostics.extend(roadmap_size_checks(root, roadmap))
     diagnostics.extend(worktree_checks(root))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))
