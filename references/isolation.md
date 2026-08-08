@@ -101,15 +101,39 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature
 deleted worktree degrades to "work here" rather than sending a phase into a path
 that no longer exists.
 
-**Before the first edit of `/sdd:run`**, verify the branch — this is the guard
-that protects the merge evidence:
+### It asks the registry, and then it asks git
+
+The registry is machine-local and only knows what was `claim`ed. So it does not
+know about a worktree created by hand, one made on another machine, or one whose
+registry was rebuilt after corruption (`read_registry` rebuilds rather than
+failing — it is a cache of live facts, not a source of truth). Git has known
+about all of them the whole time, which is why `worktrees` and `retire` ask git.
+
+`resolve` now does the same: registry first, then the worktree git has checked
+out on `sdd/<feature>` — matched exactly, since an `sdd/<feature>-archive`
+worktree belongs to the feature but is not where its phases run.
+
+This matters more than it used to. While every phase ran in the same session,
+the conversation carried the directory over from `run` and a silent registry
+cost nothing. Once phases start in a fresh context (shared rule 11), `resolve`
+is the *only* thing that knows where the work is — and answering "" there does
+not degrade to "work here", it degrades to **working on the base branch in the
+main worktree**, which is a different change.
+
+### The branch guard belongs to every phase that touches the change
+
+**Before the first edit of `/sdd:run`, and before `/sdd:review` reads a diff**:
 
 ```bash
 git branch --show-current    # must be sdd/<feature>
 ```
 
 If it is not, stop. Do not "fix" it with a checkout that could carry someone
-else's files.
+else's files. Run needs it because it *writes*; review needs it because it
+*certifies* — `mark-ready` records `head_branch` and `implementation_sha` as the
+merge gate's evidence, and a review run from the wrong directory signs a range
+that is not the change. `/sdd:ship` is covered by construction: it refuses to
+publish when HEAD no longer matches the recorded `implementation_sha`.
 
 ## Cleanup
 

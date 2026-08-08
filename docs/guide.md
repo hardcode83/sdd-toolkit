@@ -190,7 +190,7 @@ El panel salta al *completarse una sección* — una tarea suelta solo lo dispar
 
 **¿Cuánto costó cada feature?** → activa métricas en `/sdd:init` (extras) y reinicia la sesión. Cada fase deja su fila (tokens in/out/cache por modelo + coste estimado, subagentes incluidos) en `changes/<feature>/metrics.md`; al archivar se consolida en `sdd/metrics.md`. Úsalo para calibrar el panel: si en tu proyecto una lente no paga su coste, quítala.
 
-**Auditar que specs y código siguen de acuerdo** → `/sdd:review` sin argumento: drift check con findings Broken/Undocumented/Stale.
+**Auditar que specs y código siguen de acuerdo** → `/sdd:review` sin argumento: drift check con findings Broken/Undocumented/Stale. Si hay changes activos (en este worktree o en otro) te preguntará primero cuál de las dos cosas querías — el drift check y la review de un change son igual de legítimos y sin argumento no se distinguen.
 
 **¿Por qué esto es así? / ¿Qué se ha hecho ya?** → `/sdd:history`: sin argumento, timeline de lo archivado (fecha, qué, coste); con feature, su ficha completa (decisiones con alternativas rechazadas, tareas, commits); con una pregunta libre ("¿por qué infra va por entorno?"), busca en el archivo y responde **con cita** (change, fecha, D#) y chequeo de vigencia — te dice si la decisión sigue en pie o la superó un change posterior. El archivo es tu registro de decisiones (ADRs gratis); esta es la forma de consultarlo.
 

@@ -8,12 +8,40 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Review
 
-Two modes, chosen by argument:
+Two modes:
 
-- no argument — **drift check**: compare `sdd/specs/` against the codebase.
 - `<feature>` — **change review**: verify the implementation of `sdd/changes/<feature>/` against its proposal.
+- no argument — **drift check**: compare `sdd/specs/` against the codebase.
 
-**Fallback when drift check would be vacuous:** if no argument was given and `sdd/specs/` is missing or empty, there's nothing to drift-check. If exactly one non-archived change exists in `sdd/changes/`, do a change review of it instead (say so explicitly). Otherwise, report that there's nothing to check yet and point to `/sdd:new`.
+## Choosing the mode when no argument was given
+
+**Look before choosing, and across every worktree.** A feature isolated in its own
+worktree committed `sdd/changes/<feature>/` on its branch, so from the main
+worktree that change does not exist — and picking the mode by what this directory
+happens to contain is how `/sdd:review` silently ran a drift check on somebody who
+had just finished implementing. That was survivable while the conversation
+remembered which feature was in flight. Once phases start in a fresh context
+(shared rule 11) nothing remembers, so ask git:
+
+```bash
+git worktree list
+```
+
+For this directory and every other worktree, read each `sdd/changes/*/STATE.md`
+that is not archived — the same enumeration `/sdd:status` does, and for the same
+reason. Then:
+
+- **No active change anywhere** → drift check. If `sdd/specs/` is also missing or
+  empty there is nothing to check at all: say so and point to `/sdd:new`.
+- **One or more active changes** → both modes are legitimate and you cannot tell
+  which was meant, so **ask** (`AskUserQuestion`): the active changes as options,
+  each labelled with its state and the worktree it lives in, plus "drift check" as
+  the alternative. Recommend the change whose tasks are all checked — that is the
+  one waiting for exactly this phase. Guessing here is not a small error: a drift
+  check reports on specs instead of certifying an implementation, and it does it
+  without failing, so the user reads a report about the wrong thing.
+
+**Never applies under `/sdd:auto`**, which always passes the feature name.
 
 ## Drift check
 
@@ -36,6 +64,8 @@ Two modes, chosen by argument:
    a gate.
 
 1. **Worktree first** (shared rule 10): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`) — this phase records `implementation_sha` from HEAD, so reviewing from the wrong working directory would certify the wrong commit. Nothing printed means the feature has no worktree; continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
+
+   **Then the branch guard, before reading a single diff.** Verify `git branch --show-current` is `sdd/<feature>` (or the branch `STATE.md` records). If it is not, **STOP** and report it — do not "fix" it with a checkout. `/sdd:run` has carried this guard since worktrees existed because it writes code; review needs it just as much because it *certifies*: `mark-ready` records `head_branch` and `implementation_sha` as the merge gate's evidence, and a review run from the base branch would sign a range that is not the change. Until now the conversation usually carried the right directory over from run; a phase that starts in a fresh context (shared rule 11) has only what it asks for.
 
    Then read the change's `proposal.md`, `design.md` (if any), and `tasks.md`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> review` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, review's spend is attributed to whichever phase ran last.
 2. **Launch the review panel in parallel** — every `Agent` call in a **single**

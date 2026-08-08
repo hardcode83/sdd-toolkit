@@ -289,6 +289,53 @@ class ResolveReleaseTests(SessionTestCase):
         )
         self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
 
+    def add_worktree(self, name: str, branch: str) -> Path:
+        path = self.root / name
+        self.git("worktree", "add", "-q", "-b", branch, str(path))
+        return path
+
+    def test_an_unregistered_worktree_is_found_through_git(self) -> None:
+        """The registry only knows what was claimed; git knows what exists.
+
+        A worktree made by hand, on another machine, or one whose registry was
+        rebuilt after corruption was invisible to `resolve` — and answering ""
+        does not degrade to "work here", it degrades to the base branch in the
+        main worktree, which is a different change.
+        """
+        path = self.add_worktree("wt", "sdd/alpha")
+        self.assertEqual({}, self.registry()["worktrees"])
+        self.assertEqual(str(path), sdd_session.resolve(self.root, "alpha"))
+
+    def test_the_registry_still_answers_first(self) -> None:
+        """It records where a session actually bound the feature, which need not
+        be the branch's worktree."""
+        self.add_worktree("wt", "sdd/alpha")
+        sdd_session.claim(self.root, "alpha")
+        self.assertEqual(str(self.root), sdd_session.resolve(self.root, "alpha"))
+
+    def test_a_vanished_binding_falls_through_to_git(self) -> None:
+        path = self.add_worktree("wt", "sdd/alpha")
+        self.write_registry(
+            {
+                "schema": 1,
+                "sessions": {},
+                "worktrees": {"alpha": {"path": str(self.root / "gone")}},
+            }
+        )
+        self.assertEqual(str(path), sdd_session.resolve(self.root, "alpha"))
+
+    def test_the_archive_worktree_is_not_where_the_phases_run(self) -> None:
+        """`sdd/<feature>-archive` belongs to the feature but is a different job,
+        so the branch match is exact rather than by feature name."""
+        self.add_worktree("wt-archive", "sdd/alpha-archive")
+        self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
+
+    def test_an_unrelated_branch_is_never_mistaken_for_the_feature(self) -> None:
+        self.add_worktree("wt", "sdd/alphabet")
+        self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
+        self.add_worktree("other", "feature/alpha")
+        self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
+
     def test_release_drops_the_binding_and_clears_the_session_feature(self) -> None:
         sdd_session.claim(self.root, "alpha")
         self.assertIn("Released 'alpha'", sdd_session.release(self.root, "alpha"))

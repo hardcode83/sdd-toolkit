@@ -161,7 +161,7 @@ Regla de trabajo que hacen cumplir: **el bump va en la PR de la propia feature**
 | `/sdd:archive [feature]` | Exige PR mergeado verificable; después fusiona specs vivas, consolida métricas, finaliza roadmap y archiva. | haiku |
 | `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y las vistas del roadmap (frontera paralelizable, olas, camino crítico, grafo). Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap y su grafo de dependencias, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
-| `/sdd:review [feature]` | Sin argumento: drift specs↔código. Con feature: valida localmente y, si pasa, registra `READY_FOR_PR` y ofrece publicar con `/sdd:ship`. | sonnet |
+| `/sdd:review [feature]` | Con feature: valida localmente y, si pasa, registra `READY_FOR_PR` y ofrece publicar con `/sdd:ship`. Sin argumento: enumera los changes activos **de todos los worktrees** y pregunta; si no hay ninguno, drift specs↔código. | sonnet |
 | `/sdd:ship [feature]` | Publica un change en `READY_FOR_PR`: push, PR y evidencia registrada (`record-pr`). No revisa, no mergea, no archiva. Sin remoto o sin `gh`, entrega la acción manual exacta en vez de fallar. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: coge N entradas de la frontera del roadmap, implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
@@ -683,6 +683,20 @@ El registro guarda dos cosas distintas a propósito: **sesiones** (se podan por
 liveness) y **bindings feature→worktree** (sobreviven a la sesión, porque el
 trabajo a medias también). Cada fase posterior encuentra su sitio con
 `sdd_session.py resolve <feature>`, nunca adivinando una ruta.
+
+**Y `resolve` pregunta primero al registro y después a git.** El registro es
+estado de máquina y solo sabe lo que se `claim`eó: un worktree creado a mano, uno
+hecho en otra máquina o uno cuyo registro se reconstruyó tras corromperse le eran
+invisibles — mientras git lo supo desde el principio, que es justo por lo que
+`worktrees` y `retire` le preguntan a él. Importaba poco mientras todas las fases
+compartían sesión, porque la conversación arrastraba el directorio desde `run`.
+Con la regla 11 importa mucho: `resolve` pasa a ser lo **único** que sabe dónde
+está el trabajo, y responder vacío no degrada a «trabaja aquí», degrada a
+**trabajar sobre la rama base en el worktree principal**, que es otro cambio. Por
+eso el guard de rama —`git branch --show-current` debe ser `sdd/<feature>`— dejó
+de ser exclusivo de `/sdd:run`: `run` lo necesita porque *escribe*, `review`
+porque *acredita*. Y para recuperarlo a mano, `/sdd:status` ya lista los
+worktrees preguntándole a git y lee el `STATE.md` de cada uno.
 
 **Lo que hay que pagar**, y no se esconde:
 
