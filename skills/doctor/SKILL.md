@@ -27,6 +27,13 @@ order wrong — show the views rather than describing them:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . report
 ```
 
+`SDD025` (the roadmap outgrew its index budget) is the one finding with a
+procedure rather than a one-line fix: point at
+`${CLAUDE_PLUGIN_ROOT}/references/roadmap-migration.md`, which measures where the
+bytes actually are before moving anything and states the three checks that prove
+the migration lost no text and did not move the graph. Do not start it from here
+— `/sdd:doctor` is read-only.
+
 Then report the project's **isolation policy** and check **machine state**, which
 the validator above deliberately does not cover (it lives in the shared git
 directory, not in the committed project):
