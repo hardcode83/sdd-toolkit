@@ -20,7 +20,7 @@ Bootstrap SDD in the current project. Optional argument: path to an initial plan
 ### 1. Check existing state
 
 - **Legacy layout**: if the project has pre-plugin SDD artifacts (`sdd/workflow/`, `.claude/skills/sdd-*`, `.opencode/command/sdd-*.md`), offer to delete them — the plugin replaces them and the data layer (`sdd/specs|changes|steering`, `project.md`, `roadmap.md`) is untouched. Also update any `<!-- sdd:start -->` block in CLAUDE.md to the current pointer text (step "Apply choices").
-- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run: regenerate steering, re-run the extras step, add a spec baseline, or ingest a planning document. Skip everything else.
+- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run: regenerate steering, re-run the extras step, add a spec baseline, ingest a planning document, or revisit worktree isolation (step 3b). Offer that last one whenever `sdd_session.py --root . policy` reports the default and nothing is declared — projects initialized before the policy existed have no line at all, and the question was never put to them. Skip everything else.
 
 ### 2. Analyze inputs
 
@@ -72,10 +72,18 @@ Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.
 
 ### 3b. Worktree isolation (shared rule 10)
 
-Two things the project has to own, because the plugin cannot guess either (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
+Three things the project has to own, because the plugin cannot guess any of them (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
 
-1. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing.
-2. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
+1. **Choose when features get isolated.** Ask (AskUserQuestion) and write the answer as a one-line `isolation:` declaration in the **Worktree bootstrap** section of `sdd/project.md`. Two values, and the trade-off is real in both directions — present it, don't recommend blindly:
+
+   - `on-conflict` **(default; recommended for solo work on a heavy stack)** — a worktree only when the check finds evidence: another live session, HEAD on another feature's branch, other in-flight changes. Nothing changes for a project that declares nothing.
+   - `always` **(recommended when several sessions run at once, or when the main clone must stay usable)** — every feature gets its own worktree, the first one included. The main clone stays on the default branch with a clean tree, so every session starts from the same world. Without it the *first* feature occupies the clone and leaves it pinned to its branch, dirty — which is both a nuisance for any other shell and the exact evidence the next feature's check reports as a conflict.
+
+   **Say the price before they choose**, from what step 2 detected: every feature then pays the worktree bootstrap — an empty database, a dependency reinstall, its own disk — that the first feature used to dodge. And if this project has an **exclusive resource** (item 3), `always` hits it on the first feature instead of the second: either write the operational rule now or stay on `on-conflict` until it exists.
+
+   A project that skips the question gets `on-conflict`; that is the default, not a gap. A value that is neither is an error (`SDD026`), because it would silently fall back.
+2. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing — and under `isolation: always` it reports it *before* the directory exists, since the next `/sdd:new` creates one.
+3. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
 
    - **What is missing**: what a fresh worktree does not carry (`.env`, `.venv`, `node_modules`, a local database) and the exact command to get it. Without this the project's own verification fails there and the failure looks like a code problem.
    - **What cannot exist twice**: *exclusive resources*. A published port, a fixed container name, a daemon on a known socket, a database with a fixed name, a lockfile. **A project can need nothing copied and still be unable to run two dev stacks** — the symptom is `address already in use`, or a suite that passes alone and fails while a sibling worktree is up. This half gets forgotten precisely because it is not a missing file.
