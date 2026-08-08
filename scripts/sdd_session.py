@@ -8,10 +8,19 @@ dirty files onto the wrong branch — and `mark-ready` then records a
 not merely a merge conflict: it corrupts the evidence the merge gate depends on
 (ADR 0001).
 
-This module answers two questions deterministically, so no phase has to guess:
+This module answers three questions deterministically, so no phase has to guess:
 
   * is another session working this clone right now?  (`check`)
+  * does this project isolate every feature anyway?   (`check` / `policy`)
   * which worktree is this feature bound to?          (`resolve`)
+
+The second one exists because evidence alone answers the wrong question. A clone
+with nothing in flight reports `CLEAR`, so the FIRST feature always stayed in the
+main clone — and by staying it produced exactly the evidence (`HEAD` on someone
+else's `sdd/` branch, in-flight change directories) that the check later reports
+as `CONFLICT` to the second one. Projects that want a pristine base declare
+`isolation: always` in `sdd/project.md`; the verdict keeps describing the
+evidence, and the policy decides what to do about it (ADR 0002).
 
 The registry lives in the repository's **common** git directory
 (`git rev-parse --git-common-dir`), which every linked worktree shares and which
@@ -29,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,6 +49,18 @@ from typing import Callable
 
 SCHEMA = 1
 REGISTRY_NAME = "sessions.json"
+# The project's isolation policy, declared in `sdd/project.md`. `on-conflict` is
+# the default so a project that declares nothing behaves exactly as before.
+ISOLATION_POLICIES = ("on-conflict", "always")
+DEFAULT_ISOLATION_POLICY = "on-conflict"
+POLICY_FILE = Path("sdd") / "project.md"
+# Accepts `isolation: always`, `- isolation: always` and `**isolation**: always`,
+# which are the three shapes the same line takes in a markdown document.
+POLICY_RE = re.compile(
+    r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*)?isolation(?:\*\*)?[ \t]*:[ \t]*`?([A-Za-z][A-Za-z-]*)`?",
+    re.IGNORECASE | re.MULTILINE,
+)
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 # Environment Claude Code exports into every Bash call. Absent under other
 # runners (or a plain shell), which is why every read has a fallback: an
 # unidentifiable session must degrade to "no claim", never to a wrong claim.
@@ -219,13 +241,121 @@ def feature_of_branch(branch: str) -> str:
     return branch[len("sdd/") :] if branch.startswith("sdd/") else ""
 
 
+@dataclass(frozen=True)
+class IsolationPolicy:
+    """What the project decided about isolating features.
+
+    `policy` is always one of `ISOLATION_POLICIES`: an unreadable or unrecognised
+    declaration degrades to today's behaviour rather than to an error, because
+    this is read on the hot path of every phase. `declared` keeps whatever the
+    project actually wrote, so a typo can be *reported* (`SDD026`) instead of
+    silently becoming the default.
+    """
+
+    policy: str
+    declared: str
+    source: str
+    valid: bool
+
+    @property
+    def always(self) -> bool:
+        return self.policy == "always"
+
+
+def read_isolation_policy(root: Path) -> IsolationPolicy:
+    """The isolation policy declared in `sdd/project.md`, or the default.
+
+    Deliberately git-free: the policy is committed project state, so it answers
+    the same outside a repository as inside one.
+    """
+    try:
+        text = (root / POLICY_FILE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return IsolationPolicy(DEFAULT_ISOLATION_POLICY, "", "", True)
+    # A declaration inside an HTML comment is documentation, not a decision: the
+    # scaffold template explains both values in one, and reading that as active
+    # would turn a project's placeholder into a policy nobody chose.
+    match = POLICY_RE.search(HTML_COMMENT_RE.sub("", text))
+    if not match:
+        return IsolationPolicy(DEFAULT_ISOLATION_POLICY, "", "", True)
+    declared = match.group(1)
+    source = str(POLICY_FILE)
+    if declared.lower() in ISOLATION_POLICIES:
+        return IsolationPolicy(declared.lower(), declared, source, True)
+    return IsolationPolicy(DEFAULT_ISOLATION_POLICY, declared, source, False)
+
+
+def default_branch(root: Path, runner: Runner = subprocess.run) -> str:
+    """The branch this repository's work lands in.
+
+    `origin/HEAD` is the published answer. Without a remote the current branch is
+    the next best fact — unless it is an `sdd/` branch, which is a feature, not a
+    base. `main` is the last resort, and only ever a guess.
+    """
+    head = try_git(
+        ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, runner
+    )
+    if head:
+        return head.removeprefix("origin/")
+    branch = current_branch(root, runner)
+    if branch and not branch.startswith("sdd/"):
+        return branch
+    return "main"
+
+
+def base_facts(root: Path, runner: Runner = subprocess.run) -> dict:
+    """What a new worktree would actually branch from, and what that would lose.
+
+    `EnterWorktree` defaults to `baseRef: fresh`, which branches from
+    `origin/<default>`. Under `isolation: always` that default is on the hot path
+    of every feature, so the two ways it goes wrong are reported up front rather
+    than discovered afterwards: a base that was never published (nothing to
+    branch from) and a local base that is ahead of it (commits silently left
+    behind, and a `BASE` in `STATE.md` the worktree did not come from).
+    """
+    branch = default_branch(root, runner)
+    remote_ref = f"origin/{branch}"
+    published = (
+        try_git(
+            ["rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"],
+            root,
+            runner,
+        )
+        is not None
+    )
+    local = (
+        try_git(
+            ["rev-parse", "--verify", "--quiet", f"{branch}^{{commit}}"], root, runner
+        )
+        is not None
+    )
+    unpushed = 0
+    if published and local:
+        counted = try_git(
+            ["rev-list", "--count", f"{remote_ref}..{branch}"], root, runner
+        )
+        unpushed = int(counted) if counted and counted.isdigit() else 0
+    return {
+        "default_branch": branch,
+        "has_remote": bool(try_git(["remote"], root, runner)),
+        "published": published,
+        # What to branch from, in the order sdd_lifecycle.resolve_base_ref and
+        # worktree_status already use: the published base first, the local one
+        # second, and "" when the repository has neither (an empty repo).
+        "base_ref": remote_ref if published else (branch if local else ""),
+        "unpushed": unpushed,
+    }
+
+
 def check(
     root: Path, feature: str | None, runner: Runner = subprocess.run
 ) -> dict:
-    """Evidence that another session is working this clone.
+    """Evidence that another session is working this clone, plus what to do.
 
-    Returns the evidence, not a decision: the phase skill is what proposes a
-    worktree, and `/sdd:auto` is what applies one without asking.
+    The verdict (`conflict`) stays a description of the evidence — a policy that
+    made it report a conflict nobody has would make every later reading of it a
+    lie. `isolate` is the separate, actionable answer: it is true when there IS
+    evidence, or when the project declared `isolation: always`.
     """
     data = read_registry(registry_path(root, runner))
     # Pruned in memory only: `check` is called by read-only phases (/sdd:status,
@@ -265,9 +395,13 @@ def check(
             + " — switching branches here would move their files"
         )
 
+    policy = read_isolation_policy(root)
     return {
         "session_id": me,
         "worktree": str(root),
+        # Where a new worktree has to be created from. A session already standing
+        # in a linked worktree must not nest another one inside it.
+        "main_worktree": str(common_dir(root, runner).parent.resolve()),
         "in_linked_worktree": in_linked_worktree(root, runner),
         "branch": branch,
         "dirty": dirty,
@@ -279,6 +413,12 @@ def check(
         "active_features": active,
         "conflict": bool(reasons),
         "reasons": reasons,
+        "policy": policy.policy,
+        "policy_declared": policy.declared,
+        "policy_source": policy.source,
+        "policy_valid": policy.valid,
+        "isolate": bool(reasons) or policy.always,
+        "base": base_facts(root, runner),
     }
 
 
@@ -485,10 +625,7 @@ def base_branch_for(root: Path, feature: str, runner: Runner = subprocess.run) -
                             recorded = line.split(":", 1)[1].strip()
                             if recorded:
                                 return recorded
-    head = try_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, runner)
-    if head:
-        return head.removeprefix("origin/")
-    return "main"
+    return default_branch(root, runner)
 
 
 @dataclass(frozen=True)
@@ -710,6 +847,30 @@ def orphan_bindings(root: Path, runner: Runner = subprocess.run) -> list[dict]:
     return orphans
 
 
+def render_policy(report: dict) -> str:
+    if not report["policy_valid"]:
+        return (
+            f"policy: {report['policy']} (ignored an unrecognised "
+            f"'{report['policy_declared']}' in {report['policy_source']} — "
+            "SDD026; expected 'always' or 'on-conflict')"
+        )
+    if report["policy_source"]:
+        return f"policy: {report['policy']} (declared in {report['policy_source']})"
+    return f"policy: {report['policy']} (default — no isolation declared)"
+
+
+def render_base(base: dict) -> str:
+    line = f"base: {base['default_branch']}"
+    if not base["base_ref"]:
+        return line + " — nothing to branch from yet (no commits on it)"
+    line += f" → a new worktree branches from {base['base_ref']}"
+    if not base["published"]:
+        line += " (not published: EnterWorktree's 'fresh' default cannot resolve it)"
+    if base["unpushed"]:
+        line += f" · {base['unpushed']} local commit(s) NOT in origin"
+    return line
+
+
 def render_check(report: dict) -> str:
     lines = [
         f"session: {report['session_id'] or '(unidentified)'}",
@@ -717,16 +878,35 @@ def render_check(report: dict) -> str:
         + (" (linked)" if report["in_linked_worktree"] else " (main)"),
         f"branch: {report['branch'] or '(detached)'}"
         + (" · dirty" if report["dirty"] else " · clean"),
+        render_policy(report),
+        render_base(report["base"]),
     ]
     if report["feature"]:
         bound = report["bound_worktree"] or "(unbound)"
         lines.append(f"feature {report['feature']} → {bound}")
     lines.append("")
     if report["conflict"]:
-        lines.append("CONFLICT — isolate this feature in its own worktree:")
+        lines.append("CONFLICT — this clone is not free:")
         lines.extend(f"  - {reason}" for reason in report["reasons"])
     else:
         lines.append("CLEAR — no other session is working this clone.")
+    # The verdict describes the evidence; this line is the decision. They are
+    # printed apart because CLEAR + isolate is a real, and now common, combination.
+    if report["isolate"]:
+        because = (
+            f"{report['policy_source']} declares isolation: always"
+            if not report["conflict"]
+            else "the evidence above"
+        )
+        lines.append(
+            f"ISOLATE — give this feature its own worktree before creating its "
+            f"branch ({because}). Protocol: references/isolation.md."
+        )
+    else:
+        lines.append(
+            "WORK HERE — no conflicting evidence, and this project does not "
+            "declare isolation: always."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -745,6 +925,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("resolve", "release"):
         command = subparsers.add_parser(name)
         command.add_argument("feature")
+    subparsers.add_parser(
+        "policy", help="the project's isolation policy (always | on-conflict)"
+    )
     subparsers.add_parser("list", help="live sessions and worktree bindings")
     subparsers.add_parser("prune", help="drop sessions whose process is gone")
     subparsers.add_parser("orphans", help="bindings with no worktree, or already archived")
@@ -773,6 +956,24 @@ def main(argv: list[str] | None = None) -> int:
             report = check(root, args.feature)
             print(json.dumps(report, indent=2) if args.json else render_check(report), end="")
             return 1 if report["conflict"] else 0
+        if args.command == "policy":
+            # Git-free on purpose: the policy is committed project state, and
+            # /sdd:init reads it while the repository may still be a bare clone.
+            policy = read_isolation_policy(root)
+            if args.json:
+                print(json.dumps(vars(policy), indent=2))
+            else:
+                print(policy.policy)
+            if not policy.valid:
+                print(
+                    f"ERROR: {policy.source} declares isolation: "
+                    f"'{policy.declared}', which is not one of "
+                    f"{' | '.join(ISOLATION_POLICIES)}. Falling back to "
+                    f"{DEFAULT_ISOLATION_POLICY}.",
+                    file=sys.stderr,
+                )
+                return 2
+            return 0
         if args.command == "claim":
             print(claim(root, args.feature, args.worktree))
         elif args.command == "resolve":

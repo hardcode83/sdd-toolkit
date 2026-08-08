@@ -22,7 +22,22 @@
 
 ## Worktree bootstrap
 
-<!-- Dos cosas distintas, y la segunda se olvida siempre (regla compartida 10).
+isolation: on-conflict
+
+<!-- LÍNEA DE ARRIBA — cuándo se aísla una feature en su propio worktree:
+
+       on-conflict  (defecto) worktree solo cuando el check encuentra evidencia:
+                    otra sesión viva, HEAD en la rama de otra feature, o changes
+                    en curso de otras features en este clon.
+       always       cada feature en su worktree, la primera incluida. El clon
+                    principal se queda en la rama por defecto y limpio, así que
+                    todas las sesiones arrancan del mismo sitio. Lo pagas en
+                    bootstrap: cada worktree arranca con BD vacía, reinstala
+                    dependencias y ocupa su propio disco.
+
+     Cualquier otro valor es un error (SDD026): degradaría al defecto en silencio.
+
+     Y debajo, dos cosas distintas, la segunda se olvida siempre (regla 10).
 
      (1) QUÉ FALTA — lo que git no se lleva y hay que traer:
            - copiar `.env` desde el worktree principal

@@ -73,7 +73,11 @@
     corrupting the very evidence rule 8 depends on. So:
     - Before creating or switching to a feature branch, ask
       `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py --root . check --feature <f>`.
-      On `CONFLICT`, isolate the feature in its own git worktree, following
+      Its verdict describes the clone (`CLEAR`/`CONFLICT`); its **last line** is
+      the instruction (`ISOLATE`/`WORK HERE`), because the project decides what a
+      `CLEAR` clone means: `isolation: always` in `sdd/project.md` gives every
+      feature its own worktree, and the default `on-conflict` isolates only on
+      evidence. Obey the last line and follow
       `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` — it says when to offer it
       and when to just do it.
     - A feature's worktree is recorded once (`claim`) and every later phase finds

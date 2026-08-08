@@ -2,23 +2,35 @@
 
 Shared rule 10 states the invariant: one feature, one branch, one working
 directory. This is how to honour it. Background and the measured evidence:
-[ADR 0001](../docs/adr/0001-roadmap-structure-and-concurrency.md), D1-D2.
+[ADR 0001](../docs/adr/0001-roadmap-structure-and-concurrency.md) D1-D2, revised
+by [ADR 0002](../docs/adr/0002-isolation-policy.md).
 
 ## When to isolate
 
-Ask, then act on the answer — never on a guess:
+Two different questions, asked with one command and answered separately:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . check --feature <feature>
 ```
 
-Exit `0` prints `CLEAR`, exit `1` prints `CONFLICT` with one line per piece of
-evidence. It is deliberately read-only, so any phase may call it.
+- The **verdict** describes the clone. Exit `0` prints `CLEAR`, exit `1` prints
+  `CONFLICT` with one line per piece of evidence. It is deliberately read-only,
+  so any phase may call it, and the policy never moves it: a check that reported
+  a conflict nobody has would make every later reading of it a lie.
+- The **action** is the last line — `ISOLATE` or `WORK HERE` — and that is what
+  the phase obeys. It combines the verdict with the project's isolation policy.
 
-| Verdict | Interactive phases | `/sdd:auto` |
+| Policy in `sdd/project.md` | On `CLEAR` | On `CONFLICT` |
 |---|---|---|
-| `CLEAR` | Continue in the current directory. Still `claim` the feature. | Same. |
-| `CONFLICT` | **Offer** the worktree (AskUserQuestion, recommend yes) and say which evidence triggered it. If the user declines, say plainly what can go wrong and continue where you are — it's their call. | **Apply** it without asking: auto never asks (its gate-conversion rule). |
+| `on-conflict` (the default; a project that declares nothing) | `WORK HERE` — continue in the current directory. Still `claim` the feature. | `ISOLATE` |
+| `always` | `ISOLATE` — every feature gets its own worktree, the first one included. | `ISOLATE` |
+
+`ISOLATE` is one instruction with two temperaments, depending on what produced it:
+
+| | Interactive phases | `/sdd:auto` |
+|---|---|---|
+| From **evidence** (`CONFLICT`) | **Offer** it (AskUserQuestion, recommend yes), naming the evidence the check reported. If the user declines, say plainly what can go wrong and continue where you are — it's their call. | **Apply** it without asking: auto never asks (its gate-conversion rule). |
+| From **policy** (`CLEAR` + `always`) | **Apply** it and say so. The project already made this decision; re-asking once per feature is exactly the question the policy exists to remove. State the bootstrap cost at creation (step 3), don't re-open the choice. | **Apply** it. Same path. |
 
 Conflict evidence, in the order it matters:
 
@@ -30,24 +42,68 @@ Conflict evidence, in the order it matters:
 3. **This clone holds in-flight changes for other features** (`sdd/changes/<other>/`
    with no archive). Evidence that outlives the session that produced it.
 
+### Why `CLEAR` stopped meaning "work here"
+
+Evidence #2 and #3 are not accidents of the environment: **the `CLEAR` path
+manufactures them.** A clone with nothing in flight is always `CLEAR`, so the
+first feature stayed where it was, moved HEAD to `sdd/<first>` and left the tree
+dirty — which is precisely what the second feature is then told about. The rule
+detected a state the flow itself had created one feature earlier, and the main
+clone ended up pinned to somebody else's branch with uncommitted files: every new
+shell there starts on the wrong branch, and anything expecting the clone to sit on
+the default branch breaks until that session finishes.
+
+`isolation: always` removes the first-feature exception. Sessions become uniform —
+"open N sessions, each starting from the default branch" becomes expressible —
+and the main clone stays a pristine base. The cost is real and lands on every
+feature (step 3), which is why it is the project's decision and not the default.
+
+### Declaring the policy
+
+One line in `sdd/project.md`, in its **Worktree bootstrap** section:
+
+```markdown
+isolation: always
+```
+
+`always` or `on-conflict`; nothing declared means `on-conflict`, so existing
+projects are untouched. `/sdd:init` offers it, `/sdd:doctor` reports it, and a
+value that is neither is an error (`SDD026`) rather than a silent fallback. To
+read it without the rest of the check:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . policy
+```
+
 ## Creating the worktree
 
-1. **Check the base first.** `EnterWorktree`'s default `worktree.baseRef` is
-   `fresh`, which branches from `origin/<default-branch>` — so local commits that
-   were never pushed are silently left behind. Compare before creating:
+**Before anything else is written.** Isolation comes before the branch exists and
+before `sdd/changes/<feature>/` does, so the proposal is written *inside* the
+worktree, on the feature branch — never in the main clone to be moved later. In
+`/sdd:new` that means the order is: remote claim check → `check` → isolate →
+`claim` → then the proposal.
 
-   ```bash
-   git rev-list --count origin/<base>..<base>
-   ```
+1. **Read the base from the check.** Its `base:` line already answers what
+   `EnterWorktree` would branch from and what that would cost, because its
+   default `worktree.baseRef` is `fresh` — a branch from
+   `origin/<default-branch>`, so local commits that were never pushed are
+   silently left behind. Under `always` this is on the hot path of *every*
+   feature, not a rare one.
 
-   Non-zero means the local base is ahead. Say so and let the user choose:
-   push the base first, or accept branching from the remote. Never record a BASE
-   in `STATE.md` that the worktree did not actually branch from.
+   - `N local commit(s) NOT in origin` → the local base is ahead. Say so and let
+     the user choose: push the base first, or accept branching from the remote.
+   - `not published` → `fresh` has nothing to resolve; see the degenerate cases
+     below.
+
+   Never record a BASE in `STATE.md` that the worktree did not actually branch
+   from. (The equivalent by hand is `git rev-list --count origin/<base>..<base>`.)
 
 2. **Create and enter it** with the `EnterWorktree` tool, named after the feature
-   (`sdd/<feature>`). It switches the session's working directory, which is the
-   whole point — prefixing paths by hand leaves the harness pinned to the old
-   directory. The worktree lands under `.claude/worktrees/`, which must be
+   (`sdd/<feature>`) — unless one of the rows in *Repositories where
+   `EnterWorktree`'s defaults do not apply* (below) matches, and then it is
+   `git worktree add` followed by `EnterWorktree` with `path`. Either way the tool
+   switches the session's working directory, which is the whole point —
+   prefixing paths by hand leaves the harness pinned to the old directory. The worktree lands under `.claude/worktrees/`, which must be
    gitignored (`/sdd:init` adds it; `SDD024` reports it missing).
    Do not assume the directory name: the tool flattens the `/`, so the name
    `sdd/<feature>` becomes `.claude/worktrees/sdd+<feature>`. That is precisely
@@ -62,6 +118,14 @@ Conflict evidence, in the order it matters:
    missing local file, that is the finding: report it, offer to record the
    bootstrap steps in `project.md`, and do not paper over it by guessing which
    files to copy.
+
+   **Say the cost once, here, before bringing anything up.** A worktree starts
+   with an **empty database**, reinstalls its dependencies, and costs its own
+   disk (the "two worktrees" section below explains why). Under `isolation:
+   always` every feature pays it, including the first — the one that used to dodge
+   it entirely by working in the main clone. State it at creation, in one line,
+   naming what `project.md` declares; later phases re-enter a worktree that is
+   already bootstrapped and must not repeat it.
 
    **And check what the project cannot have twice.** Bootstrap has a second
    dimension that "copy these files" does not cover: *exclusive resources*. A
@@ -82,6 +146,19 @@ Conflict evidence, in the order it matters:
    Run it from inside the worktree, so the recorded path is the worktree's. It
    refuses if another **live** session already holds the feature — that refusal
    is the answer, not an obstacle to work around.
+
+### Repositories where `EnterWorktree`'s defaults do not apply
+
+Under `on-conflict` these were rare. Under `always` every feature meets them, so
+each one has a decided behaviour rather than a discovered one. `check` reports
+the facts that pick the row (`base:`, `worktree: … (linked)`, `main_worktree`):
+
+| Situation | What the check shows | What to do |
+|---|---|---|
+| **No remote** | `base: main → … (not published: …)` | `fresh` has no `origin/<default>` to branch from. Create it explicitly and enter it by path: `git worktree add .claude/worktrees/sdd+<feature> -b sdd/<feature> <default>`, then `EnterWorktree` with `path`. The tool documents entering a worktree made this way; it is not a workaround. |
+| **Detached HEAD** | `branch: (detached)` | The commit you are standing on is not a base. `check` falls back to `origin/HEAD`, then to the current branch, then to `main` — the last one is a guess. Confirm the base branch with the user before creating anything; in `/sdd:auto`, BLOCK: its BASE precondition needs a branch, and inventing one records false merge evidence. |
+| **You are already in a linked worktree** | `worktree: … (linked)` | Do not nest. Create the new one under the **main** clone's `.claude/worktrees/` (`main_worktree` in the check's JSON) with `git worktree add`, then `EnterWorktree` with `path`. Nesting works in git and then makes the parent unretirable while the child lives inside it. |
+| **Empty repository** (no commits) | `base: … — nothing to branch from yet` | There is no base. Say so and stop: this is a repository that has not started, not a case to guess a branch for. |
 
 ## Re-entering in a later phase
 
@@ -250,6 +327,12 @@ named volumes mean each worktree starts with an **empty database** and reinstall
 dependencies (slow first run, no seed data), and N stacks cost N sets of volumes
 on disk.
 
+Under `isolation: always` this question arrives on the first feature instead of
+the second, so a project that has an exclusive resource should either declare the
+operational rule before turning the policy on, or leave the policy at
+`on-conflict` until it can. The policy does not create the constraint; it stops
+postponing it.
+
 Whatever the project decides goes in its **Worktree bootstrap** section — the
 decision is the project's (shared rule 9), and a change this shape usually
 deserves its own roadmap entry with a design phase: it touches the compose file,
@@ -265,6 +348,13 @@ production. What the toolkit owns is the questions, not the answer.
   plain shell) no session is registered, and detection degrades to the on-disk
   evidence — branch, dirtiness, change directories. It never degrades to a
   *wrong* claim.
-- The Codex adapter has no `EnterWorktree`. There, isolation is manual
-  (`git worktree add` plus running the phase from that directory); the scripts
+- The Codex adapter has no `EnterWorktree`, so nothing can switch the session's
+  working directory. There, isolation is manual — and under `isolation: always`
+  it **degrades to a handoff, never to a no-op**: create the worktree
+  (`git worktree add .claude/worktrees/sdd+<feature> -b sdd/<feature> <base>`),
+  bind it (`sdd_session.py --root . claim <feature> --worktree <path>`), then
+  **stop** and tell the user to run the phase from that directory. Continuing in
+  the main clone would silently ignore a policy the project declared, which is
+  the one outcome that is not allowed. Under `/sdd:auto` on Codex, that is a
+  BLOCKED entry with the resume command, not a skipped step. The scripts
   themselves are plain Python 3 and work unchanged.

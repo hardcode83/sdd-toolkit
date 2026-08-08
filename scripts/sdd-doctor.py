@@ -12,6 +12,11 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import sdd_roadmap
+from sdd_session import (
+    DEFAULT_ISOLATION_POLICY,
+    ISOLATION_POLICIES,
+    read_isolation_policy,
+)
 from sdd_lifecycle import (
     PR_FIELDS,
     PR_URL_RE,
@@ -235,37 +240,74 @@ def path_is_ignored(root: Path, target: Path) -> bool:
 
 
 def worktree_checks(root: Path) -> list[Diagnostic]:
-    """The one worktree invariant that is a property of the committed project.
+    """The worktree invariants that are properties of the committed project.
 
     Everything else about worktrees — stale bindings, a worktree still on disk for
     an archived change — is *machine* state living in the shared git directory,
     so it is reported by `sdd_session.py orphans` (which /sdd:doctor also runs)
     rather than here: this validator's fixtures are committed project trees, and
-    machine state cannot be expressed as one.
+    machine state cannot be expressed as one. The isolation policy is not machine
+    state: the project declares it in `sdd/project.md` and commits it.
     """
-    worktrees = root / ".claude" / "worktrees"
-    if not worktrees.is_dir():
-        # Nothing to warn about until the project actually uses one.
-        return []
-    ignore = root / ".gitignore"
-    if path_is_ignored(root, worktrees):
-        return []
-    return [
-        Diagnostic(
-            "SDD024",
-            "WARNING",
-            relative(ignore, root),
-            0,
-            (
-                ".claude/worktrees/ holds git worktrees but git ignores it by no "
-                "rule, so they can be committed into the repository."
-            ),
-            (
-                "Add '.claude/worktrees/' to .gitignore (or .git/info/exclude to "
-                "keep it machine-local) before committing anything."
-            ),
+    diagnostics: list[Diagnostic] = []
+    policy = read_isolation_policy(root)
+    project = root / "sdd" / "project.md"
+    if not policy.valid:
+        diagnostics.append(
+            Diagnostic(
+                "SDD026",
+                "ERROR",
+                relative(project, root),
+                policy_line(project, policy.declared),
+                (
+                    f"The isolation policy is declared as '{policy.declared}', "
+                    f"which is not one of {' | '.join(ISOLATION_POLICIES)}, so it "
+                    f"silently falls back to '{DEFAULT_ISOLATION_POLICY}' and "
+                    "every feature keeps working in the main clone."
+                ),
+                (
+                    "Write 'isolation: always' (every feature gets its own "
+                    "worktree) or 'isolation: on-conflict' (the default: only "
+                    "when the check finds evidence)."
+                ),
+            )
         )
-    ]
+
+    worktrees = root / ".claude" / "worktrees"
+    ignore = root / ".gitignore"
+    exists = worktrees.is_dir()
+    # Under `always` the next /sdd:new creates one, so the warning has to arrive
+    # BEFORE the directory does: afterwards the nested checkout is already there.
+    if (exists or policy.always) and not path_is_ignored(root, worktrees):
+        diagnostics.append(
+            Diagnostic(
+                "SDD024",
+                "WARNING",
+                relative(ignore, root),
+                0,
+                (
+                    ".claude/worktrees/ holds git worktrees but git ignores it by "
+                    "no rule, so they can be committed into the repository."
+                    if exists
+                    else "sdd/project.md declares 'isolation: always', so the next "
+                    "/sdd:new creates .claude/worktrees/ — and git ignores it by "
+                    "no rule, so the worktree can be committed into the repository."
+                ),
+                (
+                    "Add '.claude/worktrees/' to .gitignore (or .git/info/exclude to "
+                    "keep it machine-local) before committing anything."
+                ),
+            )
+        )
+    return diagnostics
+
+
+def policy_line(project: Path, declared: str) -> int:
+    """Where the bad declaration is, so the finding points at the line to fix."""
+    for number, line in enumerate(read_lines(project), start=1):
+        if declared and declared in line and "isolation" in line.lower():
+            return number
+    return 0
 
 
 ROADMAP_INDEX_BUDGET = 32 * 1024

@@ -200,6 +200,174 @@ class CheckTests(SessionTestCase):
         self.assertTrue(sdd_session.check(linked, "alpha")["in_linked_worktree"])
 
 
+class IsolationPolicyTests(SessionTestCase):
+    """`sdd/project.md` decides what a CLEAR verdict means.
+
+    Evidence alone answers the wrong question: an empty clone is always CLEAR,
+    so the first feature stayed in the main clone and manufactured the very
+    evidence the second one is then told about (ADR 0002).
+    """
+
+    def project(self, body: str) -> None:
+        (self.root / "sdd" / "project.md").write_text(body, encoding="utf-8")
+
+    def test_a_project_that_declares_nothing_keeps_todays_behaviour(self) -> None:
+        policy = sdd_session.read_isolation_policy(self.root)
+        self.assertEqual("on-conflict", policy.policy)
+        self.assertEqual("", policy.source)
+        self.assertTrue(policy.valid)
+
+    def test_a_missing_project_file_is_not_an_error(self) -> None:
+        """The policy is read on the hot path of every phase, before /sdd:init."""
+        self.assertEqual(
+            "on-conflict", sdd_session.read_isolation_policy(self.root).policy
+        )
+
+    def test_every_markdown_shape_of_the_same_line_is_read(self) -> None:
+        for line in (
+            "isolation: always",
+            "- isolation: always",
+            "* isolation: always",
+            "**isolation**: always",
+            "isolation: `always`",
+            "Isolation:  ALWAYS",
+        ):
+            with self.subTest(line=line):
+                self.project(f"# Project\n\n## Worktree bootstrap\n\n{line}\n")
+                policy = sdd_session.read_isolation_policy(self.root)
+                self.assertEqual("always", policy.policy)
+                self.assertEqual("sdd/project.md", policy.source)
+
+    def test_a_declaration_inside_an_html_comment_is_documentation(self) -> None:
+        """The scaffold template explains both values in a comment; reading that
+        as active would enable a policy nobody chose."""
+        self.project(
+            "# Project\n\n<!-- isolation: always — o `on-conflict` -->\n"
+        )
+        policy = sdd_session.read_isolation_policy(self.root)
+        self.assertEqual("on-conflict", policy.policy)
+        self.assertEqual("", policy.source)
+
+    def test_an_unrecognised_value_degrades_loudly_not_silently(self) -> None:
+        self.project("# Project\n\nisolation: alway\n")
+        policy = sdd_session.read_isolation_policy(self.root)
+        self.assertEqual("on-conflict", policy.policy)
+        self.assertFalse(policy.valid)
+        self.assertEqual("alway", policy.declared)
+
+    def test_always_isolates_a_clone_with_no_evidence_at_all(self) -> None:
+        self.project("# Project\n\nisolation: always\n")
+        report = sdd_session.check(self.root, "alpha")
+        self.assertFalse(report["conflict"], "the check must not invent evidence")
+        self.assertTrue(report["isolate"])
+        self.assertEqual([], report["reasons"])
+
+    def test_on_conflict_still_works_in_place_when_clear(self) -> None:
+        self.project("# Project\n\nisolation: on-conflict\n")
+        report = sdd_session.check(self.root, "alpha")
+        self.assertFalse(report["conflict"])
+        self.assertFalse(report["isolate"])
+
+    def test_a_conflict_isolates_whatever_the_policy_says(self) -> None:
+        self.project("# Project\n\nisolation: on-conflict\n")
+        self.change("beta")
+        report = sdd_session.check(self.root, "alpha")
+        self.assertTrue(report["conflict"])
+        self.assertTrue(report["isolate"])
+
+    def test_the_verdict_keeps_its_exit_code_under_always(self) -> None:
+        """A policy that turned CLEAR into exit 1 would make every later reading
+        of the verdict a lie — the policy decides the action, not the evidence."""
+        self.project("# Project\n\nisolation: always\n")
+        self.assertEqual(
+            0,
+            sdd_session.main(["--root", str(self.root), "check", "--feature", "alpha"]),
+        )
+
+    def test_the_rendered_action_line_says_which_one_applies(self) -> None:
+        self.project("# Project\n\nisolation: always\n")
+        rendered = sdd_session.render_check(sdd_session.check(self.root, "alpha"))
+        self.assertIn("CLEAR", rendered)
+        self.assertIn("ISOLATE", rendered)
+        self.assertIn("isolation: always", rendered)
+
+        self.project("# Project\n")
+        rendered = sdd_session.render_check(sdd_session.check(self.root, "alpha"))
+        self.assertIn("WORK HERE", rendered)
+        self.assertNotIn("ISOLATE", rendered)
+
+    def test_the_policy_command_reports_and_flags_a_typo(self) -> None:
+        self.assertEqual(0, sdd_session.main(["--root", str(self.root), "policy"]))
+        self.project("# Project\n\nisolation: siempre\n")
+        self.assertEqual(2, sdd_session.main(["--root", str(self.root), "policy"]))
+
+    def test_check_reports_where_a_worktree_would_have_to_be_created(self) -> None:
+        """A session already inside a linked worktree must not nest another."""
+        linked = self.root / ".claude" / "worktrees" / "sdd+alpha"
+        self.git("worktree", "add", "-q", "-b", "sdd/alpha", str(linked))
+        report = sdd_session.check(linked, "alpha")
+        self.assertTrue(report["in_linked_worktree"])
+        self.assertEqual(str(self.root), report["main_worktree"])
+
+
+class BaseFactsTests(SessionTestCase):
+    """Under `always` the base-ref check runs for every feature, not rarely."""
+
+    def test_without_a_remote_the_fresh_default_has_nothing_to_resolve(self) -> None:
+        base = sdd_session.base_facts(self.root)
+        self.assertEqual("main", base["default_branch"])
+        self.assertFalse(base["has_remote"])
+        self.assertFalse(base["published"])
+        self.assertEqual("main", base["base_ref"])
+        self.assertEqual(0, base["unpushed"])
+
+    def publish(self) -> Path:
+        remote = Path(self.directory.name) / "origin.git"
+        subprocess.run(
+            ["git", "init", "--bare", "-q", str(remote)], check=True, capture_output=True
+        )
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "-u", "origin", "main")
+        return remote
+
+    def test_a_published_base_is_what_a_new_worktree_branches_from(self) -> None:
+        self.publish()
+        base = sdd_session.base_facts(self.root)
+        self.assertTrue(base["has_remote"])
+        self.assertTrue(base["published"])
+        self.assertEqual("origin/main", base["base_ref"])
+        self.assertEqual(0, base["unpushed"])
+
+    def test_a_local_base_ahead_of_origin_is_counted(self) -> None:
+        """`fresh` would branch from origin/main and leave these behind — and a
+        BASE recorded from a commit the worktree never saw is false evidence."""
+        self.publish()
+        (self.root / "local.txt").write_text("sin pushear\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-m", "solo local")
+        self.assertEqual(1, sdd_session.base_facts(self.root)["unpushed"])
+
+    def test_a_detached_head_never_reports_itself_as_the_base(self) -> None:
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("checkout", "-q", "--detach", head)
+        self.assertEqual("", sdd_session.current_branch(self.root))
+        self.assertEqual("main", sdd_session.default_branch(self.root))
+
+    def test_a_feature_branch_is_never_mistaken_for_the_base(self) -> None:
+        self.git("checkout", "-q", "-b", "sdd/alpha")
+        self.assertEqual("main", sdd_session.default_branch(self.root))
+
+    def test_the_rendered_line_names_both_failure_modes(self) -> None:
+        rendered = sdd_session.render_base(sdd_session.base_facts(self.root))
+        self.assertIn("not published", rendered)
+        self.publish()
+        (self.root / "local.txt").write_text("sin pushear\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-m", "solo local")
+        rendered = sdd_session.render_base(sdd_session.base_facts(self.root))
+        self.assertIn("1 local commit(s) NOT in origin", rendered)
+
+
 class ClaimTests(SessionTestCase):
     def test_claim_registers_the_session_and_binds_the_feature(self) -> None:
         sdd_session.claim(self.root, "alpha")
