@@ -390,7 +390,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
 | `SDD024` | warning | `.claude/worktrees/` no está en `.gitignore` y hay worktrees (o el proyecto declara `isolation: always`, y entonces el aviso llega **antes** de que el directorio exista, que es cuando sirve). |
-| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. |
+| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. Procedimiento y comprobaciones: [`references/roadmap-migration.md`](references/roadmap-migration.md). |
 | `SDD026` | error | `sdd/project.md` declara un `isolation:` que no es `always` ni `on-conflict`: degradaría al defecto en silencio y el proyecto creería estar aislando. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
@@ -843,7 +843,7 @@ skills/<fase>/      # init·new·design·tasks·run·archive·status·doctor·re
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
-references/         # steering · isolation · mcp-catalog · lsp-catalog · plugin-catalog · metrics
+references/         # steering · isolation · roadmap-migration · mcp-catalog · lsp-catalog · plugin-catalog · metrics
 scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · sdd_session.py · validate_toolkit.py · usage-{dir,mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main
