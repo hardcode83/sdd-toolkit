@@ -1,5 +1,14 @@
 # Shrinking a roadmap that stopped being an index
 
+**How this gets started.** There is no flag: `/sdd:init` takes only an optional
+planning-document path. On an already-initialized project it asks which parts to
+re-run, and *shrink or restructure the roadmap* is one of the options — offered
+when the evidence is there (`SDD025`, no `## Stage` headings, or no
+`sdd/roadmap/` while entries carry their rationale inline). `/sdd:doctor` is the
+other way in: it reports `SDD025` and points here. Asking for it in plain words
+("the roadmap is too big, migrate it") reaches the same procedure — the entry
+point is not what makes this safe, the checks in §4 are.
+
 `sdd/roadmap.md` is read by **every** phase, so its size is a cost paid on every
 run rather than once. When entries keep their whole rationale inside the file it
 stops being an index, and `/sdd:doctor` says so (`SDD025`, budget 32 KB). The

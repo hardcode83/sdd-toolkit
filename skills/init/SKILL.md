@@ -20,7 +20,11 @@ Bootstrap SDD in the current project. Optional argument: path to an initial plan
 ### 1. Check existing state
 
 - **Legacy layout**: if the project has pre-plugin SDD artifacts (`sdd/workflow/`, `.claude/skills/sdd-*`, `.opencode/command/sdd-*.md`), offer to delete them — the plugin replaces them and the data layer (`sdd/specs|changes|steering`, `project.md`, `roadmap.md`) is untouched. Also update any `<!-- sdd:start -->` block in CLAUDE.md to the current pointer text (step "Apply choices").
-- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run: regenerate steering, re-run the extras step, add a spec baseline, ingest a planning document, or revisit worktree isolation (step 3b). Offer that last one whenever `sdd_session.py --root . policy` reports the default and nothing is declared — projects initialized before the policy existed have no line at all, and the question was never put to them. Skip everything else.
+- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run, then skip everything else. The menu is: regenerate steering, re-run the extras step, add a spec baseline, ingest a planning document, **shrink or restructure the roadmap** (step 3's migration), or revisit worktree isolation (step 3b). The last two are the ones an initialized project silently never gets, so offer them on evidence rather than always:
+  - **Roadmap**: whenever `sdd-doctor.py --root .` reports `SDD025` (the index outgrew its budget), or `sdd/roadmap.md` has entries but no `## Stage` heading, or `sdd/roadmap/` does not exist while entries carry their rationale inline. Note which of the three you saw — they are different jobs (size, grouping, per-entry notes) and the user may want only one.
+  - **Isolation**: whenever `sdd_session.py --root . policy` reports the default and nothing is declared — projects initialized before the policy existed have no line at all, and the question was never put to them.
+
+  Both of these live in later steps that a re-run skips by design; without this they are unreachable on exactly the projects that need them.
 
 ### 2. Analyze inputs
 
