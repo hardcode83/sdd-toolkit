@@ -117,6 +117,8 @@ Sin plan, el init genera el steering **desde el código real** (stack, comandos 
 
 **Atacar dos features a la vez** → abre dos sesiones y ya está: la segunda detecta a la primera y te ofrece un worktree aislado (`.claude/worktrees/`), con su rama y su directorio. Di sí. Sin eso comparten HEAD, y la segunda se lleva los ficheros sin commitear de la primera a su rama — que además hace que `STATE.md` grabe una rama y un SHA que no describen el trabajo.
 
+Ojo con el reparto: la **primera** se queda en el clon principal y lo deja en su rama y sucio, así que cualquier shell que abras ahí arranca en la feature ajena. Si eso te molesta —o si sueles lanzar varias sesiones—, escribe `isolation: always` en la sección *Worktree bootstrap* de `sdd/project.md` y entonces **todas** las features van a su worktree, la primera incluida, dejando el clon principal limpio en la rama por defecto. Lo pagas en bootstrap por feature (lo de abajo), que es justo por lo que no viene puesto por defecto.
+
 Un aviso práctico: un worktree recién creado **no tiene** tu `.env` ni `node_modules` ni tu base de datos local, así que los tests fallarán ahí hasta que `sdd/project.md` declare su sección **Worktree bootstrap** (`/sdd:init` te la pregunta). Si te pasa, no es un bug del código: es esa sección que falta.
 
 **¿Dónde está el trabajo de la otra sesión?** → `/sdd:status` agrega todos los worktrees del repo y lista las sesiones vivas. Un change puede no estar en el directorio desde el que lanzaste el comando.

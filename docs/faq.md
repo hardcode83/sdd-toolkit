@@ -109,6 +109,31 @@ Y el daño no se queda en un conflicto: `mark-ready` graba `head_branch` e `impl
 
 Un worktree da rama *y* directorio propios compartiendo el object store, así que es barato. Encaja especialmente bien porque el estado de SDD ya estaba particionado por feature: `sdd/changes/<feature>/` no lo comparte nadie. El flujo ya estaba diseñado como si fuera paralelo — solo le faltaba el aislamiento físico.
 
+## Mi clon principal acaba siempre en la rama de otra feature y sucio — ¿eso es normal?
+
+Era el comportamiento, sí, y ya no tiene por qué serlo. `check` responde `CLEAR`
+cuando el clon está libre, así que la **primera** feature en vuelo se quedaba
+donde estaba: movía HEAD a `sdd/<primera>` y dejaba el árbol sucio. Solo se
+aislaba de la segunda en adelante. El detalle incómodo es que ese estado —HEAD en
+la rama de otra feature, changes en curso de otras features— es **exactamente la
+evidencia #2 y #3** que el check le reporta después a la siguiente: el camino
+feliz fabricaba la señal que el detector detecta.
+
+El arreglo es declararlo en la sección *Worktree bootstrap* de `sdd/project.md`:
+
+```markdown
+isolation: always
+```
+
+Entonces cada feature entra en su worktree, la primera incluida, y el clon
+principal se queda en la rama por defecto y limpio — todas las sesiones arrancan
+del mismo mundo. El defecto sigue siendo `on-conflict` (lo de siempre), porque
+`always` hace que **cada** feature pague el bootstrap del worktree que antes la
+primera esquivaba: BD vacía, reinstalar dependencias, su propio disco. Es una
+decisión del proyecto, no del toolkit: `/sdd:init` la pregunta y `/sdd:doctor`
+dice cuál está en vigor. Razonamiento completo en
+[ADR 0002](adr/0002-isolation-policy.md).
+
 ## ¿Por qué el registro de sesiones vive en `.git/` y no en `sdd/`?
 
 Porque es estado de **máquina**, no de proyecto, y las dos propiedades que necesita las da ese sitio y no otro: `$(git rev-parse --git-common-dir)` es **compartido por todos los worktrees** del repo (así que las sesiones se ven entre ellas) y está **dentro de `.git`** (así que nunca aparece en `git status` ni se puede committear por accidente).

@@ -20,7 +20,11 @@ Bootstrap SDD in the current project. Optional argument: path to an initial plan
 ### 1. Check existing state
 
 - **Legacy layout**: if the project has pre-plugin SDD artifacts (`sdd/workflow/`, `.claude/skills/sdd-*`, `.opencode/command/sdd-*.md`), offer to delete them — the plugin replaces them and the data layer (`sdd/specs|changes|steering`, `project.md`, `roadmap.md`) is untouched. Also update any `<!-- sdd:start -->` block in CLAUDE.md to the current pointer text (step "Apply choices").
-- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run: regenerate steering, re-run the extras step, add a spec baseline, or ingest a planning document. Skip everything else.
+- If `sdd/project.md` exists and is already filled in (no placeholder comments), ask the user which parts to re-run, then skip everything else. The menu is: regenerate steering, re-run the extras step, add a spec baseline, ingest a planning document, **shrink or restructure the roadmap** (step 3's migration), or revisit worktree isolation (step 3b). The last two are the ones an initialized project silently never gets, so offer them on evidence rather than always:
+  - **Roadmap**: whenever `sdd-doctor.py --root .` reports `SDD025` (the index outgrew its budget), or `sdd/roadmap.md` has entries but no `## Stage` heading, or `sdd/roadmap/` does not exist while entries carry their rationale inline. Note which of the three you saw — they are different jobs (size, grouping, per-entry notes) and the user may want only one.
+  - **Isolation**: whenever `sdd_session.py --root . policy` reports the default and nothing is declared — projects initialized before the policy existed have no line at all, and the question was never put to them.
+
+  Both of these live in later steps that a re-run skips by design; without this they are unreachable on exactly the projects that need them.
 
 ### 2. Analyze inputs
 
@@ -68,14 +72,24 @@ If a planning doc provided a feature list, write `sdd/roadmap.md` from `${CLAUDE
 
 Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . validate` must report no errors, and `… report` should show a frontier that matches the plan's intended starting point.
 
-**Migrating an existing flat roadmap** (re-init over a project that predates stages): offer it, never do it silently, and show the diff. Group the **pending** entries into stages, transcribe into metadata the relations their prose already states ("depende de X", "cierra el cuarto ítem de Y", "hereda de Z"), and move bodies longer than a couple of lines to `sdd/roadmap/<feature>.md`. **Archived entries are not touched** — they are the historical record, and shared rule 8 already forbids rewriting those. A flat roadmap keeps working unmigrated: with no declared relations every open entry is in the frontier, which is exactly the old behaviour.
+**Migrating an existing flat roadmap** (re-init over a project that predates stages): offer it, never do it silently, and show the diff. Group the **pending** entries into stages, transcribe into metadata the relations their prose already states ("depende de X", "cierra el cuarto ítem de Y", "hereda de Z"), and move the long analysis to `sdd/roadmap/<feature>.md`. A flat roadmap keeps working unmigrated: with no declared relations every open entry is in the frontier, which is exactly the old behaviour.
+
+**If the file is oversized** (`/sdd:doctor` reports `SDD025`), that half is a mechanical pass with its own procedure and its own proof: `${CLAUDE_PLUGIN_ROOT}/references/roadmap-migration.md`. Do it **separately** from the two judgement calls above — it is verifiable (no text lost, graph unchanged, doctor clean) in a way that inventing stages and dependencies is not, and mixing them makes the whole diff unreviewable. Note that it relocates the analysis of **closed** entries too: their line in the index is not the historical record — that lives in `sdd/changes/archive/<date>-<feature>/` and in the living spec — so moving the text verbatim keeps rule 8 intact while a rewrite would not.
 
 ### 3b. Worktree isolation (shared rule 10)
 
-Two things the project has to own, because the plugin cannot guess either (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
+Three things the project has to own, because the plugin cannot guess any of them (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
 
-1. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing.
-2. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
+1. **Choose when features get isolated.** Ask (AskUserQuestion) and write the answer as a one-line `isolation:` declaration in the **Worktree bootstrap** section of `sdd/project.md`. Two values, and the trade-off is real in both directions — present it, don't recommend blindly:
+
+   - `on-conflict` **(default; recommended for solo work on a heavy stack)** — a worktree only when the check finds evidence: another live session, HEAD on another feature's branch, other in-flight changes. Nothing changes for a project that declares nothing.
+   - `always` **(recommended when several sessions run at once, or when the main clone must stay usable)** — every feature gets its own worktree, the first one included. The main clone stays on the default branch with a clean tree, so every session starts from the same world. Without it the *first* feature occupies the clone and leaves it pinned to its branch, dirty — which is both a nuisance for any other shell and the exact evidence the next feature's check reports as a conflict.
+
+   **Say the price before they choose**, from what step 2 detected: every feature then pays the worktree bootstrap — an empty database, a dependency reinstall, its own disk — that the first feature used to dodge. And if this project has an **exclusive resource** (item 3), `always` hits it on the first feature instead of the second: either write the operational rule now or stay on `on-conflict` until it exists.
+
+   A project that skips the question gets `on-conflict`; that is the default, not a gap. A value that is neither is an error (`SDD026`), because it would silently fall back.
+2. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing — and under `isolation: always` it reports it *before* the directory exists, since the next `/sdd:new` creates one.
+3. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
 
    - **What is missing**: what a fresh worktree does not carry (`.env`, `.venv`, `node_modules`, a local database) and the exact command to get it. Without this the project's own verification fails there and the failure looks like a code problem.
    - **What cannot exist twice**: *exclusive resources*. A published port, a fixed container name, a daemon on a known socket, a database with a fixed name, a lockfile. **A project can need nothing copied and still be unable to run two dev stacks** — the symptom is `address already in use`, or a suite that passes alone and fails while a sibling worktree is up. This half gets forgotten precisely because it is not a missing file.

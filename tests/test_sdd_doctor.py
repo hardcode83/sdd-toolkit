@@ -139,6 +139,65 @@ class WorktreeIgnoreTests(unittest.TestCase):
             self.assertEqual([], self.diagnose(root))
 
 
+class IsolationPolicyTests(unittest.TestCase):
+    """SDD026, and the half of SDD024 that has to arrive before the directory.
+
+    The policy is committed project state — unlike the session registry — so the
+    doctor can and must validate it: a typo degrades to the old behaviour without
+    a word, which is the failure this change exists to remove (ADR 0002).
+    """
+
+    def project(self, root: Path, policy: str, gitignore: bool = True) -> None:
+        (root / "sdd").mkdir()
+        (root / "sdd" / "project.md").write_text(
+            f"# Project\n\n## Worktree bootstrap\n\n{policy}\n", encoding="utf-8"
+        )
+        (root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] alpha — pendiente\n", encoding="utf-8"
+        )
+        if gitignore:
+            (root / ".gitignore").write_text(".claude/worktrees/\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path, code: str) -> list[str]:
+        return [line for line in run_doctor(root).stdout.splitlines() if code in line]
+
+    def test_a_recognised_policy_is_not_reported(self) -> None:
+        for declared in ("isolation: always", "isolation: on-conflict"):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as d:
+                root = Path(d).resolve()
+                self.project(root, declared)
+                self.assertEqual([], self.diagnose(root, "SDD026"))
+
+    def test_a_typo_is_an_error_that_names_the_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "isolation: alway")
+            reported = self.diagnose(root, "SDD026")
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("ERROR", reported[0])
+            self.assertIn("sdd/project.md:5", reported[0])
+            self.assertEqual(1, run_doctor(root).returncode)
+
+    def test_always_warns_about_gitignore_before_the_directory_exists(self) -> None:
+        """Afterwards is too late: the nested checkout is already committable."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "isolation: always", gitignore=False)
+            self.assertFalse((root / ".claude" / "worktrees").exists())
+            reported = self.diagnose(root, "SDD024")
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("isolation: always", reported[0])
+
+    def test_on_conflict_keeps_waiting_for_a_real_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "isolation: on-conflict", gitignore=False)
+            self.assertEqual([], self.diagnose(root, "SDD024"))
+
+
 class RoadmapIndexBudgetTests(unittest.TestCase):
     """SDD025: the roadmap is an index, and every phase pays its size.
 

@@ -27,13 +27,28 @@ order wrong — show the views rather than describing them:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.py" --root . report
 ```
 
-Then check **machine state**, which the validator above deliberately does not
-cover (it lives in the shared git directory, not in the committed project):
+`SDD025` (the roadmap outgrew its index budget) is the one finding with a
+procedure rather than a one-line fix: point at
+`${CLAUDE_PLUGIN_ROOT}/references/roadmap-migration.md`, which measures where the
+bytes actually are before moving anything and states the three checks that prove
+the migration lost no text and did not move the graph. Do not start it from here
+— `/sdd:doctor` is read-only.
+
+Then report the project's **isolation policy** and check **machine state**, which
+the validator above deliberately does not cover (it lives in the shared git
+directory, not in the committed project):
 
 ```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . policy
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . orphans
 ```
+
+`policy` prints `always` (every feature gets its own worktree) or `on-conflict`
+(the default: only when the check finds evidence). State which one is in force and
+whether it was declared or defaulted — it decides what every `/sdd:new` does with
+a `CLEAR` clone, so a project that never chose is worth naming. It exits `2` on an
+unrecognised declaration, which the validator already reported as `SDD026`.
 
 `worktrees` lists every worktree **git** knows about (not just the registered
 ones) with `RETIRABLE` or `en uso` plus its blockers. Report the retirable ones:

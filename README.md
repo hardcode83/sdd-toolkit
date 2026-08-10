@@ -389,8 +389,9 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD021` | error | Una entrada cerrada declara una dependencia que sigue abierta: se entregó antes de aquello de lo que dijo depender. |
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
-| `SDD024` | warning | `.claude/worktrees/` contiene worktrees pero no está en `.gitignore`, así que pueden acabar commiteados. |
-| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. |
+| `SDD024` | warning | `.claude/worktrees/` no está en `.gitignore` y hay worktrees (o el proyecto declara `isolation: always`, y entonces el aviso llega **antes** de que el directorio exista, que es cuando sirve). |
+| `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. Procedimiento y comprobaciones: [`references/roadmap-migration.md`](references/roadmap-migration.md). |
+| `SDD026` | error | `sdd/project.md` declara un `isolation:` que no es `always` ni `on-conflict`: degradaría al defecto en silencio y el proyecto creería estar aislando. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -667,11 +668,33 @@ flujo lo detecta y lo arregla solo:
 python3 scripts/sdd_session.py --root . check --feature <feature>
 ```
 
-`CLEAR` → sigues donde estás. `CONFLICT` → `/sdd:new` te **ofrece** el worktree
-(recomendando sí) nombrando la evidencia; `/sdd:auto`, que no pregunta nunca, lo
-**aplica**. Tres evidencias, en orden de importancia: otra **sesión viva** sobre
+El **veredicto** describe el clon: `CLEAR` o `CONFLICT` con una línea por
+evidencia. Tres evidencias, en orden de importancia: otra **sesión viva** sobre
 este clon, HEAD en la rama de **otra feature** (peor si el árbol está sucio), o
-este clon con **changes en curso** de otras features.
+este clon con **changes en curso** de otras features. La **acción** es la última
+línea —`ISOLATE` o `WORK HERE`— y es lo que la fase obedece: en `CONFLICT`,
+`/sdd:new` te **ofrece** el worktree (recomendando sí) nombrando la evidencia, y
+`/sdd:auto`, que no pregunta nunca, lo **aplica**.
+
+**Y qué significa un `CLEAR` lo decide el proyecto.** Una línea en la sección
+*Worktree bootstrap* de `sdd/project.md`:
+
+| `isolation:` | Qué hace |
+|---|---|
+| `on-conflict` | **Defecto.** Worktree solo con evidencia. Un proyecto que no declara nada se comporta igual que siempre. |
+| `always` | Cada feature en su worktree, **la primera incluida**. El clon principal se queda en la rama por defecto y limpio. |
+
+Existe porque `CLEAR` significa «el clon está libre», así que la **primera**
+feature en vuelo nunca se aislaba: se quedaba en el clon principal, movía HEAD a
+`sdd/<primera>` y lo dejaba sucio — que es **exactamente la evidencia #2 y #3 que
+el check le reporta a la segunda**. El camino feliz fabricaba la señal que el
+detector detecta, y de paso dejaba el clon inservible para cualquier otro shell.
+Con `always` no hay excepción para la primera y todas las sesiones arrancan del
+mismo mundo; lo pagas en bootstrap (abajo), y por eso es una decisión del
+proyecto y no el defecto. `/sdd:init` la pregunta, `/sdd:doctor` dice cuál está en
+vigor (`sdd_session.py policy`), y un valor que no sea ninguno de los dos es un
+error (`SDD026`) en vez de una degradación silenciosa. Detalle en
+[ADR 0002](docs/adr/0002-isolation-policy.md).
 
 | Pieza | Dónde | Por qué ahí |
 |---|---|---|
@@ -705,7 +728,9 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   parece un bug. Se declara en la sección **Worktree bootstrap** de
   `sdd/project.md` (regla 9: los comandos del proyecto son del proyecto). Si no
   está declarado y la verificación falla por eso, *eso* es el hallazgo — no se
-  adivina qué copiar.
+  adivina qué copiar. Con `isolation: always` lo paga **cada** feature, incluida
+  la que antes lo esquivaba: se dice una vez, al crear el worktree y antes de
+  levantar nada.
 - Y el bootstrap tiene una **segunda mitad que se olvida**: los *recursos
   exclusivos*. Un proyecto puede no necesitar copiar **nada** y aun así no poder
   levantar dos stacks de dev, porque algo solo existe una vez en la máquina — un
@@ -718,8 +743,12 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   es la que **puede** hacer desaparecer el problema en vez de gestionarlo — si la
   respuesta es sí, lo hace; y averiguarlo es una tarde, no un design.
 - `worktree.baseRef` por defecto es `fresh`: rama desde `origin/<base>`, ignorando
-  commits locales sin pushear. El flujo compara antes y te avisa, para no grabar
-  en `STATE.md` un BASE del que el worktree no salió.
+  commits locales sin pushear. El propio `check` lo compara y te avisa en su línea
+  `base:`, para no grabar en `STATE.md` un BASE del que el worktree no salió. Con
+  `always` eso pasa a estar en el camino de **todas** las features, y lo mismo los
+  casos raros —sin remoto, HEAD desacoplado, ya estás dentro de un worktree—, que
+  tienen comportamiento decidido en
+  [`references/isolation.md`](references/isolation.md) en vez de improvisado.
 - `/sdd:archive` queda **serializado en el worktree principal**: muta
   `sdd/specs/`, tickea el roadmap y mueve directorios. Es post-merge, así que ya
   era cierto de hecho; ahora es precondición explícita. Y es quien ofrece retirar
@@ -731,7 +760,8 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   es **por `session.id`**, que el sink ya recibía en cada datapoint.
 
 Detalle del protocolo en [`references/isolation.md`](references/isolation.md);
-evidencia y alternativas en [ADR 0001](docs/adr/0001-roadmap-structure-and-concurrency.md) D1-D2.
+evidencia y alternativas en [ADR 0001](docs/adr/0001-roadmap-structure-and-concurrency.md)
+D1-D2 y [ADR 0002](docs/adr/0002-isolation-policy.md), que revisa el *cuándo* de D1.
 
 ## Trabajo en equipo
 
@@ -813,7 +843,7 @@ skills/<fase>/      # init·new·design·tasks·run·archive·status·doctor·re
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
 hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
-references/         # steering · isolation · mcp-catalog · lsp-catalog · plugin-catalog · metrics
+references/         # steering · isolation · roadmap-migration · mcp-catalog · lsp-catalog · plugin-catalog · metrics
 scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · sdd_session.py · validate_toolkit.py · usage-{dir,mark,phase,sink,sync}
 tests/              # especificación ejecutable + fixtures mínimos de doctor
 .github/workflows/  # misma validación en cada PR y push a main

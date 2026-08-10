@@ -1,7 +1,10 @@
 # ADR 0001 — Estructura del roadmap y concurrencia de sesiones
 
 - **Fecha**: 2026-08-04
-- **Estado**: aceptada
+- **Estado**: aceptada · **D1 revisada parcialmente por
+  [ADR 0002](0002-isolation-policy.md)** — el mecanismo (registro, evidencias,
+  `check`) sigue vigente; lo que cambia es qué se hace con un veredicto `CLEAR`,
+  que ahora depende de la política `isolation:` declarada por el proyecto
 - **Alcance**: `sdd/roadmap.md` y su formato · `/sdd:new`, `/sdd:auto`, `/sdd:status`, `/sdd:doctor`, `/sdd:archive` · aislamiento de sesiones concurrentes · atribución de métricas
 - **Se implementa en**: `roadmap-structure` (D3-D8) y `concurrent-worktrees` (D1-D2), en ese orden — ver *Implementación* al final
 
@@ -150,6 +153,15 @@ usa worktrees para `tournament`.
 *Alternativas descartadas*: **siempre worktree** (paga el bootstrap de `.env` /
 `node_modules` incluso trabajando en solitario); **opt-in por proyecto** (no
 arregla nada hasta que te acuerdas de activarlo, que es justo el problema).
+
+> **Revisado por [ADR 0002](0002-isolation-policy.md).** El camino `CLEAR`
+> resultó *fabricar* las evidencias #2 y #3 que este mismo check reporta después
+> como `CONFLICT`: la primera feature nunca se aísla, se queda en el clon
+> principal y lo deja en la rama de otra feature y sucio. ADR 0002 mantiene esta
+> detección y el defecto (`on-conflict`, donde la objeción del bootstrap sigue
+> siendo válida), y añade una política declarada por el proyecto —`isolation:
+> always`— que aísla también la primera. El opt-in ya no es un sustituto de la
+> detección, que era la razón de descartarlo aquí, sino una capa por encima.
 
 ### D2 — El registro de sesiones vive en el directorio git común
 

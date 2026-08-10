@@ -17,7 +17,9 @@ invents scope.
 
 ## Preconditions (check all; abort with a clear message if any fails)
 
-1. Git repo with a **clean working tree**. Record the current branch as BASE.
+1. Git repo with a **clean working tree**. Record the current branch as BASE —
+   a *branch*: on a detached HEAD there is nothing to record, and every later
+   `base_branch` would be invented, so abort and say so.
 2. `sdd/roadmap.md` exists and its **frontier** is non-empty (or the named
    feature is in it):
 
@@ -128,20 +130,36 @@ Then, for the feature at hand:
      else: skip it (report it as claimed in the final summary) and take the
      next entry.
 
-   No remote branch → `git checkout -b sdd/<feature>` from BASE and, if a remote
-   exists, **push the branch immediately** — publishing the claim before doing
-   any work, not after.
-
    **Isolate before branching** (shared rule 10): run
-   `sdd_session.py --root . check --feature <feature>`. On `CONFLICT`, auto does
-   **not** ask — it applies the worktree per
-   `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` (base-ref check →
-   `EnterWorktree` → bootstrap from `sdd/project.md` → `claim`) and says so in
-   the final report. If the bootstrap the project declares fails, or the project
-   declares none and verification then fails on a missing local file, BLOCK the
-   feature: that is a real gap in `project.md`, not something to guess around.
-   On `CLEAR`, `claim` the feature and continue in place. A resumed feature uses
-   `resolve` and enters its existing worktree instead of creating a second one.
+   `sdd_session.py --root . check --feature <feature>` and obey its **last line**.
+   Auto never asks, so both reasons to isolate take the same path — it applies the
+   worktree per `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` (base facts from
+   the check → `EnterWorktree` → bootstrap from `sdd/project.md` → `claim`) and
+   says so in the final report:
+
+   - `ISOLATE` from evidence (`CONFLICT`) — the pre-existing behaviour.
+   - `ISOLATE` from policy (`CLEAR` and `sdd/project.md` declares
+     `isolation: always`) — identical, on every feature including the first. The
+     worktree creates `sdd/<feature>`, so there is no `git checkout -b` in the
+     main clone at all, and the run leaves it on BASE with a clean tree.
+   - `WORK HERE` — `claim` the feature, `git checkout -b sdd/<feature>` from BASE
+     and continue in place.
+
+   Either way, if a remote exists **push the branch immediately** — publishing the
+   claim before doing any work, not after. If the bootstrap the project declares
+   fails, or the project declares none and verification then fails on a missing
+   local file, BLOCK the feature: that is a real gap in `project.md`, not
+   something to guess around. A resumed feature uses `resolve` and enters its
+   existing worktree instead of creating a second one.
+
+   **When it isolates, the base has to be real.** Precondition 1 recorded BASE;
+   the worktree branches from `origin/<BASE>`, not from local HEAD. So on the
+   isolating path only, two facts from the check's `base:` line stop the feature
+   instead of being guessed past: **local commits not in origin** (the worktree
+   would silently leave them behind) and **a base that was never published**
+   (`fresh` has nothing to resolve). BLOCK with the exact fix — push the base, or
+   set the policy aside for this run. Recording a BASE the worktree did not come
+   from is false merge evidence, which is the failure rule 8 exists to prevent.
 2. **new** — follow `${CLAUDE_PLUGIN_ROOT}/skills/new/SKILL.md`. Approval
    substitute: the proposal must trace every requirement to the roadmap
    entry (and its source doc, if referenced) and respect `product.md`.
