@@ -2,7 +2,7 @@
 
 ## 1. Lifecycle metadata commit primitive <!-- panel: PASS 2026-08-10 -->
 
-- [x] 1.1 Implementar en `scripts/sdd_lifecycle.py` un helper de commit lifecycle que capture el parent antes de escribir, haga stage únicamente de `sdd/changes/<feature>/STATE.md`, use el subject exacto `chore(sdd): lifecycle <feature> <transition>` y el trailer `SDD-Lifecycle-Feature: <feature>`, y nunca incruste el SHA del commit hijo en STATE. [R1, R2, R4]
+- [x] 1.1 Implementar en `scripts/sdd_lifecycle.py` un helper de commit lifecycle que capture el parent antes de escribir, haga stage únicamente de `sdd/changes/<feature>/STATE.md`, use el subject exacto `chore(sdd): lifecycle <feature> <transition>` y el trailer `SDD-Lifecycle-Feature: <feature>`, y nunca incruste el SHA del commit hijo en STATE. Persistir `ACTIVE -> LOCAL_VERIFIED` antes de `mark-ready` para que el parent STATE sea válido. [R1, R2, R4]
 - [x] 1.2 Hacer que el helper rechace índice o worktree con cambios no autorizados, preserve paths del usuario y restaure únicamente sus bytes/stage si falla el commit; verificar exit codes y ausencia de mutaciones parciales con `tests/test_sdd_lifecycle.py`. [R2, D2, D6, R4, R5]
 - [x] 1.3 Hacer idempotente el helper cuando el STATE renderizado ya coincide con la transición; verificar que una segunda ejecución no crea un commit lifecycle duplicado. [R1, R4]
 
@@ -14,7 +14,7 @@
 
 ## 3. Clasificador de commits lifecycle y ship <!-- panel: PASS 2026-08-10 -->
 
-- [x] 3.1 Implementar en `scripts/sdd_lifecycle.py` el clasificador por commit: parent único; subject exacto sin sufijo; trailer coincidente; feature slug seguro sin `/`, `\\`, `..`, componentes vacíos ni aliases; path repo-relative normalizado único `sdd/changes/<feature>/STATE.md`; STATE padre/hijo parseable; transición válida; anchor coherente. [R1, R3, R5]
+- [x] 3.1 Implementar en `scripts/sdd_lifecycle.py` el clasificador por commit: parent único; subject exacto sin sufijo; trailer coincidente; feature slug seguro sin `/`, `\\`, `..`, componentes vacíos ni aliases; path repo-relative normalizado único `sdd/changes/<feature>/STATE.md`; STATE padre/hijo obligatoriamente parseable; transición válida; anchor coherente. [R1, R3, R5]
 - [x] 3.2 Implementar la enumeración completa de `implementation_sha..HEAD` y rechazar cualquier commit posterior no clasificado, commit STATE-only arbitrario, subject con sufijo, path traversal, alias normalizado, commit mixto o modificación de métricas/código/evidencia/specs. No usar solo el diff agregado. [R3, R4, R5]
 - [x] 3.3 Extender `scripts/sdd_lifecycle.py` con `validate_ship_suffix` y su subcomando CLI: debe verificar ancestry, enumerar cada commit `implementation_sha..HEAD` y aplicar el clasificador común. `skills/ship/SKILL.md` invocará este gate antes de ejecutar el único `git push`; no se añadirá `scripts/sdd_ship.py` ni otra capa ejecutable paralela. [R3, D3, D6, R5]
 - [x] 3.4 Actualizar `skills/ship/SKILL.md` y el contrato CLI de `scripts/sdd_lifecycle.py validate-ship` para exigir ancestry, clasificación commit-a-commit, worktree limpio y push solo después de todos los gates; mantener explícitamente el push como responsabilidad exclusiva de ship. [R3, D3, R5]
@@ -40,4 +40,3 @@
 - [x] 6.2 Ejecutar los tests focalizados de lifecycle: `pytest tests/test_sdd_lifecycle.py tests/test_lifecycle_contract.py`; registrar exit code y cada caso de la matriz dirty/clean, ancestry, clasificador y push. [R4]
 - [x] 6.3 Ejecutar `python3 scripts/validate_toolkit.py all` y `python3 scripts/sdd-doctor.py --root tests/fixtures/valid`; ambos deben terminar con exit code `0`. [R5]
 - [x] 6.4 Ejecutar `git diff --check`, comprobar `git status --short` limpio y verificar con `git diff --name-only` y `git diff --name-only <baseline>..HEAD` que solo se modifican paths del Toolkit y que no se introducen artefactos de AgentsLabs, P2, P3 ni archives; registrar evidencia de paths autorizados en `evidence/R1-R5-traceability.md`. [R5, D6]
-

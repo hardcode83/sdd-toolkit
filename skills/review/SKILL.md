@@ -123,6 +123,11 @@ reason. Then:
    the reviewed implementation SHA. This is not remote review, merge, spec
    fusion, roadmap completion, or archive.
 
+   `mark-local-verified` persists `ACTIVE -> LOCAL_VERIFIED` as the first
+   STATE-only lifecycle commit when the change's ACTIVE STATE is already in the
+   implementation anchor. `mark-ready` then persists
+   `LOCAL_VERIFIED -> READY_FOR_PR`; both transitions leave a clean worktree.
+
 6. **Metrics.** Run both unconditionally (each no-ops when tracking is off; NEVER
    skip them based on your own assessment of whether metrics are enabled):
 

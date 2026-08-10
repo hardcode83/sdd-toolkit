@@ -77,6 +77,7 @@ LIFECYCLE_SUBJECT_RE = re.compile(
     r"^chore\(sdd\): lifecycle (?P<feature>[^ ]+) (?P<transition>[^ ]+)$"
 )
 LIFECYCLE_TRANSITIONS = {
+    ("ACTIVE", "LOCAL_VERIFIED"),
     ("LOCAL_VERIFIED", "READY_FOR_PR"),
     ("READY_FOR_PR", "PR_OPEN"),
     # A PR that was already merged can be recorded before the local state has
@@ -644,32 +645,32 @@ def classify_lifecycle_commit(
     parent_has_state = try_command(
         ["git", "cat-file", "-e", f"{parent}:{expected_path}"], root, runner
     )
-    parent_text = (
-        commit_state_text(root, parent, expected_path, runner)
-        if parent_has_state
-        else ""
-    )
+    if not parent_has_state:
+        raise LifecycleError(
+            f"Commit {commit[:12]} has no valid parent STATE.md at {expected_path}."
+        )
+    parent_text = commit_state_text(root, parent, expected_path, runner)
     child_text = commit_state_text(root, commit, expected_path, runner)
-    parent_state = (
-        state_from_text(parent_text, f"{parent}:{expected_path}")
-        if parent_text
-        else {}
-    )
+    parent_state = state_from_text(parent_text, f"{parent}:{expected_path}")
     child_state = state_from_text(child_text, f"{commit}:{expected_path}")
     if commit in child_text:
         raise LifecycleError(f"Commit {commit[:12]} self-references its own SHA in STATE.md.")
     if (
-        (parent_state and parent_state.get("state") != before)
-        or (not parent_state and before != "LOCAL_VERIFIED")
+        parent_state.get("state") != before
         or child_state.get("state") != after
     ):
         raise LifecycleError(
             f"Commit {commit[:12]} does not encode {before} -> {after} in STATE.md."
         )
     if after == "READY_FOR_PR":
+        if child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
+            raise LifecycleError(
+                "READY_FOR_PR lifecycle commit must preserve the stable implementation_sha anchor."
+            )
+    elif after == "LOCAL_VERIFIED":
         if child_state.get("implementation_sha") != parent:
             raise LifecycleError(
-                "READY_FOR_PR lifecycle commit must anchor implementation_sha to its parent."
+                "LOCAL_VERIFIED lifecycle commit must preserve its implementation parent."
             )
     elif child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
         raise LifecycleError("Lifecycle commit changed the stable implementation_sha anchor.")
@@ -824,8 +825,14 @@ def mark_local_verified(root: Path, feature: str) -> str:
         )
     data["state"] = "LOCAL_VERIFIED"
     data["local_review"] = "APPROVED"
-    changed = write_state(change, data)
-    return "LOCAL_VERIFIED recorded." if changed else "LOCAL_VERIFIED already recorded."
+    if current == "LOCAL_VERIFIED":
+        return "LOCAL_VERIFIED already recorded."
+    data["implementation_sha"] = run_command(
+        ["git", "rev-parse", "HEAD"], root
+    ).stdout.strip()
+    lifecycle = lifecycle_commit(root, feature, "ACTIVE->LOCAL_VERIFIED", data)
+    classify_lifecycle_commit(root, lifecycle, feature)
+    return "LOCAL_VERIFIED recorded."
 
 
 def mark_ready(
@@ -852,7 +859,11 @@ def mark_ready(
         raise LifecycleError(
             "STATE.md has pre-existing edits; refusing to overwrite lifecycle metadata."
         )
-    data.update(git_context(root, base_branch, runner))
+    context = git_context(root, base_branch, runner)
+    if not data.get("implementation_sha"):
+        raise LifecycleError("LOCAL_VERIFIED metadata has no stable implementation_sha anchor.")
+    context["implementation_sha"] = data["implementation_sha"]
+    data.update(context)
     data["state"] = "READY_FOR_PR"
     for field in ("pr_number", "pr_url", "pr_state", "merge_sha"):
         data[field] = ""

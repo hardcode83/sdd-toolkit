@@ -87,10 +87,12 @@ An authorized commit must:
   `sdd/changes/<feature>/STATE.md`;
 - modify exactly that normalized `sdd/changes/<feature>/STATE.md` path;
 - parse both parent and child STATE documents successfully;
-- use one allowed transition: `LOCAL_VERIFIED -> READY_FOR_PR` or
-  `READY_FOR_PR -> PR_OPEN`;
-- preserve `implementation_sha` for `PR_OPEN`, and for `READY_FOR_PR` set it to
-  the commit parent SHA, which is the stable anchor and never the child SHA.
+- use one allowed transition: `ACTIVE -> LOCAL_VERIFIED`,
+  `LOCAL_VERIFIED -> READY_FOR_PR` or `READY_FOR_PR -> PR_OPEN`;
+- require valid STATE.md in both parent and child commits;
+- preserve the stable implementation anchor in every lifecycle commit. The
+  `ACTIVE -> LOCAL_VERIFIED` child records its parent implementation commit;
+  later lifecycle commits preserve that same value and never use their own SHA.
 
 Any arbitrary commit that edits only STATE.md but lacks this topology, message,
 trailer, safe feature identifier or valid transition is rejected. Path
@@ -140,7 +142,7 @@ behavior to application history and miss the self-reference invariant.
 
 | Area | Files | Change |
 |---|---|---|
-| Lifecycle implementation | `scripts/sdd_lifecycle.py` | Add atomic lifecycle commit helper; update `mark-ready` and `record-pr`; expose stable anchor/suffix validation; preserve idempotence. |
+| Lifecycle implementation | `scripts/sdd_lifecycle.py` | Add atomic lifecycle commit helper; persist `ACTIVE -> LOCAL_VERIFIED` before `mark-ready`, update `mark-ready` and `record-pr`; expose stable anchor/suffix validation; preserve idempotence. |
 | Ship gate | `scripts/sdd_lifecycle.py::validate_ship_suffix` and `skills/ship/SKILL.md` | Implement the effective ancestry, commit-by-commit classifier invocation and clean-worktree gate; the skill performs push only after the CLI gate passes. |
 | Ship contract | `skills/ship/SKILL.md` | Replace exact-equality wording with ancestor + lifecycle-only suffix checks; document clean handoff and actual record/push boundary. |
 | Review contract | `skills/review/SKILL.md` | Document post-`mark-ready` lifecycle commit and clean postcondition; distinguish lifecycle-only suffix from implementation drift. |
