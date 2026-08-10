@@ -37,7 +37,20 @@ Ship publishes. It never reviews, never fixes, never merges and never archives.
 
    **Never ask for the base branch.** `mark-ready` recorded `base_branch`, `head_branch`, `repository` and `implementation_sha` in `STATE.md`; those are the facts, and asking again invites a different answer than the one the evidence was recorded against.
 
-2. **Verify HEAD still matches the reviewed commit.** Compare `git rev-parse HEAD` with the recorded `implementation_sha`. If they differ, commits landed after the review — say so and stop, pointing to `/sdd:review <feature>` (it re-runs `mark-ready`, which re-records the SHA when HEAD moved). Publishing an unreviewed range under an approved verdict is exactly what the lifecycle exists to prevent.
+2. **Verify the anchored lifecycle suffix before publishing.** Run:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
+   ```
+
+   This requires a clean worktree, proves `implementation_sha` exists and is an
+   ancestor of `HEAD`, enumerates every commit in `implementation_sha..HEAD`,
+   and validates each commit individually. Only single-parent commits whose
+   subject, trailer, transition and changed path match the feature's
+   `sdd/changes/<feature>/STATE.md` allowlist pass. Code, specs, evidence,
+   metrics, traversal aliases and arbitrary STATE-only commits fail. A
+   lifecycle suffix is accepted without changing the stable implementation
+   anchor.
 
 3. **Push** `head_branch` to the remote. No remote configured → this is a handoff, not a failure: go to step 6.
 
@@ -54,7 +67,7 @@ Ship publishes. It never reviews, never fixes, never merges and never archives.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-pr <feature> --url <PR-URL>
    ```
 
-   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
+   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN` in an explicit STATE-only lifecycle commit, and never pushes. Ship remains the only phase allowed to push. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
 
 6. **Handoff when the environment cannot publish** (no remote, no `gh`, push refused): leave the change at `READY_FOR_PR`, report the **exact command the user has to run**, and say that such a change is still archivable later through local git evidence — the reviewed commit contained in the base, or a base commit carrying the same change after a squash or rebase (shared rule 8). Under `/sdd:auto` this never aborts the run.
 

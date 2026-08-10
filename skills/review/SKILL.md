@@ -102,14 +102,17 @@ reason. Then:
    tends to land in the explanatory copy while the stale one survives in the
    artifact that reaches the next implementer.
    **Any commit made to close findings invalidates the recorded
-   `implementation_sha`** — re-run `mark-ready` (it re-records when HEAD moved) so
-   the merge gate certifies the fixed range and not the one that failed.
+   `implementation_sha`** — re-run the lifecycle validation so the merge gate
+   certifies the reviewed anchor and every later commit is an authorized
+   STATE-only lifecycle commit. A later code/spec/evidence/metrics commit is
+   drift and must be reviewed again; lifecycle metadata is not functional drift.
 5. Conclude with a verdict: locally verified or list what's missing. If the
    verdict passes, persist the two explicit lifecycle milestones:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
    ```
 
    Determine the target base from the current workflow/remote; if it is

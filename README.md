@@ -821,3 +821,17 @@ docs/guide.md       # guía de uso narrativa
 ```
 
 Para añadir una fase propia: carpeta en `skills/` + entrada en `rules.md`. Para tus MCPs/LSPs: edita los catálogos.
+
+## Lifecycle integrity (0.33)
+
+`implementation_sha` es el ancla estable del commit revisado. `mark-ready`
+persiste `STATE.md` mediante un commit lifecycle separado; `record-pr` hace lo
+mismo para la transición `READY_FOR_PR -> PR_OPEN` y nunca hace push.
+
+Antes de publicar, `scripts/sdd_lifecycle.py validate-ship <feature>` exige que
+el anchor sea ancestro de `HEAD`, que el worktree esté limpio y que cada commit
+del sufijo sea un commit lifecycle single-parent, con subject/trailer,
+transición y único path permitido:
+`sdd/changes/<feature>/STATE.md`. Código, specs, evidence, métricas, traversal
+y commits STATE-only falsos se rechazan individualmente. `skills/ship` es el
+único dueño del push.

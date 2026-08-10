@@ -194,9 +194,11 @@ Then, for the feature at hand:
    The change's single `STATE.md` then holds `READY_FOR_PR` with BASE, head
    branch, repository, and reviewed implementation SHA. Commit:
    `sdd(<feature>): ready for PR`.
-7. **Publish** — follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`: push,
-   open the PR from `sdd/<feature>` to BASE, and record the PR evidence with
-   `record-pr`. That skill is the single home for this stretch (shared rule 1);
+7. **Publish** — follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`: validate
+   the anchored lifecycle suffix, push, open the PR from `sdd/<feature>` to BASE,
+   and record the PR evidence with `record-pr`. `record-pr` creates its own
+   STATE-only lifecycle commit and never pushes; ship is the sole push owner.
+   That skill is the single home for this stretch (shared rule 1);
    auto used to carry its own copy, and two copies of a publishing contract
    drift. Auto's own conversions still apply on top of it: never ask anything,
    and treat every environment limit (no remote, no `gh`, push refused) as a
