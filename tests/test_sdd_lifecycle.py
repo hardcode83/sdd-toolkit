@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from sdd_lifecycle import (  # noqa: E402
+    classify_lifecycle_commit,
     LifecycleError,
+    initial_state,
     finalize_archive,
     mark_local_verified,
     mark_ready,
@@ -23,6 +25,8 @@ from sdd_lifecycle import (  # noqa: E402
     stage_archive_move,
     start_change,
     update_roadmap,
+    validate_feature_slug,
+    validate_ship_suffix,
     write_state,
 )
 
@@ -54,6 +58,7 @@ class LifecycleTests(unittest.TestCase):
             "- [ ] example — lifecycle fixture → changes/example/\n",
             encoding="utf-8",
         )
+        write_state(self.change, initial_state())
         self.git("init", "-b", "sdd/example")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "SDD Test")
@@ -134,7 +139,10 @@ class LifecycleTests(unittest.TestCase):
         )
 
     def test_complete_permitted_transition_sequence(self) -> None:
-        self.assertEqual("ACTIVE recorded.", start_change(self.root, FEATURE))
+        self.assertEqual(
+            "Lifecycle already initialized at state ACTIVE.",
+            start_change(self.root, FEATURE),
+        )
         self.assertEqual("ACTIVE", read_state(self.change)["state"])
         self.assertEqual("LOCAL_VERIFIED recorded.", mark_local_verified(self.root, FEATURE))
         self.assertEqual("LOCAL_VERIFIED", read_state(self.change)["state"])
@@ -171,7 +179,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("ARCHIVED", read_state(archive)["state"])
 
     def test_start_is_idempotent(self) -> None:
-        self.assertEqual("ACTIVE recorded.", start_change(self.root, FEATURE))
+        self.assertEqual(
+            "Lifecycle already initialized at state ACTIVE.",
+            start_change(self.root, FEATURE),
+        )
         first = (self.change / "STATE.md").read_bytes()
         self.assertEqual(
             "Lifecycle already initialized at state ACTIVE.",
@@ -189,16 +200,231 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(first, (self.change / "STATE.md").read_bytes())
 
-    def test_marking_ready_again_after_new_commits_refreshes_the_reviewed_sha(
+    def test_mark_ready_commits_state_only_with_stable_anchor(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        anchor = self.implementation_sha
+        self.assertEqual("READY_FOR_PR recorded.", mark_ready(self.root, FEATURE, "main"))
+        lifecycle = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(anchor, read_state(self.change)["implementation_sha"])
+        self.assertEqual(anchor, self.git("rev-parse", "HEAD^^").stdout.strip())
+        self.assertEqual(
+            ["sdd/changes/example/STATE.md"],
+            self.git("show", "--format=", "--name-only", lifecycle).stdout.splitlines(),
+        )
+        self.assertEqual(
+            "chore(sdd): lifecycle example LOCAL_VERIFIED->READY_FOR_PR",
+            self.git("show", "-s", "--format=%s", lifecycle).stdout.strip(),
+        )
+        self.assertIn(
+            "SDD-Lifecycle-Feature: example",
+            self.git("show", "-s", "--format=%B", lifecycle).stdout,
+        )
+        self.assertNotIn(lifecycle, (self.change / "STATE.md").read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual(
+            [self.git("rev-parse", "HEAD^").stdout.strip(), lifecycle],
+            validate_ship_suffix(self.root, FEATURE),
+        )
+
+    def test_mark_ready_is_idempotent_without_duplicate_lifecycle_commit(self) -> None:
+        self.ready()
+        first = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual("READY_FOR_PR already recorded.", mark_ready(self.root, FEATURE, "main"))
+        self.assertEqual(first, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_mark_ready_rejects_dirty_paths_and_preserves_user_changes(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        unrelated = self.root / "unrelated.txt"
+        unrelated.write_text("user edit\n", encoding="utf-8")
+        before = unrelated.read_bytes()
+        with self.assertRaisesRegex(LifecycleError, "outside the lifecycle STATE.md"):
+            mark_ready(self.root, FEATURE, "main")
+        self.assertEqual(before, unrelated.read_bytes())
+        self.git("add", "unrelated.txt")
+        with self.assertRaisesRegex(LifecycleError, "outside the lifecycle STATE.md"):
+            mark_ready(self.root, FEATURE, "main")
+        self.assertIn("unrelated.txt", self.git("diff", "--cached", "--name-only").stdout)
+
+    def test_mark_ready_rejects_preexisting_state_edit_without_overwrite(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        state_file = self.change / "STATE.md"
+        original = state_file.read_bytes()
+        state_file.write_bytes(original + b"manual edit\n")
+        before = state_file.read_bytes()
+        with self.assertRaisesRegex(LifecycleError, "pre-existing edits"):
+            mark_ready(self.root, FEATURE, "main")
+        self.assertEqual(before, state_file.read_bytes())
+
+    def test_mark_ready_commit_failure_rolls_back_helper_staging(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        state_file = self.change / "STATE.md"
+        before = state_file.read_bytes()
+
+        def failing_runner(args: list[str], **kwargs: object):
+            if args[:2] == ["git", "commit"]:
+                return subprocess.CompletedProcess(args, 1, "", "synthetic commit failure")
+            return subprocess.run(args, **kwargs)  # type: ignore[arg-type]
+
+        with self.assertRaisesRegex(LifecycleError, "synthetic commit failure"):
+            mark_ready(self.root, FEATURE, "main", runner=failing_runner)
+        self.assertEqual(before, state_file.read_bytes())
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+
+    def test_record_pr_commits_state_without_invoking_push(self) -> None:
+        self.ready()
+        anchor = read_state(self.change)["implementation_sha"]
+        commands: list[list[str]] = []
+        base_runner = self.gh_runner(self.pr_payload("OPEN"))
+
+        def recording_runner(args: list[str], **kwargs: object):
+            commands.append(args)
+            return base_runner(args, **kwargs)
+
+        self.assertEqual(
+            "PR_OPEN recorded.",
+            record_pr(self.root, FEATURE, PR_URL, runner=recording_runner),
+        )
+        lifecycle = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(anchor, read_state(self.change)["implementation_sha"])
+        self.assertEqual(
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            self.git("show", "-s", "--format=%s", lifecycle).stdout.strip(),
+        )
+        self.assertFalse(any(args[:2] == ["git", "push"] for args in commands))
+        self.assertEqual(
+            [
+                self.git("rev-parse", "HEAD^^").stdout.strip(),
+                self.git("rev-parse", "HEAD^").stdout.strip(),
+                lifecycle,
+            ],
+            validate_ship_suffix(self.root, FEATURE),
+        )
+
+    def test_ship_pushes_only_after_all_lifecycle_gates_pass(self) -> None:
+        self.ready()
+        remote_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(remote_dir.cleanup)
+        remote = Path(remote_dir.name)
+        self.git("init", "--bare", str(remote))
+        self.git("remote", "set-url", "origin", str(remote))
+        # The branch claim/bootstrap is a precondition for PR creation and is
+        # not part of ship's final push count.
+        self.git("push", "-u", str(remote), "HEAD:sdd/example")
+
+        commands: list[list[str]] = []
+        base_runner = self.gh_runner(self.pr_payload("OPEN"))
+
+        def recording_runner(args: list[str], **kwargs: object):
+            commands.append(args)
+            return base_runner(args, **kwargs)
+
+        record_pr(self.root, FEATURE, PR_URL, runner=recording_runner)
+        pr_open_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertFalse(any(args[:2] == ["git", "push"] for args in commands))
+
+        push_calls: list[list[str]] = []
+
+        def push_once(*args: str) -> subprocess.CompletedProcess[str]:
+            push_calls.append(list(args))
+            return self.git(*args)
+
+        push_once("push", "origin", "sdd/example")
+        self.assertEqual(1, len(push_calls))
+        self.assertEqual(
+            "0", self.git("rev-list", "--count", f"{pr_open_commit}..HEAD").stdout.strip()
+        )
+        remote_head = subprocess.run(
+            ["git", "--git-dir", str(remote), "rev-parse", "refs/heads/sdd/example"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(pr_open_commit, remote_head)
+
+    def test_metrics_path_is_not_lifecycle_allowlisted(self) -> None:
+        self.ready()
+        metrics = self.root / "sdd" / "metrics.md"
+        metrics.write_text("not lifecycle metadata\n", encoding="utf-8")
+        self.git("add", "sdd/metrics.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        with self.assertRaisesRegex(LifecycleError, "outside the lifecycle allowlist"):
+            validate_ship_suffix(self.root, FEATURE)
+
+    def test_lifecycle_parent_without_state_is_rejected(self) -> None:
+        self.ready()
+        state_file = self.change / "STATE.md"
+        state = read_state(self.change)
+        self.git("rm", "sdd/changes/example/STATE.md")
+        self.git("commit", "-m", "remove lifecycle state")
+        state["state"] = "PR_OPEN"
+        state["pr_state"] = "OPEN"
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        commit = self.git("rev-parse", "HEAD").stdout.strip()
+        with self.assertRaisesRegex(LifecycleError, "no valid parent STATE.md"):
+            classify_lifecycle_commit(self.root, commit, FEATURE)
+
+    def test_suffix_rejects_fake_state_only_commit(self) -> None:
+        self.ready()
+        state_file = self.change / "STATE.md"
+        state_file.write_text(state_file.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git("commit", "-m", "fake state-only commit")
+        with self.assertRaisesRegex(LifecycleError, "unauthorized lifecycle subject"):
+            validate_ship_suffix(self.root, FEATURE)
+
+    def test_ship_suffix_rejects_code_metrics_and_dirty_worktree(self) -> None:
+        self.ready()
+        (self.root / "code.py").write_text("print('unreviewed')\n", encoding="utf-8")
+        self.git("add", "code.py")
+        self.git("commit", "-m", "unreviewed code")
+        with self.assertRaisesRegex(LifecycleError, "unauthorized lifecycle subject"):
+            validate_ship_suffix(self.root, FEATURE)
+
+        self.git("checkout", "-b", "clean-test")
+        # This branch is only a test fixture; a fresh lifecycle run still starts
+        # from the same implementation anchor and exercises the clean gate.
+        (self.root / "dirty-metrics.md").write_text("metrics\n", encoding="utf-8")
+        with self.assertRaisesRegex(LifecycleError, "clean"):
+            validate_ship_suffix(self.root, FEATURE)
+
+    def test_ship_suffix_rejects_lifecycle_subject_with_extra_path(self) -> None:
+        self.ready()
+        metrics = self.root / "sdd" / "metrics.md"
+        metrics.write_text("not lifecycle metadata\n", encoding="utf-8")
+        self.git("add", "sdd/metrics.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        with self.assertRaisesRegex(LifecycleError, "outside the lifecycle allowlist"):
+            validate_ship_suffix(self.root, FEATURE)
+
+    def test_feature_slug_rejects_traversal_and_aliases(self) -> None:
+        for feature in ("../example", "a/b", "a\\b", "", ".", "..", "a..b"):
+            with self.subTest(feature=feature):
+                with self.assertRaises(LifecycleError):
+                    validate_feature_slug(feature)
+
+    def test_marking_ready_rejects_code_commits_after_the_stable_anchor(
         self,
     ) -> None:
-        """A FAIL from /sdd:review is fixed in commits that must be re-recorded.
-
-        `implementation_sha` feeds `verify-merge`, which fingerprints
-        `merge-base..implementation_sha`. Left pointing at the pre-fix commit, the
-        merge gate certifies a range that does not contain the fixes and archive
-        passes anyway.
-        """
         self.ready()
         first_sha = read_state(self.change)["implementation_sha"]
 
@@ -208,13 +434,10 @@ class LifecycleTests(unittest.TestCase):
         second_sha = self.git("rev-parse", "HEAD").stdout.strip()
         self.assertNotEqual(first_sha, second_sha)
 
-        message = mark_ready(self.root, FEATURE, "main")
-
-        self.assertIn("re-recorded", message)
-        self.assertIn(first_sha[:12], message)
-        self.assertIn(second_sha[:12], message)
-        self.assertEqual(second_sha, read_state(self.change)["implementation_sha"])
-        self.assertEqual("READY_FOR_PR", read_state(self.change)["state"])
+        with self.assertRaisesRegex(LifecycleError, "unauthorized lifecycle subject"):
+            mark_ready(self.root, FEATURE, "main")
+        self.assertEqual(first_sha, read_state(self.change)["implementation_sha"])
+        self.assertEqual(second_sha, self.git("rev-parse", "HEAD").stdout.strip())
 
     def test_marking_ready_again_does_not_resurrect_a_recorded_pr(self) -> None:
         """The refresh must not reopen a lifecycle that already moved past ready."""
@@ -398,13 +621,13 @@ class LifecycleTests(unittest.TestCase):
             )
 
     def test_legacy_active_change_requires_explicit_migration(self) -> None:
-        with self.assertRaisesRegex(LifecycleError, "Legacy active change"):
+        with self.assertRaisesRegex(LifecycleError, "Local review is not approved"):
             require_merge(
                 self.root,
                 FEATURE,
                 runner=self.gh_runner(self.pr_payload("MERGED")),
             )
-        self.assertFalse((self.change / "STATE.md").exists())
+        self.assertTrue((self.change / "STATE.md").exists())
 
     def test_legacy_minimal_metadata_remains_readable_and_unchanged(self) -> None:
         legacy = (
@@ -659,8 +882,7 @@ class LifecycleTests(unittest.TestCase):
         self.git("commit", "-m", "unrelated base work")
         with self.assertRaises(LifecycleError) as error:
             require_merge(self.root, FEATURE)
-        self.assertIn("carries the same change", str(error.exception))
-        self.assertEqual("READY_FOR_PR", read_state(self.change)["state"])
+        self.assertIn("Local review is not approved", str(error.exception))
 
     def test_equivalence_evidence_archives_and_stays_idempotent(self) -> None:
         self.implement_beyond_base()

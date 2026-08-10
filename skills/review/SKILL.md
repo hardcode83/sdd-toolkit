@@ -102,14 +102,17 @@ reason. Then:
    tends to land in the explanatory copy while the stale one survives in the
    artifact that reaches the next implementer.
    **Any commit made to close findings invalidates the recorded
-   `implementation_sha`** — re-run `mark-ready` (it re-records when HEAD moved) so
-   the merge gate certifies the fixed range and not the one that failed.
+   `implementation_sha`** — re-run the lifecycle validation so the merge gate
+   certifies the reviewed anchor and every later commit is an authorized
+   STATE-only lifecycle commit. A later code/spec/evidence/metrics commit is
+   drift and must be reviewed again; lifecycle metadata is not functional drift.
 5. Conclude with a verdict: locally verified or list what's missing. If the
    verdict passes, persist the two explicit lifecycle milestones:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
    ```
 
    Determine the target base from the current workflow/remote; if it is
@@ -119,6 +122,11 @@ reason. Then:
    `state: READY_FOR_PR`, `local_review: APPROVED`, repository, branches, and
    the reviewed implementation SHA. This is not remote review, merge, spec
    fusion, roadmap completion, or archive.
+
+   `mark-local-verified` persists `ACTIVE -> LOCAL_VERIFIED` as the first
+   STATE-only lifecycle commit when the change's ACTIVE STATE is already in the
+   implementation anchor. `mark-ready` then persists
+   `LOCAL_VERIFIED -> READY_FOR_PR`; both transitions leave a clean worktree.
 
 6. **Metrics.** Run both unconditionally (each no-ops when tracking is off; NEVER
    skip them based on your own assessment of whether metrics are enabled):

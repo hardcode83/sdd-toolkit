@@ -37,11 +37,30 @@ Ship publishes. It never reviews, never fixes, never merges and never archives.
 
    **Never ask for the base branch.** `mark-ready` recorded `base_branch`, `head_branch`, `repository` and `implementation_sha` in `STATE.md`; those are the facts, and asking again invites a different answer than the one the evidence was recorded against.
 
-2. **Verify HEAD still matches the reviewed commit.** Compare `git rev-parse HEAD` with the recorded `implementation_sha`. If they differ, commits landed after the review — say so and stop, pointing to `/sdd:review <feature>` (it re-runs `mark-ready`, which re-records the SHA when HEAD moved). Publishing an unreviewed range under an approved verdict is exactly what the lifecycle exists to prevent.
+2. **Verify the anchored lifecycle suffix before publishing.** Run:
 
-3. **Push** `head_branch` to the remote. No remote configured → this is a handoff, not a failure: go to step 6.
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
+   ```
 
-4. **Open the Pull Request** with `gh pr create`, base `base_branch`, head `head_branch`:
+   This requires a clean worktree, proves `implementation_sha` exists and is an
+   ancestor of `HEAD`, enumerates every commit in `implementation_sha..HEAD`,
+   and validates each commit individually. Only single-parent commits whose
+   subject, trailer, transition and changed path match the feature's
+   `sdd/changes/<feature>/STATE.md` allowlist pass. Code, specs, evidence,
+   metrics, traversal aliases and arbitrary STATE-only commits fail. A
+   lifecycle suffix is accepted without changing the stable implementation
+   anchor.
+
+3. **Require the claimed head branch to exist remotely.** PR creation needs a
+   remote head. The branch-claim/bootstrap step in `/sdd:new` or `/sdd:auto`
+   owns that initial publication; ship does not hide a bootstrap push. If
+   `origin/<head_branch>` is absent, leave the change at `READY_FOR_PR` untouched and hand
+   off the exact `git push -u origin <head_branch>` command. If it exists,
+   continue; the only push performed by this ship flow is the final push in
+   step 6, after `record-pr` has committed `PR_OPEN`.
+
+4. **Open or validate the Pull Request** with `gh pr create`, base `base_branch`, head `head_branch`:
    - Title: `SDD: <feature>`.
    - Body: the proposal's Why/What, the review verdict, and a link to the change directory.
    - **Attribution follows the project's settings**: only append the Claude Code attribution line if `includeCoAuthoredBy` is not disabled in the effective settings — never hardcode a signature against the user's configuration.
@@ -54,9 +73,14 @@ Ship publishes. It never reviews, never fixes, never merges and never archives.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-pr <feature> --url <PR-URL>
    ```
 
-   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN`, then commits and pushes `STATE.md` once. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
+   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN` in an explicit STATE-only lifecycle commit, and never pushes. Ship remains the only phase allowed to push. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
 
-6. **Handoff when the environment cannot publish** (no remote, no `gh`, push refused): leave the change at `READY_FOR_PR`, report the **exact command the user has to run**, and say that such a change is still archivable later through local git evidence — the reviewed commit contained in the base, or a base commit carrying the same change after a squash or rebase (shared rule 8). Under `/sdd:auto` this never aborts the run.
+6. **Push the final lifecycle commit.** Run `git push origin <head_branch>` exactly
+   once, after `record-pr` succeeds. This publishes the `PR_OPEN` STATE-only
+   commit; `record-pr` never invokes push. If the final push is refused, leave
+   the local state at `PR_OPEN` and report the exact retry command. If the
+   branch bootstrap, `gh`, or the final push is unavailable, hand off without
+   fabricating evidence; do not run `/sdd:archive`.
 
 7. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> ship` (unconditionally; it no-ops when tracking is off).
 

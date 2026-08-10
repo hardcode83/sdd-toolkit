@@ -72,6 +72,18 @@ DIFF_OPTIONS = ("--no-color", "--no-ext-diff", "--no-renames", "--unified=0")
 # check cheap, and a miss says explicitly how far back it looked.
 EQUIVALENCE_SCAN_LIMIT = 200
 SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+FEATURE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+LIFECYCLE_SUBJECT_RE = re.compile(
+    r"^chore\(sdd\): lifecycle (?P<feature>[^ ]+) (?P<transition>[^ ]+)$"
+)
+LIFECYCLE_TRANSITIONS = {
+    ("ACTIVE", "LOCAL_VERIFIED"),
+    ("LOCAL_VERIFIED", "READY_FOR_PR"),
+    ("READY_FOR_PR", "PR_OPEN"),
+    # A PR that was already merged can be recorded before the local state has
+    # observed it as OPEN. It is still a lifecycle-only transition.
+    ("READY_FOR_PR", "MERGED"),
+}
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -81,6 +93,155 @@ class LifecycleError(RuntimeError):
 
 def state_path(change: Path) -> Path:
     return change / "STATE.md"
+
+
+def validate_feature_slug(feature: str) -> str:
+    """Return a safe single-directory feature identifier."""
+    if (
+        not feature
+        or feature in {".", ".."}
+        or ".." in feature
+        or "/" in feature
+        or "\\" in feature
+        or not FEATURE_RE.fullmatch(feature)
+    ):
+        raise LifecycleError(
+            "Feature must be one safe directory name without traversal or aliases."
+        )
+    return feature
+
+
+def repo_root(root: Path, runner: Runner = subprocess.run) -> Path:
+    return Path(
+        run_command(["git", "rev-parse", "--show-toplevel"], root, runner)
+        .stdout.strip()
+    )
+
+
+def lifecycle_path(root: Path, feature: str, runner: Runner = subprocess.run) -> str:
+    validate_feature_slug(feature)
+    repository = repo_root(root, runner)
+    expected = (repository / "sdd" / "changes" / feature / "STATE.md").resolve()
+    return expected.relative_to(repository.resolve()).as_posix()
+
+
+def status_paths(root: Path, runner: Runner = subprocess.run) -> list[tuple[str, str]]:
+    result = run_command(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"], root, runner
+    )
+    paths: list[tuple[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        code = line[:2]
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append((code, path))
+    return paths
+
+
+def ensure_clean_or_only_expected_state(
+    root: Path, expected_path: str, runner: Runner = subprocess.run
+) -> None:
+    """Reject user changes before the helper takes ownership of STATE.md."""
+    for code, path in status_paths(root, runner):
+        if path != expected_path:
+            raise LifecycleError(
+                "Worktree or index contains changes outside the lifecycle STATE.md "
+                f"allowlist: {path}."
+            )
+        # A staged STATE change belongs to the user (or an earlier operation),
+        # so never silently replace it. The helper may consume only its own
+        # canonical, unstaged state written by the preceding lifecycle command.
+        if code[0] != " " and code[0] != "?":
+            raise LifecycleError(
+                "STATE.md already has staged changes; refusing to overwrite them."
+            )
+
+
+def state_from_text(text: str, label: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise LifecycleError(f"{label} must start with YAML-style frontmatter.")
+    data: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return data
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if ":" not in line:
+            raise LifecycleError(f"Invalid lifecycle metadata line in {label}: {line}")
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in data:
+            raise LifecycleError(f"Duplicate lifecycle key '{key}' in {label}.")
+        data[key] = value.strip()
+    raise LifecycleError(f"{label} has no closing frontmatter delimiter.")
+
+
+def commit_state_text(
+    root: Path, commit: str, path: str, runner: Runner = subprocess.run
+) -> str:
+    return run_command(["git", "show", f"{commit}:{path}"], root, runner).stdout
+
+
+def lifecycle_commit(
+    root: Path,
+    feature: str,
+    transition: str,
+    data: dict[str, str],
+    runner: Runner = subprocess.run,
+) -> str:
+    """Persist one lifecycle transition as one STATE-only commit.
+
+    The helper owns only the canonical STATE bytes it is asked to write. It
+    refuses unrelated dirty/staged paths, never rewrites history, and restores
+    its temporary staging/bytes if the commit command fails.
+    """
+    expected_path = lifecycle_path(root, feature, runner)
+    ensure_clean_or_only_expected_state(root, expected_path, runner)
+    path = repo_root(root, runner) / expected_path
+    original_exists = path.exists()
+    original_bytes = path.read_bytes() if original_exists else b""
+    parent = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    write_state(path.parent, data)
+    try:
+        run_command(["git", "add", "--", expected_path], root, runner)
+        subject = f"chore(sdd): lifecycle {feature} {transition}"
+        result = runner(
+            [
+                "git",
+                "commit",
+                "--only",
+                "-m",
+                subject,
+                "-m",
+                f"SDD-Lifecycle-Feature: {feature}",
+                "--",
+                expected_path,
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()
+            raise LifecycleError(
+                f"git commit failed: {detail or 'unknown error'}"
+            )
+    except Exception:
+        run_command(["git", "restore", "--staged", "--", expected_path], root, runner)
+        if original_exists:
+            path.write_bytes(original_bytes)
+        elif path.exists():
+            path.unlink()
+        raise
+    child = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    if child == parent:
+        raise LifecycleError("Lifecycle commit did not advance HEAD.")
+    return child
 
 
 def read_state(change: Path) -> dict[str, str] | None:
@@ -137,6 +298,7 @@ def write_state(change: Path, data: dict[str, str]) -> bool:
 
 
 def active_change(root: Path, feature: str) -> Path:
+    validate_feature_slug(feature)
     change = root / "sdd" / "changes" / feature
     if not change.is_dir():
         raise LifecycleError(
@@ -305,7 +467,16 @@ def verify_equivalent_merge(
     merge_base = run_command(
         ["git", "merge-base", base_ref, implementation_sha], root, runner
     ).stdout.strip()
-    branch_total = range_fingerprint(root, merge_base, implementation_sha, runner)
+    branch_tip = implementation_sha
+    if try_command(
+        ["git", "rev-parse", "--verify", f"{state['head_branch']}^{{commit}}"],
+        root,
+        runner,
+    ):
+        branch_tip = run_command(
+            ["git", "rev-parse", f"{state['head_branch']}^{{commit}}"], root, runner
+        ).stdout.strip()
+    branch_total = range_fingerprint(root, merge_base, branch_tip, runner)
     if not branch_total:
         raise LifecycleError(
             f"Reviewed commit {implementation_sha[:12]} changes nothing relative to "
@@ -318,7 +489,7 @@ def verify_equivalent_merge(
         return candidates[branch_total]
     # A rebase copies each commit: every one of them must be present in the base.
     branch_commits = run_command(
-        ["git", "rev-list", "--no-merges", f"{merge_base}..{implementation_sha}"],
+        ["git", "rev-list", "--no-merges", f"{merge_base}..{branch_tip}"],
         root,
         runner,
     ).stdout.split()
@@ -422,6 +593,124 @@ def git_context(root: Path, base_branch: str, runner: Runner = subprocess.run) -
         "head_branch": head_branch,
         "implementation_sha": implementation_sha,
     }
+
+
+def classify_lifecycle_commit(
+    root: Path,
+    commit: str,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> tuple[str, str]:
+    """Validate one post-anchor commit and return (feature, transition)."""
+    expected_path = lifecycle_path(root, feature, runner)
+    parents = run_command(
+        ["git", "show", "-s", "--format=%P", commit], root, runner
+    ).stdout.split()
+    if len(parents) != 1:
+        raise LifecycleError(f"Commit {commit[:12]} is not a single-parent lifecycle commit.")
+    parent = parents[0]
+    subject = run_command(
+        ["git", "show", "-s", "--format=%s", commit], root, runner
+    ).stdout.strip()
+    match = LIFECYCLE_SUBJECT_RE.fullmatch(subject)
+    if not match:
+        raise LifecycleError(f"Commit {commit[:12]} has an unauthorized lifecycle subject.")
+    commit_feature = validate_feature_slug(match.group("feature"))
+    if commit_feature != feature:
+        raise LifecycleError(
+            f"Commit {commit[:12]} targets lifecycle feature '{commit_feature}', "
+            f"not '{feature}'."
+        )
+    transition = match.group("transition")
+    try:
+        before, after = transition.split("->", 1)
+    except ValueError as error:
+        raise LifecycleError(f"Commit {commit[:12]} has an invalid lifecycle transition.") from error
+    if (before, after) not in LIFECYCLE_TRANSITIONS:
+        raise LifecycleError(f"Commit {commit[:12]} has an invalid lifecycle transition.")
+    body = run_command(["git", "show", "-s", "--format=%B", commit], root, runner).stdout
+    trailer = f"SDD-Lifecycle-Feature: {feature}"
+    if sum(line.strip() == trailer for line in body.splitlines()) != 1:
+        raise LifecycleError(f"Commit {commit[:12]} is missing its exact lifecycle trailer.")
+    paths = run_command(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
+        root,
+        runner,
+    ).stdout.splitlines()
+    if paths != [expected_path]:
+        raise LifecycleError(
+            f"Commit {commit[:12]} modifies paths outside the lifecycle allowlist: "
+            f"{', '.join(paths) or '(none)'}."
+        )
+    parent_has_state = try_command(
+        ["git", "cat-file", "-e", f"{parent}:{expected_path}"], root, runner
+    )
+    if not parent_has_state:
+        raise LifecycleError(
+            f"Commit {commit[:12]} has no valid parent STATE.md at {expected_path}."
+        )
+    parent_text = commit_state_text(root, parent, expected_path, runner)
+    child_text = commit_state_text(root, commit, expected_path, runner)
+    parent_state = state_from_text(parent_text, f"{parent}:{expected_path}")
+    child_state = state_from_text(child_text, f"{commit}:{expected_path}")
+    if commit in child_text:
+        raise LifecycleError(f"Commit {commit[:12]} self-references its own SHA in STATE.md.")
+    if (
+        parent_state.get("state") != before
+        or child_state.get("state") != after
+    ):
+        raise LifecycleError(
+            f"Commit {commit[:12]} does not encode {before} -> {after} in STATE.md."
+        )
+    if after == "READY_FOR_PR":
+        if child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
+            raise LifecycleError(
+                "READY_FOR_PR lifecycle commit must preserve the stable implementation_sha anchor."
+            )
+    elif after == "LOCAL_VERIFIED":
+        if child_state.get("implementation_sha") != parent:
+            raise LifecycleError(
+                "LOCAL_VERIFIED lifecycle commit must preserve its implementation parent."
+            )
+    elif child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
+        raise LifecycleError("Lifecycle commit changed the stable implementation_sha anchor.")
+    return commit_feature, transition
+
+
+def validate_ship_suffix(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> list[str]:
+    """Validate every commit after implementation_sha before ship pushes.
+
+    The lifecycle allowlist is exactly ``sdd/changes/<feature>/STATE.md``;
+    generic observability such as ``sdd/metrics.md`` is deliberately excluded.
+    """
+    change = active_change(root, feature)
+    data = read_state(change)
+    if not data or not data.get("implementation_sha"):
+        raise LifecycleError("STATE.md has no implementation_sha anchor.")
+    implementation_sha = data["implementation_sha"]
+    if not SHA_RE.fullmatch(implementation_sha):
+        raise LifecycleError("Recorded implementation_sha is not a valid Git SHA.")
+    if not try_command(
+        ["git", "cat-file", "-e", f"{implementation_sha}^{{commit}}"], root, runner
+    ):
+        raise LifecycleError("Recorded implementation_sha is unknown to this repository.")
+    head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", implementation_sha, head], root, runner
+    ):
+        raise LifecycleError("implementation_sha must be an ancestor of HEAD before ship.")
+    if status_paths(root, runner):
+        raise LifecycleError("Worktree must be clean before ship.")
+    commits = run_command(
+        ["git", "rev-list", "--reverse", f"{implementation_sha}..{head}"], root, runner
+    ).stdout.split()
+    for commit in commits:
+        classify_lifecycle_commit(root, commit, feature, runner)
+    return commits
 
 
 def query_pr(url: str, root: Path, runner: Runner = subprocess.run) -> dict[str, object]:
@@ -536,8 +825,14 @@ def mark_local_verified(root: Path, feature: str) -> str:
         )
     data["state"] = "LOCAL_VERIFIED"
     data["local_review"] = "APPROVED"
-    changed = write_state(change, data)
-    return "LOCAL_VERIFIED recorded." if changed else "LOCAL_VERIFIED already recorded."
+    if current == "LOCAL_VERIFIED":
+        return "LOCAL_VERIFIED already recorded."
+    data["implementation_sha"] = run_command(
+        ["git", "rev-parse", "HEAD"], root
+    ).stdout.strip()
+    lifecycle = lifecycle_commit(root, feature, "ACTIVE->LOCAL_VERIFIED", data)
+    classify_lifecycle_commit(root, lifecycle, feature)
+    return "LOCAL_VERIFIED recorded."
 
 
 def mark_ready(
@@ -554,30 +849,29 @@ def mark_ready(
     if current in {"PR_OPEN", "MERGED"}:
         return f"READY_FOR_PR already passed; lifecycle is {current}."
     if current == "READY_FOR_PR":
-        # Idempotent at the same HEAD, but NOT a no-op once the branch has moved.
-        # `implementation_sha` is not decoration: `verify-merge` fingerprints
-        # `merge-base..implementation_sha`, so a stale value makes the merge gate
-        # certify only the commits up to it. Re-running /sdd:review after fixing its
-        # findings — the normal flow when the panel returns FAIL — used to leave the
-        # field pointing at the unfixed commit, and archive would still pass.
-        refreshed = git_context(root, base_branch, runner)
-        if refreshed == {key: data.get(key) for key in refreshed}:
-            return "READY_FOR_PR already recorded."
-        previous = (data.get("implementation_sha") or "")[:12] or "(none)"
-        data.update(refreshed)
-        write_state(change, data)
-        return (
-            "READY_FOR_PR re-recorded: implementation_sha "
-            f"{previous} -> {refreshed['implementation_sha'][:12]}."
-        )
-    if current not in {"LOCAL_VERIFIED", "READY_FOR_PR"}:
+        validate_ship_suffix(root, feature, runner)
+        return "READY_FOR_PR already recorded."
+    if current != "LOCAL_VERIFIED":
         raise LifecycleError(f"Cannot mark READY_FOR_PR from lifecycle state '{current}'.")
-    data.update(git_context(root, base_branch, runner))
+    expected_path = lifecycle_path(root, feature, runner)
+    ensure_clean_or_only_expected_state(root, expected_path, runner)
+    if (change / "STATE.md").read_text(encoding="utf-8") != render_state(data):
+        raise LifecycleError(
+            "STATE.md has pre-existing edits; refusing to overwrite lifecycle metadata."
+        )
+    context = git_context(root, base_branch, runner)
+    if not data.get("implementation_sha"):
+        raise LifecycleError("LOCAL_VERIFIED metadata has no stable implementation_sha anchor.")
+    context["implementation_sha"] = data["implementation_sha"]
+    data.update(context)
     data["state"] = "READY_FOR_PR"
     for field in ("pr_number", "pr_url", "pr_state", "merge_sha"):
         data[field] = ""
-    changed = write_state(change, data)
-    return "READY_FOR_PR recorded." if changed else "READY_FOR_PR already recorded."
+    lifecycle = lifecycle_commit(
+        root, feature, "LOCAL_VERIFIED->READY_FOR_PR", data, runner
+    )
+    classify_lifecycle_commit(root, lifecycle, feature, runner)
+    return "READY_FOR_PR recorded."
 
 
 def record_pr(
@@ -622,9 +916,19 @@ def record_pr(
         prospective["merge_sha"] = ""
     else:
         raise LifecycleError(f"Unsupported GitHub PR state '{github_state}'.")
-    changed = write_state(change, prospective)
+    if data.get("state") in {"PR_OPEN", "MERGED"}:
+        return f"{data['state']} already recorded."
+    expected_path = lifecycle_path(root, feature, runner)
+    ensure_clean_or_only_expected_state(root, expected_path, runner)
+    if (change / "STATE.md").read_text(encoding="utf-8") != render_state(data):
+        raise LifecycleError(
+            "STATE.md has pre-existing edits; refusing to overwrite lifecycle metadata."
+        )
+    transition = "READY_FOR_PR->MERGED" if prospective["state"] == "MERGED" else "READY_FOR_PR->PR_OPEN"
+    lifecycle = lifecycle_commit(root, feature, transition, prospective, runner)
+    classify_lifecycle_commit(root, lifecycle, feature, runner)
     recorded = prospective["state"]
-    return f"{recorded} recorded." if changed else f"{recorded} already recorded."
+    return f"{recorded} recorded."
 
 
 def require_merge(
@@ -839,6 +1143,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("start", "mark-local-verified", "verify-merge"):
         command = subparsers.add_parser(name)
         command.add_argument("feature")
+    ship = subparsers.add_parser("validate-ship")
+    ship.add_argument("feature")
     ready = subparsers.add_parser("mark-ready")
     ready.add_argument("feature")
     ready.add_argument("--base", required=True)
@@ -863,6 +1169,9 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_ready(root, args.feature, args.base)
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
+        elif args.command == "validate-ship":
+            commits = validate_ship_suffix(root, args.feature)
+            message = f"Ship lifecycle gates passed ({len(commits)} suffix commit(s))."
         elif args.command == "verify-merge":
             data, _, changed = require_merge(root, args.feature)
             state = "recorded" if changed else "already recorded"

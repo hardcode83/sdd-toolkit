@@ -44,6 +44,16 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("`/sdd:review <feature>`", ship)
         self.assertIn("Never ask for the base branch", ship)
 
+    def test_ship_records_pr_before_its_single_final_push(self) -> None:
+        ship = self.read_skill("ship")
+        bootstrap = ship.index("branch-claim/bootstrap")
+        record = ship.index("record-pr <feature> --url <PR-URL>")
+        final_push = ship.index("Push the final lifecycle commit")
+        self.assertLess(bootstrap, record)
+        self.assertLess(record, final_push)
+        self.assertIn("exactly\n   once", ship[final_push:])
+        self.assertIn("record-pr` never invokes push", ship[final_push:])
+
     def test_review_offers_to_publish_but_stays_report_only(self) -> None:
         review = self.read_skill("review")
         self.assertIn("skills/ship/SKILL.md", review)

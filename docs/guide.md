@@ -205,6 +205,15 @@ El panel salta al *completarse una sección* — una tarea suelta solo lo dispar
 
 ## Las reglas de oro
 
+## Integridad del lifecycle
+
+La identidad de implementación vive en `implementation_sha` y no cambia cuando
+se persiste metadata. `mark-ready` y `record-pr` crean commits lifecycle
+STATE-only, sin self-reference; `record-pr` no hace push. El gate ejecutable es
+`scripts/sdd_lifecycle.py validate-ship`, invocado por `skills/ship`, y valida
+ancestry y todos los commits del sufijo uno por uno. La única allowlist es
+`sdd/changes/<feature>/STATE.md`; el push sigue siendo exclusivo de ship.
+
 1. **Los documentos mandan.** Si el código y la spec discrepan, se arregla el que esté mintiendo — nunca se divergen en silencio.
 2. **Tú eres el gate.** Ninguna fase avanza sola; aprobar el proposal es la decisión más barata e importante del ciclo.
 3. **Proposals just-in-time.** El roadmap es un índice: una línea por feature más sus dependencias; el detalle se escribe cuando toca.
