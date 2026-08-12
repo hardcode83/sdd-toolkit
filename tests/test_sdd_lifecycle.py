@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import sdd_lifecycle  # noqa: E402
 from sdd_lifecycle import (  # noqa: E402
     classify_lifecycle_commit,
     LifecycleError,
@@ -19,6 +20,7 @@ from sdd_lifecycle import (  # noqa: E402
     finalize_archive,
     mark_local_verified,
     mark_ready,
+    publish_archive,
     read_state,
     record_pr,
     require_merge,
@@ -957,6 +959,147 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("ARCHIVED", read_state(archived)["state"])
         self.assertIn(
             "- [x] example", (self.root / "sdd/roadmap.md").read_text(encoding="utf-8")
+        )
+
+
+class PublishArchiveTests(unittest.TestCase):
+    """Closing the loop where everybody else can see it.
+
+    An archive committed and never pushed leaves the base diverged from origin
+    forever: every later feature branches from `origin/<base>` (EnterWorktree's
+    `fresh` default), so it branches from a base without the archive, the check
+    reports unpushed commits on every feature, and another clone still reads the
+    change as active. These tests pin what is allowed to be pushed — and what
+    stops the push instead.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.archive = self.root / "sdd" / "changes" / "archive" / "2026-01-01-example"
+        self.archive.mkdir(parents=True)
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [x] example → changes/archive/2026-01-01-example/\n",
+            encoding="utf-8",
+        )
+        self.git("init", "-b", "main")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "SDD Test")
+        (self.root / "README.md").write_text("# fixture\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+
+        remote_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(remote_dir.cleanup)
+        self.remote = Path(remote_dir.name)
+        self.git("init", "--bare", str(self.remote))
+        self.git("remote", "add", "origin", str(self.remote))
+        self.git("push", "-u", "origin", "main")
+        self.write_archive_state()
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=self.root, check=True, capture_output=True, text=True
+        )
+
+    def write_archive_state(self, state: str = "ARCHIVED", base: str = "main") -> None:
+        (self.archive / "STATE.md").write_text(
+            f"---\nschema: 1\nstate: {state}\nbase_branch: {base}\n"
+            "merge_evidence: pr\nmerge_sha: abc123\n---\n",
+            encoding="utf-8",
+        )
+
+    def commit_archive(self) -> str:
+        self.git("add", "-A", "sdd")
+        self.git("commit", "-m", "chore(sdd): archive example")
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def remote_sha(self, ref: str = "refs/heads/main") -> str:
+        return subprocess.run(
+            ["git", "--git-dir", str(self.remote), "rev-parse", ref],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def test_it_pushes_the_archive_commit_to_the_base(self) -> None:
+        local = self.commit_archive()
+        message = publish_archive(self.root, "example")
+        self.assertIn("Published 1 archive commit(s)", message)
+        self.assertEqual(local, self.remote_sha())
+
+    def test_dry_run_reports_what_would_be_pushed_and_pushes_nothing(self) -> None:
+        before = self.remote_sha()
+        self.commit_archive()
+        message = publish_archive(self.root, "example", dry_run=True)
+        self.assertIn("Would push 1 archive commit(s)", message)
+        self.assertEqual(before, self.remote_sha())
+
+    def test_an_uncommitted_archive_is_refused_before_anything_is_pushed(self) -> None:
+        """Half a staged archive is exactly how an orphan STATE.md reaches main."""
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("uncommitted changes", str(caught.exception))
+
+    def test_unrelated_local_work_on_the_base_stops_the_push(self) -> None:
+        self.commit_archive()
+        (self.root / "src.py").write_text("print('hola')\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-m", "trabajo suelto en main")
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("outside sdd/", str(caught.exception))
+        self.assertIn("src.py", str(caught.exception))
+
+    def test_a_remote_that_moved_on_is_the_users_to_integrate(self) -> None:
+        """Never a force-push, and never a silent merge on somebody's behalf."""
+        local = self.commit_archive()
+        # A colleague's commit reaches origin/main while we were archiving: it
+        # branches from the base we started at, so the two histories diverge.
+        self.git("switch", "-c", "colega", "main~1")
+        (self.root / "colega.md").write_text("otro trabajo\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-m", "trabajo del colega")
+        self.git("push", "origin", "colega:main")
+        self.git("switch", "main")
+        self.git("branch", "-D", "colega")
+        self.assertNotEqual(local, self.remote_sha())
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("moved on", str(caught.exception))
+        self.assertNotIn("force", str(caught.exception).split("never")[0])
+        self.assertNotEqual(local, self.remote_sha())
+
+    def test_publishing_from_another_branch_is_refused(self) -> None:
+        self.commit_archive()
+        self.git("switch", "-c", "sdd/otra")
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("must happen on 'main'", str(caught.exception))
+
+    def test_a_change_that_is_not_archived_yet_has_nothing_to_publish(self) -> None:
+        self.write_archive_state(state="MERGED")
+        self.commit_archive()
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("not recorded as ARCHIVED", str(caught.exception))
+
+    def test_no_remote_is_a_supported_workflow_not_an_error(self) -> None:
+        self.commit_archive()
+        self.git("remote", "remove", "origin")
+        self.assertIn("stays local", publish_archive(self.root, "example"))
+
+    def test_publishing_twice_is_idempotent(self) -> None:
+        self.commit_archive()
+        publish_archive(self.root, "example")
+        self.assertIn("already matches", publish_archive(self.root, "example"))
+
+    def test_the_cli_exposes_it(self) -> None:
+        self.commit_archive()
+        self.assertEqual(
+            0,
+            sdd_lifecycle.main(
+                ["--root", str(self.root), "publish-archive", "example", "--dry-run"]
+            ),
         )
 
 

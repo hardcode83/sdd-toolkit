@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -554,6 +556,11 @@ class RetirementTests(SessionTestCase):
         self.archive("alpha")
         self.linked = self.root / ".claude" / "worktrees" / "sdd+alpha"
         self.git("worktree", "add", "-q", str(self.linked), "-b", "sdd/alpha")
+        # Docker is absent unless a test says otherwise: whether the machine
+        # running the suite has a daemon must not change what is asserted.
+        patch = mock.patch.object(sdd_session, "try_docker", return_value=None)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def archive(self, feature: str, base: str = "main") -> Path:
         path = self.root / "sdd" / "changes" / "archive" / f"2026-01-01-{feature}"
@@ -663,18 +670,22 @@ class RetirementTests(SessionTestCase):
 
     def test_retire_removes_worktree_branch_and_binding(self) -> None:
         sdd_session.claim(self.root, "alpha", worktree=self.linked)
-        message = sdd_session.retire(self.root, "alpha")
+        outcome = sdd_session.retire(self.root, "alpha")
         self.assertFalse(self.linked.exists())
         self.assertNotIn("sdd/alpha", self.git("branch").stdout)
         self.assertEqual("", sdd_session.resolve(self.root, "alpha"))
-        self.assertIn("Removed worktree", message)
+        self.assertTrue(outcome.unregistered)
+        self.assertTrue(outcome.directory_gone)
+        self.assertTrue(outcome.branch_deleted)
+        self.assertTrue(outcome.binding_released)
+        self.assertIn("disk:    clean", outcome.render())
 
     def test_retire_accepts_a_path_when_no_feature_is_known(self) -> None:
         other = self.root / ".claude" / "worktrees" / "loose"
         self.git("worktree", "add", "-q", str(other), "--detach")
-        message = sdd_session.retire(self.root, path=other, force=True)
+        outcome = sdd_session.retire(self.root, path=other, force=True)
         self.assertFalse(other.exists())
-        self.assertIn("Removed worktree", message)
+        self.assertTrue(outcome.directory_gone)
 
     def test_retiring_something_unknown_is_an_actionable_error(self) -> None:
         with self.assertRaises(SessionError) as caught:
@@ -695,6 +706,347 @@ class RetirementTests(SessionTestCase):
         self.assertEqual(
             2, sdd_session.main(["--root", str(self.root), "retire"])
         )
+
+
+class DockerStub:
+    """A daemon that reports exactly the residue a test asks for.
+
+    It answers `docker` itself and delegates everything else — git, chmod — to
+    the real subprocess, so ordering assertions are made against real git
+    behaviour rather than a second simulation of it.
+    """
+
+    def __init__(
+        self,
+        workdir: Path | None = None,
+        *,
+        project: str = "sddalpha",
+        containers: tuple[str, ...] = (),
+        volumes: tuple[str, ...] = (),
+        teardown_returncode: int = 0,
+        teardown_clears: bool = True,
+    ) -> None:
+        self.workdir = str(workdir) if workdir else ""
+        self.project = project
+        self.containers = containers
+        self.volumes = volumes
+        self.teardown_returncode = teardown_returncode
+        self.teardown_clears = teardown_clears
+        self.torn_down = False
+        self.calls: list[str] = []
+        self.teardown_cwd: str = ""
+
+    def _done(self, stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], returncode, stdout, "")
+
+    def __call__(self, args, **kwargs):  # type: ignore[no-untyped-def]
+        if isinstance(args, str):
+            self.calls.append(f"teardown:{args}")
+            self.teardown_cwd = str(kwargs.get("cwd", ""))
+            if self.teardown_clears and not self.teardown_returncode:
+                self.torn_down = True
+            return self._done(returncode=self.teardown_returncode)
+        if args and args[0] == "docker":
+            return self._docker(list(args[1:]))
+        if args and args[0] == "git":
+            self.calls.append("git:" + " ".join(args[1:3]))
+        return subprocess.run(args, **kwargs)
+
+    def _docker(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        self.calls.append("docker:" + " ".join(args[:2]))
+        gone = self.torn_down
+        if args[:1] == ["version"]:
+            return self._done("27.0.0")
+        if args[:2] == ["compose", "ls"]:
+            if gone or not self.workdir:
+                return self._done("[]")
+            return self._done(
+                json.dumps(
+                    [
+                        {
+                            "Name": self.project,
+                            "Status": "running(1)",
+                            "ConfigFiles": f"{self.workdir}/docker-compose.yml",
+                        }
+                    ]
+                )
+            )
+        if args[:1] == ["ps"]:
+            if gone or f"label={sdd_session.COMPOSE_WORKDIR_LABEL}={self.workdir}" not in args:
+                return self._done("")
+            return self._done(
+                "\n".join(f"{name}\trunning\t{self.project}" for name in self.containers)
+            )
+        if args[:2] == ["volume", "ls"]:
+            return self._done("" if gone else "\n".join(self.volumes))
+        if args[:1] == ["images"]:
+            return self._done("" if gone else f"{self.project}-backend:latest")
+        if args[:2] == ["system", "df"]:
+            return self._done(
+                json.dumps(
+                    {
+                        "Volumes": [{"Name": name, "Size": "1.5GB"} for name in self.volumes],
+                        "Images": [
+                            {
+                                "Repository": f"{self.project}-backend",
+                                "Tag": "latest",
+                                "Size": "935MB",
+                            }
+                        ],
+                    }
+                )
+            )
+        return self._done()
+
+
+class DecommissionTests(SessionTestCase):
+    """What retirement owes the machine, not just the repository.
+
+    Every one of these is a measured failure: `retire` only ever spoke git, so
+    the compose stack a worktree owned survived it — and its named volumes were
+    exactly what made the directory undeletable. Git unregistered the worktree
+    first, so the leftover was then invisible to `worktrees` (git no longer knew
+    it) and to `orphans` (the binding had just been released). Three changes of
+    that left ~30 GB and three orphan directories nobody reported.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        archive = self.root / "sdd" / "changes" / "archive" / "2026-01-01-alpha"
+        archive.mkdir(parents=True)
+        (archive / "STATE.md").write_text(
+            "---\nschema: 1\nstate: ARCHIVED\nbase_branch: main\n---\n", encoding="utf-8"
+        )
+        self.linked = self.root / ".claude" / "worktrees" / "sdd+alpha"
+        self.git("worktree", "add", "-q", str(self.linked), "-b", "sdd/alpha")
+
+    def without_docker(self) -> None:
+        """For the tests that are about git and disk, not about containers."""
+        patch = mock.patch.object(sdd_session, "try_docker", return_value=None)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def survive_removal(self) -> None:
+        """git unregisters the worktree and the directory stays behind.
+
+        The measured failure, in the only order that produces it: `git worktree
+        remove` reports success, deletion does not happen (in reality the
+        deny-delete ACL on the volume mountpoints), and from that moment git no
+        longer knows the path.
+        """
+        original = sdd_session.try_git
+
+        def unregister_but_keep(args, root, runner=subprocess.run):  # type: ignore[no-untyped-def]
+            result = original(args, root, runner)
+            if list(args[:2]) == ["worktree", "remove"]:
+                (self.linked / "node_modules").mkdir(parents=True, exist_ok=True)
+            return result
+
+        for patch in (
+            mock.patch.object(sdd_session, "try_git", unregister_but_keep),
+            mock.patch.object(
+                sdd_session, "remove_directory", return_value=(False, "deny delete ACL")
+            ),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def declare_teardown(self, command: str = "make down") -> None:
+        (self.root / "sdd" / "project.md").write_text(
+            "# Project\n\n## Worktree bootstrap\n\nisolation: always\n\n"
+            f"teardown: {command}\n",
+            encoding="utf-8",
+        )
+
+    def test_residue_is_attributed_by_what_docker_recorded(self) -> None:
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        found = sdd_session.residue_of(self.linked, stub)
+        self.assertTrue(found.available)
+        self.assertEqual(("sddalpha",), found.projects)
+        self.assertEqual(("alpha-db-1",), found.containers)
+        self.assertEqual(("sddalpha_data",), found.volumes)
+        self.assertEqual(1, found.running)
+        self.assertEqual(int(1.5 * 10**9) + 935 * 10**6, found.size)
+
+    def test_another_worktrees_stack_is_never_attributed_to_this_one(self) -> None:
+        elsewhere = self.root / ".claude" / "worktrees" / "sdd+beta"
+        stub = DockerStub(elsewhere, containers=("beta-db-1",), volumes=("sddbeta_data",))
+        self.assertTrue(sdd_session.residue_of(self.linked, stub).empty)
+
+    def test_docker_absent_is_not_an_error(self) -> None:
+        found = sdd_session.residue_of(self.linked, lambda *a, **k: (_ for _ in ()).throw(OSError()))
+        self.assertFalse(found.available)
+        self.assertIn("docker did not answer", found.describe())
+
+    def test_a_stack_nobody_declared_how_to_stop_refuses_and_says_what_to_write(self) -> None:
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        with self.assertRaises(SessionError) as caught:
+            sdd_session.retire(self.root, "alpha", runner=stub)
+        message = str(caught.exception)
+        self.assertIn("teardown: docker compose down --volumes", message)
+        self.assertIn("1 volume(s)", message)
+        # Nothing was touched: the residue is still attributable, which is the
+        # whole reason for refusing instead of continuing.
+        self.assertTrue(self.linked.exists())
+        self.assertNotIn("git:worktree remove", stub.calls)
+
+    def test_worktrees_reports_the_same_refusal_retire_would_raise(self) -> None:
+        """`RETIRABLE` has to mean "retire will do it". Finding the missing
+        teardown only inside retire would make the listing a lie."""
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        status = [
+            s
+            for s in sdd_session.worktree_status(self.root, stub)
+            if Path(s.path) == self.linked.resolve()
+        ][0]
+        self.assertFalse(status.retirable)
+        self.assertTrue(
+            any("declares no teardown" in b for b in status.blockers), status.blockers
+        )
+
+    def test_a_declared_teardown_costs_no_docker_call_in_the_listing(self) -> None:
+        """`worktrees` runs on every /sdd:doctor and /sdd:status."""
+        self.declare_teardown()
+        stub = DockerStub(self.linked, containers=("alpha-db-1",))
+        sdd_session.worktree_status(self.root, stub)
+        self.assertEqual([], [call for call in stub.calls if call.startswith("docker:")])
+
+    def test_the_teardown_runs_inside_the_worktree_and_before_git(self) -> None:
+        self.declare_teardown("docker compose down --volumes")
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        outcome = sdd_session.retire(self.root, "alpha", runner=stub)
+        self.assertEqual(str(self.linked), stub.teardown_cwd)
+        teardown_at = stub.calls.index("teardown:docker compose down --volumes")
+        removal_at = stub.calls.index("git:worktree remove")
+        self.assertLess(teardown_at, removal_at, stub.calls)
+        self.assertTrue(outcome.teardown_ok)
+        self.assertTrue(outcome.residue_after.empty)
+        self.assertTrue(outcome.directory_gone)
+
+    def test_a_failing_teardown_stops_before_git_changes_anything(self) -> None:
+        self.declare_teardown()
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), teardown_returncode=1)
+        with self.assertRaises(SessionError) as caught:
+            sdd_session.retire(self.root, "alpha", runner=stub)
+        self.assertIn("teardown", str(caught.exception))
+        self.assertTrue(self.linked.exists())
+        self.assertNotIn("git:worktree remove", stub.calls)
+
+    def test_residue_surviving_a_successful_teardown_is_reported(self) -> None:
+        """`down` without `--volumes` is the common half-teardown."""
+        self.declare_teardown("docker compose down")
+        stub = DockerStub(
+            self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",),
+            teardown_clears=False,
+        )
+        outcome = sdd_session.retire(self.root, "alpha", runner=stub)
+        self.assertFalse(outcome.residue_after.empty)
+        self.assertTrue(any("--volumes" in note for note in outcome.notes), outcome.notes)
+
+    def test_skip_teardown_keeps_the_resources_on_purpose(self) -> None:
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        outcome = sdd_session.retire(self.root, "alpha", skip_teardown=True, runner=stub)
+        self.assertEqual("", outcome.teardown)
+        self.assertTrue(outcome.directory_gone)
+        self.assertNotIn("teardown:", "".join(stub.calls))
+
+    def test_a_one_off_teardown_command_overrides_an_undeclared_project(self) -> None:
+        stub = DockerStub(self.linked, containers=("alpha-db-1",))
+        outcome = sdd_session.retire(
+            self.root, "alpha", teardown="make nuke", runner=stub
+        )
+        self.assertEqual("make nuke", outcome.teardown)
+        self.assertTrue(outcome.teardown_ok)
+
+    def test_the_teardown_is_read_from_project_md_in_its_three_shapes(self) -> None:
+        for line in (
+            "teardown: make down",
+            "- teardown: make down",
+            "**teardown**: `make down`",
+        ):
+            (self.root / "sdd" / "project.md").write_text(
+                f"# Project\n\n{line}\n", encoding="utf-8"
+            )
+            self.assertEqual("make down", sdd_session.read_teardown(self.root), line)
+
+    def test_a_commented_out_teardown_is_not_a_declaration(self) -> None:
+        (self.root / "sdd" / "project.md").write_text(
+            "# Project\n\n<!-- teardown: make down -->\n", encoding="utf-8"
+        )
+        self.assertEqual("", sdd_session.read_teardown(self.root))
+
+    def test_a_directory_that_refuses_to_go_is_recorded_and_keeps_reporting(self) -> None:
+        """The leak: git forgets the path, the binding is released, and without
+        this record nothing would ever mention the directory again."""
+        self.without_docker()
+        self.survive_removal()
+        sdd_session.claim(self.root, "alpha", worktree=self.linked)
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertFalse(outcome.directory_gone)
+        self.assertTrue(self.linked.exists())
+        self.assertIn("LEFTOVER", outcome.render())
+        reported = sdd_session.all_orphans(self.root)
+        self.assertIn(
+            ("leftover", str(self.linked)),
+            [(entry["reason"], entry["path"]) for entry in reported],
+        )
+
+    def test_a_recorded_leftover_is_forgotten_once_it_is_gone(self) -> None:
+        self.without_docker()
+        self.survive_removal()
+        sdd_session.retire(self.root, "alpha")
+        self.assertTrue(sdd_session.all_orphans(self.root))
+        shutil.rmtree(self.linked)
+        self.assertEqual([], sdd_session.all_orphans(self.root))
+
+    @unittest.skipUnless(sys.platform == "darwin", "the ACL is a macOS/Docker Desktop fact")
+    def test_a_deny_delete_acl_is_stripped_instead_of_being_printed(self) -> None:
+        """The real blocker, reproduced: an empty directory that is yours, with
+        `rwx`, that neither chmod -R nor sudo can remove — Docker Desktop sets it
+        on volume mountpoints and it outlives the volume."""
+        tree = self.root / "acl-fixture"
+        mountpoint = tree / "node_modules"
+        mountpoint.mkdir(parents=True)
+        subprocess.run(
+            ["chmod", "+a", f"user:{os.getlogin()} deny delete", str(mountpoint)],
+            check=True, capture_output=True,
+        )
+        with self.assertRaises(OSError):
+            shutil.rmtree(tree)
+        gone, note = sdd_session.remove_directory(tree)
+        self.assertTrue(gone, note)
+        self.assertIn("ACL", note)
+
+    def test_a_stray_directory_is_reported_without_any_record(self) -> None:
+        """A retirement that never recorded anything, a `git worktree remove` by
+        hand, a directory from a clone that no longer exists: all the same from
+        here, and all invisible to a registry-only check."""
+        self.without_docker()
+        stray = self.root / ".claude" / "worktrees" / "sdd+ghost"
+        (stray / "node_modules").mkdir(parents=True)
+        reported = sdd_session.all_orphans(self.root)
+        self.assertIn(
+            ("stray", str(stray)),
+            [(entry["reason"], entry["path"]) for entry in reported],
+        )
+
+    def test_a_live_worktree_is_not_a_stray(self) -> None:
+        self.assertEqual([], sdd_session.stray_directories(self.root))
+
+    def test_the_cli_exits_nonzero_when_a_leftover_survives(self) -> None:
+        self.without_docker()
+        self.survive_removal()
+        self.assertEqual(
+            1, sdd_session.main(["--root", str(self.root), "retire", "alpha"])
+        )
+
+    def test_the_cli_reports_residue_read_only(self) -> None:
+        self.without_docker()
+        sdd_session.claim(self.root, "alpha", worktree=self.linked)
+        self.assertEqual(
+            0, sdd_session.main(["--root", str(self.root), "residue", "alpha"])
+        )
+        self.assertTrue(self.linked.exists())
 
 
 class CommandLineTests(SessionTestCase):

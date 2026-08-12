@@ -73,7 +73,7 @@ Ship publishes. It never reviews, never fixes, never merges and never archives.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-pr <feature> --url <PR-URL>
    ```
 
-   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN` in an explicit STATE-only lifecycle commit, and never pushes. Ship remains the only phase allowed to push. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
+   It re-queries `gh`, validates repository/base/head/implementation SHA against what was recorded, writes `PR_OPEN` in an explicit STATE-only lifecycle commit, and never pushes. Ship is the only phase that pushes a **feature branch** — `/sdd:archive` publishes the bookkeeping commit it makes on the **base** branch, through `publish-archive`, and the two never touch the same ref. Re-running is idempotent. **Never fabricate a URL** — the point of this step is that the PR is a fact, not a claim.
 
 6. **Push the final lifecycle commit.** Run `git push origin <head_branch>` exactly
    once, after `record-pr` succeeds. This publishes the `PR_OPEN` STATE-only

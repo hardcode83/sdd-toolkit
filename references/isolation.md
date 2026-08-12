@@ -128,7 +128,12 @@ worktree, on the feature branch — never in the main clone to be moved later. I
    already bootstrapped and must not repeat it.
 
    **And check what the project cannot have twice.** Bootstrap has a second
-   dimension that "copy these files" does not cover: *exclusive resources*. A
+   dimension that "copy these files" does not cover: *exclusive resources*.
+   (There is a third, which only bites at the end: **how the stack comes down
+   again** — `teardown:` in the same section, read by `retire`. A project that
+   brings a stack up here and never declares how to stop it pays for it at
+   retirement, where the volumes it owns are what make the directory undeletable.
+   See *Cleanup* below.) A
    project can need nothing copied and still be unable to run two dev stacks,
    because something in it can only exist once on the machine — a published port,
    a fixed container name, a daemon on a known socket, a database with a fixed
@@ -222,6 +227,89 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees   # wh
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
 ```
 
+### A worktree owns more than files, and retirement decommissions all of it
+
+Bootstrap brought up a stack; retirement takes it down. `retire` works in one
+order, and the order is the whole fix:
+
+**runtime → git → disk**, and whatever survives is *recorded*.
+
+1. **Inventory, before anything is deleted.** Compose stamps every container with
+   the absolute directory the project was started from
+   (`com.docker.compose.project.working_dir`), and `docker compose ls` reports the
+   path of each project's config files. Attribution reads *those*, never a project
+   name derived from the path: `.claude/worktrees/sdd+seed-data-demo` becomes the
+   project `sddseed-data-demo` through a sanitisation that belongs to docker, and a
+   wrong guess would either miss the residue or claim a sibling worktree's stack.
+   Read-only, on demand:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . residue <feature>
+   ```
+
+   Inventorying first is not tidiness. A container removed without its volumes
+   leaves those volumes with **no project label at all**, and a dangling volume can
+   never be attributed to the worktree that created it again. Measured on one
+   machine mid-flow: 56 dangling volumes, 5.1 GB, unattributable — plus named
+   volumes from a clone that no longer exists.
+
+2. **The project's declared teardown, run inside the worktree.** The command is
+   the project's (shared rule 9): only it knows whether its stack goes down with
+   `docker compose down --volumes`, whether that destroys seed data somebody
+   needs, or whether the entry point is `make clean`. It is declared in the
+   **Worktree bootstrap** section of `sdd/project.md`, next to the bootstrap it
+   undoes:
+
+   ```markdown
+   teardown: docker compose down --volumes --remove-orphans
+   ```
+
+   `retire` runs it with the worktree as its working directory — the same command
+   run from the main clone would take down the main clone's stack — and **refuses
+   to continue if it fails**, because at that point nothing has been deleted and
+   the residue is still attributable.
+
+   If the project declares no teardown and the worktree owns nothing, retirement
+   proceeds silently. If it declares none and the worktree *does* own containers
+   or volumes, `retire` **stops and says exactly what to declare**. That refusal
+   is the answer: guessing `down --volumes` on somebody's database is not the
+   toolkit's call, and continuing would strand the residue. Two deliberate ways
+   past it: `--teardown '<command>'` for one run, or `--skip-teardown` to keep the
+   resources on purpose.
+
+   A teardown that succeeds and still leaves residue (the classic `down` without
+   `--volumes`) is reported, with what to widen.
+
+3. **Then git, then the disk — and the ACL that used to win.** `git worktree
+   remove` unregisters before it deletes, so a failed deletion leaves files git no
+   longer tracks. When that happens `retire` finishes the job itself: on macOS the
+   blocker is almost always `Permission denied` on directories that are **empty and
+   owned by you** — `node_modules`, `.venv`, `.next`, the mountpoints of named
+   volumes. Docker Desktop puts a `deny delete` ACL on them when it creates the
+   mountpoint, and it survives the container, the volume and the compose project.
+   Neither `chmod -R` nor `sudo` touches it; `chmod -R -N` strips it. `retire` does
+   that and retries, instead of printing a command for a human to run:
+
+   ```bash
+   ls -lde <dir>          # 0: user:<you> deny delete   ← the same fact, by hand
+   chmod -R -N <dir>
+   ```
+
+4. **What survives is recorded, not announced once.** This is the leak that made
+   ~30 GB invisible. After a failed deletion git no longer knows the path and the
+   binding has been released, so `worktrees` (which asks git) and the old
+   `orphans` (which asked the registry) both had nothing to report — every failed
+   retirement added a directory nobody would ever mention again. Now a survivor is
+   written down, `retire` exits non-zero, and `orphans` reports three things:
+
+   - **bindings** whose worktree is gone, or whose change is archived;
+   - **leftovers** a retirement recorded, forgotten automatically once the path is
+     actually gone (nothing to un-register by hand);
+   - **strays**: directories under `.claude/worktrees/` that git does not know
+     about. Structural, so it needs nothing to have been recorded — a `git
+     worktree remove` by hand, a retirement that crashed, a directory from a clone
+     that no longer exists all look the same from here.
+
 **Never build the path by hand.** `EnterWorktree` flattens the `/` in a worktree
 name, so `sdd/<feature>` lands in `.claude/worktrees/sdd+<feature>` — a hardcoded
 `.claude/worktrees/sdd/<feature>` does not exist. `worktrees` and `retire` take
@@ -242,43 +330,28 @@ and names every one that does not:
 | **No other live session inside** | Removing a worktree under a running session leaves it with a cwd git cannot read — its `.git` points at metadata git just pruned |
 | You are not standing in it | Same failure, applied to yourself |
 | Git has not locked it | `git worktree unlock` is a deliberate decision, not an obstacle |
+| **Its runtime residue can be taken down** | A stack the project never said how to stop would be stranded, and unattributable a second later (step 2 above) |
 
 Enumeration comes from `git worktree list`, **not** from the registry: git is the
 authority on what exists, and a worktree created by hand never registered. The
 feature is recovered from the binding or, failing that, from the branch name —
 including `sdd/<feature>-archive`, which still belongs to `<feature>`.
 
-`retire` also **verifies the directory is gone**. Git unregisters the worktree
-before deleting it, so a failed deletion leaves files git no longer tracks and
-nothing would report again; when that happens the command says so and prints the
-`rm -rf` that finishes the job.
+`retire` reports what it did per layer — runtime, git, disk — and each line is a
+fact it checked, never a claim. `--json` gives the same thing structured. Exit
+code `1` means a leftover survived.
 
-**When `rm -rf` is not enough (macOS + container volumes).** If the deletion fails
-with `Permission denied` on directories that are **empty and owned by you** —
-typically `node_modules`, `.venv`, `.next`, the mountpoints of named container
-volumes — the blocker is an **ACL, not a mode**, so neither `chmod -R` nor `sudo`
-is the answer and no amount of staring at `rwx` explains it:
-
-```bash
-ls -lde <dir>          # look for:  0: user:<you> deny delete
-chmod -a# 0 <dir>      # drop that ACL entry, then retry the rm -rf
-```
-
-Docker Desktop sets it when it creates the mountpoint, and it **survives the
-container, the volume and the compose project**. Worth knowing before spending
-half an hour on permissions: measured on a real cleanup, the leftover was 52 KB of
-three empty directories that refused to go.
-
-`--force` exists and discards whatever the blockers were protecting. It is the
-user's call, never the flow's.
+`--force` exists and discards whatever the blockers were protecting: it continues
+past a failed teardown too. It is the user's call, never the flow's.
 
 Use plain git, not `ExitWorktree`: that tool only touches worktrees created by
 `EnterWorktree` **in the same session**, and archive normally runs in a different
 one. `git worktree remove` refuses when the tree is dirty, which is the right
 default — surface that instead of forcing it.
 
-`sdd_session.py --root . orphans` lists bindings whose worktree is gone and
-worktrees whose change is already archived; `/sdd:doctor` reports both.
+`sdd_session.py --root . orphans` lists all three kinds of survivor described
+above — stale bindings, recorded leftovers and stray directories — and `/sdd:doctor`
+reports them. It exits `1` when there is anything to report.
 
 ## Where the registry lives, and why
 
@@ -288,9 +361,11 @@ never committed and never appears in `git status`. Liveness comes from the
 recorded pid, so a session that ended takes its claim with it and there is
 nothing to unlock by hand.
 
-It holds two different things on purpose: **sessions** (pruned by liveness) and
+It holds three different things on purpose: **sessions** (pruned by liveness),
 **worktree bindings** (they outlive the session, because the unfinished work
-does).
+does) and **leftovers** (they outlive everything, because a directory git has
+forgotten has no other trace — and they are the only entry that is not a cache to
+be rebuilt).
 
 ## When two worktrees cannot both run the app
 
