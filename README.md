@@ -199,7 +199,7 @@ automáticamente ninguno de los dos.
 | `READY_FOR_PR` | La misma review registra la identidad Git revisada. | El change está completo localmente y listo para abrir PR; no implica CI, aprobación remota ni merge. |
 | `PR_OPEN` | `/sdd:ship <feature>` —que es también el paso de publicación de `/sdd:auto`— hace push, crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
 | `MERGED` | `/sdd:archive <feature>` consulta GitHub y `verify-merge` valida la evidencia. | GitHub confirma el merge y su commit; aún pueden faltar la actualización documental y el movimiento físico. |
-| `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap y finaliza el archive. | El merge ya está reflejado en todas las fuentes de verdad SDD. |
+| `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap, finaliza el archive, lo **publica** en la base (`publish-archive`) y **decomisiona** el worktree (stack incluido). | El merge está reflejado en todas las fuentes de verdad SDD, visible en `origin/<base>` y sin residuo en la máquina. |
 
 `/sdd:review` persiste primero `LOCAL_VERIFIED` y después `READY_FOR_PR`; así
 ambos hitos son inequívocos aunque normalmente ocurran en una misma invocación.
@@ -426,9 +426,12 @@ duplicar el parser en el doctor es como los dos se desincronizarían.
 
 Y una frontera que conviene respetar: el doctor valida **estado de proyecto**
 (lo que está commiteado), porque sus fixtures son árboles de proyecto. El estado
-de **máquina** —el registro de sesiones y los bindings de worktree, que viven en
-el directorio git compartido— lo reporta `scripts/sdd_session.py orphans`, y la
-skill `/sdd:doctor` ejecuta los dos y etiqueta cuál es cuál.
+de **máquina** —el registro de sesiones, los bindings de worktree, los directorios
+huérfanos y el residuo de contenedores, que viven fuera del árbol commiteado— lo
+reporta `scripts/sdd_session.py orphans`, y la skill `/sdd:doctor` ejecuta los dos
+y etiqueta cuál es cuál. Por eso el residuo de un retiro fallido **no** es un
+código `SDDxxx`: no se puede expresar como una fixture de proyecto, y meterlo ahí
+habría sido romper esa frontera para reusar una tabla.
 
 Esta estructura mantiene separadas detección, presentación y política de salida;
 una futura reparación, si se diseña, deberá seguir siendo una operación explícita
@@ -702,9 +705,11 @@ error (`SDD026`) en vez de una degradación silenciosa. Detalle en
 | Liveness | el `pid` registrado (`kill -0`) | Una sesión que muere se lleva su claim: **no hay candados zombis** que desbloquear a mano |
 | Worktrees | `.claude/worktrees/` | Donde los crea `EnterWorktree`. **Tiene que estar en `.gitignore`** (`/sdd:init` lo añade, `SDD024` lo vigila) |
 
-El registro guarda dos cosas distintas a propósito: **sesiones** (se podan por
-liveness) y **bindings feature→worktree** (sobreviven a la sesión, porque el
-trabajo a medias también). Cada fase posterior encuentra su sitio con
+El registro guarda tres cosas distintas a propósito: **sesiones** (se podan por
+liveness), **bindings feature→worktree** (sobreviven a la sesión, porque el
+trabajo a medias también) y **leftovers** (sobreviven a todo: un directorio que
+git ya ha olvidado no tiene otro rastro, y es la única entrada que no es una caché
+reconstruible). Cada fase posterior encuentra su sitio con
 `sdd_session.py resolve <feature>`, nunca adivinando una ruta.
 
 **Y `resolve` pregunta primero al registro y después a git.** El registro es
@@ -749,10 +754,42 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   casos raros —sin remoto, HEAD desacoplado, ya estás dentro de un worktree—, que
   tienen comportamiento decidido en
   [`references/isolation.md`](references/isolation.md) en vez de improvisado.
+- Y una **tercera parte del bootstrap** que solo muerde al final: `teardown:`, el
+  comando que desmonta lo que el worktree levantó. Lo ejecuta `retire` **dentro**
+  del worktree y **antes** de que git borre nada, porque ese orden es el arreglo:
+  los volúmenes del stack son justo lo que hacía indeleble el directorio, y un
+  `down` sin `--volumes` los deja *sin etiqueta de proyecto* — un volumen colgado
+  ya no se puede atribuir nunca al worktree que lo creó. Medido en una máquina en
+  pleno flujo: 56 volúmenes colgados, 5.1 GB, sin dueño. Si el proyecto no declara
+  teardown y el worktree tiene contenedores o volúmenes, `retire` **para** y dice
+  qué línea escribir (regla 9: no adivina un `down --volumes` sobre la BD de
+  nadie). La atribución no es un nombre derivado de la ruta: la lee de lo que
+  docker grabó (`com.docker.compose.project.working_dir` y los config files que
+  reporta `docker compose ls`).
+- Lo que **sobrevive** al retiro se registra, no se anuncia una vez. Era la fuga
+  de verdad: git desregistra antes de borrar, así que tras un borrado fallido ni
+  `worktrees` (que pregunta a git) ni `orphans` (que preguntaba al registro) tenían
+  nada que reportar, y cada retiro fallido añadía un directorio invisible —~30 GB y
+  tres directorios huérfanos, change tras change. Ahora `retire` sale con código
+  `1`, y `orphans` reporta tres clases: **bindings** obsoletos, **leftovers**
+  (registrados, y se olvidan solos cuando el directorio desaparece) y **strays**
+  (directorios en `.claude/worktrees/` que git no conoce — detección estructural,
+  no depende de que nada se haya registrado). En macOS `retire` además quita la ACL
+  `deny delete` que Docker Desktop pone en los mountpoints (`chmod -R -N`) en vez
+  de imprimir un comando: sobrevive al contenedor, al volumen y al proyecto compose.
 - `/sdd:archive` queda **serializado en el worktree principal**: muta
   `sdd/specs/`, tickea el roadmap y mueve directorios. Es post-merge, así que ya
   era cierto de hecho; ahora es precondición explícita. Y es quien ofrece retirar
   el worktree y su rama.
+- `/sdd:archive` también **publica** su commit de bookkeeping en la base
+  (`publish-archive`). El archivo es el único commit que el flujo hace directamente
+  sobre la base, así que dejarlo local la mantiene divergida de origin para
+  siempre: cada feature posterior ramifica de `origin/<base>` (el `fresh` de
+  `EnterWorktree`), o sea de una base sin el archivo, el check canta commits sin
+  pushear en **todas**, y otro clon sigue viendo el change como activo. Empuja solo
+  si el remoto es fast-forward y si lo que empujaría toca **solo** `sdd/`; un remoto
+  que avanzó lo integra el usuario, y un force-push no es nunca la respuesta. `ship`
+  sigue siendo la única fase que empuja una **rama de feature**: son refs distintas.
 - Las **métricas** estaban rotas para concurrencia y worktrees lo empeoraba en
   silencio: un único `current-task` global era last-writer-wins, y como todas las
   sesiones exportan al mismo puerto (está en el `settings.json` versionado) solo

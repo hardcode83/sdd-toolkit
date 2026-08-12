@@ -115,12 +115,59 @@ Write spec updates in the same language as the existing specs (or the user's lan
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
    ```
 
-   That removes the worktree, deletes its branch and releases the binding in one step, and it **verifies the directory is actually gone** — git unregisters before deleting, so a failed deletion used to leave a directory git no longer tracks and nobody would report again. If it warns that the path survived, relay the `rm -rf` it prints: at that point git is already clean and only the files remain.
+   A worktree owns more than files, and this decommissions all of it in one order
+   — **runtime → git → disk**: it takes the project's declared `teardown:`
+   (`sdd/project.md`) down *inside* the worktree, then removes the worktree,
+   deletes its branch, releases the binding, and verifies the directory is
+   actually gone, stripping the `deny delete` ACL that blocks it on macOS. Report
+   its three lines (`runtime` / `git` / `disk`) as they come.
 
-   Every blocker names work that did not reach the merge, or a session that would break: **a refusal is the answer, not an obstacle.** Full protocol in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
+   Two refusals are answers, not obstacles, and both must be relayed verbatim
+   rather than worked around:
+
+   - **"it still owns … and sdd/project.md declares no teardown"** — the worktree
+     has containers or volumes and the project never said how to stop them. Show
+     the inventory and the `teardown:` line it suggests, and offer to record it in
+     `sdd/project.md` (that is a project decision, shared rule 9 — never guess a
+     `down --volumes` over somebody's database). `--teardown '<cmd>'` for one run
+     and `--skip-teardown` (keep the resources on purpose) both exist; use them
+     only if the user says so.
+   - **"the declared teardown failed"** — nothing was deleted and the stack is
+     still attributable. That is deliberate: after git removes the directory, the
+     volumes are dangling and no command can tell whose they were.
+
+   Exit code `1` means a **leftover survived** on disk. Say so plainly: it is
+   recorded, `orphans` and `/sdd:doctor` will keep reporting it, and it is not a
+   closed loop. Every other blocker names work that did not reach the merge, or a
+   session that would break. Full protocol in
+   `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 8. **Summarize, then close in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then ask **once** (`AskUserQuestion`, both questions in the same call, recommending yes to both):
 
-   1. **Commit the archive?** — and if yes, do it: stage with `git add -A sdd/` and commit. `finalize-archive` moves the change directory on the filesystem and stages that move for you, but the specs, roadmap and metrics it deliberately left unstaged are yours to add — and an explicit-path `git add` is how a deletion silently gets dropped. Leaving a half-staged archive as an instruction for the user is how an orphaned `STATE.md` reaches the base branch.
+   1. **Commit the archive and publish it on `<base>`?** — and if yes, do both:
+      stage with `git add -A sdd/`, commit, then
+
+      ```bash
+      python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . publish-archive <feature>
+      ```
+
+      `finalize-archive` moves the change directory on the filesystem and stages
+      that move for you, but the specs, roadmap and metrics it deliberately left
+      unstaged are yours to add — and an explicit-path `git add` is how a deletion
+      silently gets dropped. Leaving a half-staged archive as an instruction for
+      the user is how an orphaned `STATE.md` reaches the base branch.
+
+      **Publishing is part of closing the loop, not an extra.** The archive commit
+      is the only commit the flow makes directly on the base, so an unpushed one
+      leaves the base diverged from origin forever: every later feature branches
+      from `origin/<base>` (`EnterWorktree`'s `fresh` default), the check reports
+      unpushed commits on every one of them, and any other clone still reads this
+      change as active. `publish-archive` fetches, refuses unless the local base is
+      a fast-forward of `origin/<base>`, and refuses if the commits it would push
+      touch anything outside `sdd/` — relay those refusals verbatim; a diverged
+      remote is the user's to integrate and a force-push is never the answer. It is
+      idempotent, and a repository with no remote is told so rather than failed. If
+      the push is refused because the base is protected, it prints the
+      bookkeeping-branch fallback: hand that off, do not invent a workaround.
    2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run `retire` for each.
 
    Never pass `--force` on the user's behalf, and never retire a worktree the command refuses. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
@@ -133,3 +180,8 @@ Write spec updates in the same language as the existing specs (or the user's lan
    `sdd/changes/archive/<date>-<feature>/`; a bare addition there, with no
    deletion at the active path, means only half the move was committed. Never
    report a closed loop from a pre-commit doctor run.
+
+   State the loop as three facts, each one checked: the archive is **committed**,
+   it is **published** on `origin/<base>` (or explicitly local, when there is no
+   remote), and the worktrees are **retired** — or which of them survived and why.
+   Anything you could not verify is reported as not done, not as done.

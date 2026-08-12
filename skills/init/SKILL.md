@@ -78,7 +78,7 @@ Then verify what you wrote: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_roadmap.
 
 ### 3b. Worktree isolation (shared rule 10)
 
-Three things the project has to own, because the plugin cannot guess any of them (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`):
+Three things the project has to own, because the plugin cannot guess any of them (protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`) — a worktree's whole life, from when it is created to when it is decommissioned:
 
 1. **Choose when features get isolated.** Ask (AskUserQuestion) and write the answer as a one-line `isolation:` declaration in the **Worktree bootstrap** section of `sdd/project.md`. Two values, and the trade-off is real in both directions — present it, don't recommend blindly:
 
@@ -89,14 +89,17 @@ Three things the project has to own, because the plugin cannot guess any of them
 
    A project that skips the question gets `on-conflict`; that is the default, not a gap. A value that is neither is an error (`SDD026`), because it would silently fall back.
 2. **Ignore the worktree directory.** Add `.claude/worktrees/` to `.gitignore` if it isn't there. Not optional: committing it nests a checkout inside the repo, and every later `git status` and file search sees a duplicate of the whole tree. `/sdd:doctor` reports it missing — and under `isolation: always` it reports it *before* the directory exists, since the next `/sdd:new` creates one.
-3. **Declare the bootstrap — both halves of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering two different things:
+3. **Declare the bootstrap — all three parts of it.** Write a **Worktree bootstrap** section in `sdd/project.md` covering three different things:
 
    - **What is missing**: what a fresh worktree does not carry (`.env`, `.venv`, `node_modules`, a local database) and the exact command to get it. Without this the project's own verification fails there and the failure looks like a code problem.
    - **What cannot exist twice**: *exclusive resources*. A published port, a fixed container name, a daemon on a known socket, a database with a fixed name, a lockfile. **A project can need nothing copied and still be unable to run two dev stacks** — the symptom is `address already in use`, or a suite that passes alone and fails while a sibling worktree is up. This half gets forgotten precisely because it is not a missing file.
+   - **How it comes down again**: a one-line `teardown:` declaration, the command `/sdd:archive` runs *inside* a worktree before retiring it (`teardown: docker compose down --volumes --remove-orphans`, `teardown: make down`). Only the project knows whether `--volumes` destroys seed data somebody needs, so the toolkit asks and never guesses — and a project that brings a stack up per worktree and declares no teardown gets its retirement **refused** later, with the inventory of what it owns. Leave it empty only if nothing is brought up per worktree.
 
-   Ask the user (AskUserQuestion) rather than guessing, and seed the options from what you can see: gitignored files at the repo root (`.env*`, `*.local`), a lockfile implying an install step, a `Makefile` target like `setup`/`bootstrap`, and — for the second half — **published ports in a compose file**, fixed `container_name`, a hardcoded database name, anything binding a known socket. Record only what they confirm.
+   Ask the user (AskUserQuestion) rather than guessing, and seed the options from what you can see: gitignored files at the repo root (`.env*`, `*.local`), a lockfile implying an install step, a `Makefile` target like `setup`/`bootstrap`, and — for the second and third parts — **published ports in a compose file**, fixed `container_name`, a hardcoded database name, anything binding a known socket, plus the `down`/`clean`/`stop` targets that already exist in the `Makefile` or `package.json`. Record only what they confirm.
 
    If the project genuinely needs nothing and has no exclusive resource, write the section saying exactly that: an explicit "nothing to copy, nothing exclusive" is worth more than a missing section, because the next phase then knows the answer instead of asking again.
+
+   **Name the cost of getting the teardown wrong**, because it is invisible until it bites: compose isolates volumes per directory, so each worktree has its own set — and a `down` without `--volumes` leaves them with no project label, which means nothing can ever attribute them to the worktree that created them again. Measured on one machine: 56 dangling volumes, 5.1 GB, no owner. On macOS those same mountpoints carry the `deny delete` ACL that makes the worktree directory undeletable.
 
    When there **is** an exclusivity constraint, write the operational rule it implies ("one stack at a time: `make down` there before `make up` here") — and say that fixing it properly is a roadmap entry with a design phase, not a note here: it touches the compose file, the task runner and possibly CI. The three questions that decide the shape of that fix are in `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`; do not pick per-worktree ports reflexively, since the tests often need no published ports at all.
 

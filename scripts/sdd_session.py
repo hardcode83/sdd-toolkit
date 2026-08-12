@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -61,6 +62,36 @@ POLICY_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+# The project's teardown command, declared next to the bootstrap it undoes. Same
+# three markdown shapes as the policy line, but the value is a whole command, so
+# it runs to the end of the line instead of matching a word.
+TEARDOWN_RE = re.compile(
+    r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*)?teardown(?:\*\*)?[ \t]*:[ \t]*`?([^`\n]+?)`?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+TEARDOWN_FILE = POLICY_FILE
+# Compose records where a project was started from. Attribution reads THAT label
+# instead of deriving the project name from the path: `sdd+seed-data-demo`
+# becomes the project `sddseed-data-demo` through a sanitisation that is docker's
+# to define, and a wrong guess would either miss the residue or claim another
+# worktree's.
+COMPOSE_WORKDIR_LABEL = "com.docker.compose.project.working_dir"
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+# `worktrees` reports this blocker and `retire` recognises it by its prefix, so
+# that the flags which answer it (--teardown, --skip-teardown) can drop exactly
+# this one and leave every other blocker standing.
+RESIDUE_BLOCKER = "it still owns"
+SIZE_UNITS = {
+    "B": 1,
+    "KB": 10**3,
+    "MB": 10**6,
+    "GB": 10**9,
+    "TB": 10**12,
+    "KIB": 2**10,
+    "MIB": 2**20,
+    "GIB": 2**30,
+    "TIB": 2**40,
+}
 # Environment Claude Code exports into every Bash call. Absent under other
 # runners (or a plain shell), which is why every read has a fallback: an
 # unidentifiable session must degrade to "no claim", never to a wrong claim.
@@ -75,6 +106,15 @@ class SessionError(RuntimeError):
 
 def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def jsonable(value: object) -> object:
+    """Dataclasses and tuples, as JSON sees them."""
+    if hasattr(value, "__dataclass_fields__"):
+        return vars(value)
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return str(value)
 
 
 def run_git(args: list[str], root: Path, runner: Runner = subprocess.run) -> str:
@@ -122,21 +162,30 @@ def registry_path(root: Path, runner: Runner = subprocess.run) -> Path:
     return common_dir(root, runner) / "sdd" / REGISTRY_NAME
 
 
+def empty_registry() -> dict:
+    return {"schema": SCHEMA, "sessions": {}, "worktrees": {}, "leftovers": []}
+
+
 def read_registry(path: Path) -> dict:
     if not path.is_file():
-        return {"schema": SCHEMA, "sessions": {}, "worktrees": {}}
+        return empty_registry()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         # The registry is a cache of live facts, not a source of truth: a
         # corrupted one is rebuilt rather than turned into a blocking error.
-        return {"schema": SCHEMA, "sessions": {}, "worktrees": {}}
+        return empty_registry()
     if not isinstance(data, dict):
-        return {"schema": SCHEMA, "sessions": {}, "worktrees": {}}
+        return empty_registry()
     data.setdefault("schema", SCHEMA)
     for key in ("sessions", "worktrees"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
+    # Leftovers are the one entry that is not a cache: a directory git has already
+    # forgotten has no other trace, so it is a list of facts to keep, not to
+    # rebuild.
+    if not isinstance(data.get("leftovers"), list):
+        data["leftovers"] = []
     return data
 
 
@@ -671,6 +720,10 @@ def worktree_status(
     }
     main = common_dir(root, runner).parent.resolve()
     here = root.resolve()
+    # Only worth asking docker when the project declared no way to stop a stack:
+    # with a `teardown:` there is no blocker to find, and this keeps `worktrees`
+    # (which /sdd:doctor and /sdd:status both run) from paying for it every time.
+    teardown = read_teardown(root)
 
     out: list[WorktreeStatus] = []
     for entry in git_worktrees(root, runner):
@@ -729,6 +782,16 @@ def worktree_status(
                 blockers.append(f"{unpushed} commit(s) never pushed")
             if entry.get("locked"):
                 blockers.append("git has it locked (`git worktree unlock` first)")
+            if not teardown and path.is_dir():
+                # Reported here so `RETIRABLE` keeps meaning "retire will do it":
+                # the same condition refuses inside `retire`, and finding out
+                # there instead would make this listing a lie.
+                residue = residue_of(path, runner)
+                if not residue.empty:
+                    blockers.append(
+                        f"{RESIDUE_BLOCKER} {residue.describe()} and sdd/project.md "
+                        "declares no teardown"
+                    )
 
         out.append(
             WorktreeStatus(
@@ -749,20 +812,360 @@ def worktree_status(
     return out
 
 
+def try_docker(
+    args: list[str], root: Path | None = None, runner: Runner = subprocess.run
+) -> str | None:
+    """Ask docker, and treat every failure as "no answer".
+
+    Docker is optional infrastructure: a project without it, a daemon that is not
+    running, a CI runner with no socket. None of those is an error here — they
+    mean the residue cannot be measured, which is reported as such rather than
+    turned into a blocked retirement.
+    """
+    try:
+        result = runner(
+            ["docker", *args],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    return None if result.returncode else result.stdout.strip()
+
+
+def parse_docker_size(raw: object) -> int:
+    """`935MB` → bytes. Unknown shapes are 0, never a guess."""
+    text = str(raw or "").strip().upper().replace(" ", "")
+    match = re.fullmatch(r"([0-9]*\.?[0-9]+)([A-Z]*)", text)
+    if not match:
+        return 0
+    unit = SIZE_UNITS.get(match.group(2) or "B")
+    return int(float(match.group(1)) * unit) if unit else 0
+
+
+def human_size(size: int) -> str:
+    for unit, factor in (("GB", 10**9), ("MB", 10**6), ("KB", 10**3)):
+        if size >= factor:
+            return f"{size / factor:.1f} {unit}"
+    return f"{size} B"
+
+
+@dataclass(frozen=True)
+class Residue:
+    """What a worktree still owns outside git, attributed by evidence."""
+
+    available: bool
+    projects: tuple[str, ...]
+    containers: tuple[str, ...]
+    running: int
+    volumes: tuple[str, ...]
+    images: tuple[str, ...]
+    size: int
+
+    @property
+    def empty(self) -> bool:
+        return not (self.projects or self.containers or self.volumes or self.images)
+
+    def describe(self) -> str:
+        if not self.available:
+            return "docker did not answer (not installed, or the daemon is down)"
+        if self.empty:
+            return "no container residue attributed to it"
+        parts = []
+        if self.projects:
+            parts.append(f"{len(self.projects)} compose project(s) ({', '.join(self.projects)})")
+        if self.containers:
+            state = f", {self.running} running" if self.running else ""
+            parts.append(f"{len(self.containers)} container(s){state}")
+        if self.volumes:
+            parts.append(f"{len(self.volumes)} volume(s)")
+        if self.images:
+            parts.append(f"{len(self.images)} image(s)")
+        listed = ", ".join(parts)
+        return f"{listed} — {human_size(self.size)}" if self.size else listed
+
+
+def residue_of(path: Path, runner: Runner = subprocess.run) -> Residue:
+    """Every container resource that belongs to one worktree, by evidence.
+
+    Attribution is the whole problem. Compose derives its project name from the
+    directory through a sanitisation this must never reimplement — a worktree at
+    `.claude/worktrees/sdd+seed-data-demo` becomes the project
+    `sddseed-data-demo` — so the link is read from what docker recorded, never
+    reconstructed: the `com.docker.compose.project.working_dir` label on the
+    containers, and the config-file paths `docker compose ls` reports. Both point
+    at an absolute directory, which is exactly the fact we have.
+
+    It matters that this runs BEFORE anything is deleted: a container removed
+    without its volumes leaves those volumes with no project label at all, and a
+    dangling volume can never be attributed to the worktree that created it
+    again. Measured on this machine: 56 dangling volumes, 5.1 GB, unattributable.
+    """
+    if try_docker(["version", "--format", "{{.Server.Version}}"], None, runner) is None:
+        return Residue(False, (), (), 0, (), (), 0)
+
+    target = str(path)
+    projects: set[str] = set()
+    listing = try_docker(["compose", "ls", "--all", "--format", "json"], None, runner)
+    if listing:
+        try:
+            entries = json.loads(listing)
+        except json.JSONDecodeError:
+            entries = []
+        for entry in entries if isinstance(entries, list) else []:
+            configs = str(entry.get("ConfigFiles") or "").split(",")
+            if any(is_within(Path(config.strip()), path) for config in configs if config.strip()):
+                if entry.get("Name"):
+                    projects.add(str(entry["Name"]))
+
+    containers: list[str] = []
+    running = 0
+    by_workdir = try_docker(
+        [
+            "ps",
+            "--all",
+            "--filter",
+            f"label={COMPOSE_WORKDIR_LABEL}={target}",
+            "--format",
+            "{{.Names}}\t{{.State}}\t{{.Label \"" + COMPOSE_PROJECT_LABEL + "\"}}",
+        ],
+        None,
+        runner,
+    )
+    for line in (by_workdir or "").splitlines():
+        fields = line.split("\t")
+        if not fields[0]:
+            continue
+        containers.append(fields[0])
+        if len(fields) > 1 and fields[1] == "running":
+            running += 1
+        if len(fields) > 2 and fields[2]:
+            projects.add(fields[2])
+
+    volumes: list[str] = []
+    images: list[str] = []
+    for project in sorted(projects):
+        listed = try_docker(
+            [
+                "volume",
+                "ls",
+                "--filter",
+                f"label={COMPOSE_PROJECT_LABEL}={project}",
+                "--format",
+                "{{.Name}}",
+            ],
+            None,
+            runner,
+        )
+        volumes.extend(name for name in (listed or "").splitlines() if name)
+        # Compose names what it builds `<project>-<service>`, and does not label
+        # it reliably — so images are matched by that naming and reported, never
+        # deleted here. Removing them is the project's declared teardown's call
+        # (`--rmi local`), because a tag may be shared with something else.
+        built = try_docker(
+            ["images", "--format", "{{.Repository}}:{{.Tag}}"], None, runner
+        )
+        images.extend(
+            name
+            for name in (built or "").splitlines()
+            if name.split(":", 1)[0].startswith(f"{project}-")
+        )
+
+    return Residue(
+        available=True,
+        projects=tuple(sorted(projects)),
+        containers=tuple(sorted(containers)),
+        running=running,
+        volumes=tuple(sorted(set(volumes))),
+        images=tuple(sorted(set(images))),
+        size=reclaimable_size(set(volumes), set(images), runner),
+    )
+
+
+def reclaimable_size(
+    volumes: set[str], images: set[str], runner: Runner = subprocess.run
+) -> int:
+    """How much disk the named resources hold, or 0 when docker will not say.
+
+    `docker system df -v` is the only place the daemon reports per-volume size;
+    when it is unavailable the count is still reported without a size, because a
+    missing number must not turn into an invented one.
+    """
+    if not volumes and not images:
+        return 0
+    raw = try_docker(["system", "df", "-v", "--format", "json"], None, runner)
+    if not raw:
+        return 0
+    try:
+        report = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(report, dict):
+        return 0
+    total = 0
+    for entry in report.get("Volumes") or []:
+        if isinstance(entry, dict) and entry.get("Name") in volumes:
+            total += parse_docker_size(entry.get("Size"))
+    for entry in report.get("Images") or []:
+        if not isinstance(entry, dict):
+            continue
+        tag = f"{entry.get('Repository')}:{entry.get('Tag')}"
+        if tag in images:
+            total += parse_docker_size(entry.get("Size"))
+    return total
+
+
+def is_within(candidate: Path, directory: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(directory.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def read_teardown(root: Path) -> str:
+    """The project's declared teardown command, or "" if it declares none.
+
+    Symmetrical to the bootstrap it undoes, and project-owned for the same reason
+    (shared rule 9): only the project knows whether its stack can be taken down
+    with `docker compose down --volumes`, whether that would destroy seed data
+    somebody needs, or whether the command is `make clean`. The toolkit owns the
+    question.
+    """
+    document = root / TEARDOWN_FILE
+    if not document.is_file():
+        return ""
+    text = HTML_COMMENT_RE.sub("", document.read_text(encoding="utf-8", errors="replace"))
+    match = TEARDOWN_RE.search(text)
+    return match.group(1).strip() if match else ""
+
+
+def run_teardown(command: str, cwd: Path, runner: Runner = subprocess.run) -> tuple[bool, str]:
+    """Run the project's teardown inside the worktree it belongs to.
+
+    `cwd` is the point: compose resolves its project name from the working
+    directory, so the same command run from the main clone would take down the
+    main clone's stack. That is also why this runs before git removes anything —
+    once the directory is gone, the command has nowhere to run.
+    """
+    try:
+        result = runner(
+            command,
+            cwd=cwd,
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        return False, str(error)
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    return not result.returncode, output
+
+
+def remove_directory(path: Path, runner: Runner = subprocess.run) -> tuple[bool, str]:
+    """Delete what git left behind, including the ACL that usually blocks it.
+
+    On macOS the leftover is almost always `Permission denied` on directories
+    that are EMPTY and owned by you — `node_modules`, `.venv`, `.next`, the
+    mountpoints of named volumes. Docker Desktop puts a `deny delete` ACL on them
+    when it creates the mountpoint, and it survives the container, the volume and
+    the compose project. Neither `chmod -R` nor `sudo` touches it: the fix is to
+    strip the ACL (`chmod -R -N`), which is mechanical enough to do rather than
+    print. Measured on a real cleanup: three empty directories, 52 KB, that
+    refused to go for half an hour.
+    """
+    if not path.exists():
+        return True, ""
+    note = ""
+    try:
+        shutil.rmtree(path)
+    except OSError as error:
+        note = str(error)
+    if not path.exists():
+        return True, note
+    if sys.platform == "darwin":
+        stripped = runner(
+            ["chmod", "-R", "-N", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if stripped.returncode == 0:
+            try:
+                shutil.rmtree(path)
+            except OSError as error:
+                note = str(error)
+            if not path.exists():
+                return True, "removed after stripping a deny-delete ACL"
+    return False, note
+
+
+@dataclass(frozen=True)
+class RetireOutcome:
+    """What retiring actually did, per layer. Never a claim about a layer."""
+
+    path: str
+    feature: str
+    branch: str
+    residue_before: Residue
+    residue_after: Residue
+    teardown: str
+    teardown_ok: bool | None
+    skipped: bool
+    unregistered: bool
+    directory_gone: bool
+    branch_deleted: bool
+    binding_released: bool
+    notes: tuple[str, ...]
+
+    def render(self) -> str:
+        lines = [f"retire {self.feature or self.branch or self.path}"]
+        if self.teardown:
+            verdict = "ok" if self.teardown_ok else "FAILED"
+            lines.append(f"  runtime: `{self.teardown}` → {verdict}")
+            lines.append(f"           before: {self.residue_before.describe()}")
+            lines.append(f"           after:  {self.residue_after.describe()}")
+        elif self.skipped:
+            lines.append(f"  runtime: {self.residue_before.describe()} — KEPT on purpose")
+        else:
+            lines.append(f"  runtime: {self.residue_before.describe()} (no teardown declared)")
+        lines.append(
+            "  git:     "
+            + ("unregistered" if self.unregistered else "NOT unregistered")
+            + (f", branch {self.branch} deleted" if self.branch_deleted else "")
+            + (", binding released" if self.binding_released else "")
+        )
+        lines.append(
+            "  disk:    " + ("clean" if self.directory_gone else f"LEFTOVER at {self.path}")
+        )
+        lines.extend(f"  ! {note}" for note in self.notes)
+        return "\n".join(lines)
+
+
 def retire(
     root: Path,
     feature: str | None = None,
     path: Path | None = None,
     force: bool = False,
+    teardown: str | None = None,
+    skip_teardown: bool = False,
     runner: Runner = subprocess.run,
-) -> str:
-    """Retire a worktree: remove it, delete its branch, drop its binding.
+) -> RetireOutcome:
+    """Decommission a worktree: its stack, its directory, its branch, its binding.
 
-    Refuses on any unmet condition unless `force`, and NEVER reports success it
-    cannot see: git unregisters the worktree before deleting the directory, so a
-    failed deletion used to leave an orphan directory nobody would report again.
-    This verifies the directory is actually gone and says so loudly when it is
-    not, with the exact command to finish the job.
+    The order is the fix. Git used to go first, which is why retirement kept
+    failing: the mountpoints of the named volumes the stack still owned were what
+    made the directory undeletable, so `git worktree remove` unregistered the
+    worktree and then could not delete it — leaving files git no longer tracked,
+    a released binding, and therefore nothing that would ever report the leftover
+    again. Three changes of that, ~30 GB.
+
+    So: runtime first (the project's declared teardown, run inside the worktree),
+    then git, then the directory, and whatever survives is RECORDED rather than
+    printed once and forgotten.
     """
     statuses = worktree_status(root, runner)
     target = None
@@ -776,48 +1179,143 @@ def retire(
             f"No worktree found for {'path ' + str(path) if path else 'feature ' + str(feature)}. "
             "`sdd_session.py worktrees` lists what git knows about."
         )
-    if target.blockers and not force:
-        listed = "; ".join(target.blockers)
-        raise SessionError(
-            f"Refusing to retire {target.path}: {listed}. Resolve it, or pass "
-            "--force if you are certain the work is expendable."
+    worktree = Path(target.path)
+    command = "" if skip_teardown else (teardown or read_teardown(root))
+    # The residue blocker `worktrees` reports is answered by the flags, so it is
+    # dropped here when the caller brought one. Every other blocker stands.
+    remaining = [
+        blocker
+        for blocker in target.blockers
+        if not (blocker.startswith(RESIDUE_BLOCKER) and (command or skip_teardown))
+    ]
+    # A stack nobody declared how to stop is a question for the project, not a
+    # guess for the toolkit (shared rule 9). Refusing keeps the residue
+    # attributable: after git deletes the directory, the volumes are dangling and
+    # no command can tell whose they were.
+    if not force:
+        stranded = next(
+            (b for b in remaining if b.startswith(RESIDUE_BLOCKER)), ""
+        )
+        if stranded:
+            raise SessionError(
+                f"Refusing to retire {target.path}: {stranded}, so retiring now "
+                "would leave that on disk with no way left to attribute it. "
+                "Declare it in the 'Worktree bootstrap' section of "
+                "sdd/project.md, e.g.\n"
+                "    teardown: docker compose down --volumes --remove-orphans\n"
+                "or pass it once with --teardown '<command>'. `--skip-teardown` "
+                "keeps the resources deliberately; --force retires anyway."
+            )
+        if remaining:
+            listed = "; ".join(remaining)
+            raise SessionError(
+                f"Refusing to retire {target.path}: {listed}. Resolve it, or pass "
+                "--force if you are certain the work is expendable."
+            )
+
+    notes: list[str] = []
+    before = residue_of(worktree, runner)
+    teardown_ok: bool | None = None
+    if command:
+        teardown_ok, output = run_teardown(command, worktree, runner)
+        if not teardown_ok and not force:
+            raise SessionError(
+                f"Refusing to retire {target.path}: the declared teardown "
+                f"(`{command}`) failed, so nothing was removed and the stack is "
+                f"still attributable. Fix it there and re-run.\n{output}".rstrip()
+            )
+        if not teardown_ok:
+            notes.append(f"teardown `{command}` failed and --force continued anyway")
+
+    # Re-inventory only when something was actually run: otherwise the answer is
+    # the one already measured, and asking docker twice buys nothing.
+    after = residue_of(worktree, runner) if command else before
+    if command and teardown_ok and not after.empty:
+        notes.append(
+            f"the teardown left {after.describe()} — widen it (e.g. add "
+            "--volumes / --remove-orphans / --rmi local)"
         )
 
-    messages: list[str] = []
     removal = ["worktree", "remove"] + (["--force"] if force else []) + [target.path]
-    if try_git(removal, root, runner) is None:
+    unregistered = try_git(removal, root, runner) is not None
+    if not unregistered:
         raise SessionError(
-            f"`git worktree remove {target.path}` failed. Nothing was changed; "
-            "check the path is writable and no process is inside it."
+            f"`git worktree remove {target.path}` failed. The teardown above did "
+            "run; git changed nothing. Check the path is writable and no process "
+            "is inside it."
         )
-    # The check that stops F3 from recurring: git may unregister and still leave
-    # the tree behind, and a directory git no longer tracks is one nothing reports.
-    if Path(target.path).exists():
-        messages.append(
-            f"WARNING: git unregistered the worktree but {target.path} still exists "
-            "on disk and is no longer tracked by git — delete it by hand: "
-            f"rm -rf {target.path}. If that fails with 'Permission denied' on "
-            "directories that are EMPTY and yours (typically node_modules, .venv, "
-            ".next — the mountpoints of named container volumes), the blocker is an "
-            "ACL, not a mode: check `ls -lde <dir>` for a `deny delete` entry and "
-            "drop it with `chmod -a# 0 <dir>` before retrying."
-        )
-    else:
-        messages.append(f"Removed worktree {target.path}.")
 
+    gone, note = remove_directory(worktree, runner)
+    if note:
+        notes.append(note)
+
+    branch_deleted = False
     if target.branch:
         deletion = try_git(["branch", "-d", target.branch], root, runner)
         if deletion is None and force:
             deletion = try_git(["branch", "-D", target.branch], root, runner)
-        messages.append(
-            f"Deleted branch {target.branch}."
-            if deletion is not None
-            else f"Kept branch {target.branch} (git refused; it may hold unmerged work)."
-        )
+        branch_deleted = deletion is not None
+        if not branch_deleted:
+            notes.append(
+                f"kept branch {target.branch} (git refused; it may hold unmerged work)"
+            )
+
+    binding_released = False
     if target.feature:
         release(root, target.feature, runner)
-        messages.append(f"Released the binding for '{target.feature}'.")
-    return " ".join(messages)
+        binding_released = True
+
+    # The leak this closes: git no longer knows the path and the binding is gone,
+    # so without a record NOTHING would ever mention this directory again.
+    if not gone:
+        record_leftover(root, worktree, target.feature, after, runner)
+        notes.append(
+            f"{target.path} survived deletion and is now recorded as a leftover: "
+            "`sdd_session.py orphans` and /sdd:doctor will keep reporting it until "
+            "it is gone"
+        )
+
+    return RetireOutcome(
+        path=str(worktree),
+        feature=target.feature,
+        branch=target.branch,
+        residue_before=before,
+        residue_after=after,
+        teardown=command,
+        teardown_ok=teardown_ok,
+        skipped=skip_teardown,
+        unregistered=unregistered,
+        directory_gone=gone,
+        branch_deleted=branch_deleted,
+        binding_released=binding_released,
+        notes=tuple(notes),
+    )
+
+
+def record_leftover(
+    root: Path,
+    path: Path,
+    feature: str,
+    residue: Residue,
+    runner: Runner = subprocess.run,
+) -> None:
+    """Remember a directory that refused to go, so it stays reportable."""
+    registry = registry_path(root, runner)
+    data = read_registry(registry)
+    data["leftovers"] = [
+        entry
+        for entry in data["leftovers"]
+        if str(entry.get("path", "")) != str(path)
+    ]
+    data["leftovers"].append(
+        {
+            "path": str(path),
+            "feature": feature,
+            "since": now(),
+            "residue": residue.describe(),
+        }
+    )
+    write_registry(registry, data)
 
 
 def orphan_bindings(root: Path, runner: Runner = subprocess.run) -> list[dict]:
@@ -845,6 +1343,71 @@ def orphan_bindings(root: Path, runner: Runner = subprocess.run) -> list[dict]:
         elif feature in archived:
             orphans.append({"feature": feature, "reason": "archived", **binding})
     return orphans
+
+
+def stray_directories(root: Path, runner: Runner = subprocess.run) -> list[dict]:
+    """Directories under `.claude/worktrees/` that git does not know about.
+
+    Structural, so it needs nothing to have been recorded: a failed retirement
+    that never wrote a leftover, a worktree removed with `git worktree remove`
+    by hand, a directory from a clone that no longer exists — all of them look
+    the same from here, which is a directory git never mentions. This is the
+    detector that does not depend on the flow having behaved.
+    """
+    main = common_dir(root, runner).parent.resolve()
+    container = main / ".claude" / "worktrees"
+    if not container.is_dir():
+        return []
+    known = {Path(entry["path"]).resolve() for entry in git_worktrees(root, runner)}
+    strays: list[dict] = []
+    for candidate in sorted(container.iterdir()):
+        if not candidate.is_dir() or candidate.resolve() in known:
+            continue
+        residue = residue_of(candidate, runner)
+        strays.append(
+            {
+                "path": str(candidate),
+                "feature": candidate.name.replace("sdd+", "", 1),
+                "reason": "stray",
+                "residue": residue.describe() if residue.available else "",
+            }
+        )
+    return strays
+
+
+def recorded_leftovers(root: Path, runner: Runner = subprocess.run) -> list[dict]:
+    """Leftovers a previous retirement recorded, forgetting the ones now gone.
+
+    Self-purging on read: once the user finishes the deletion, the entry
+    disappears by itself, so the report never nags about something already fixed
+    and nobody has to remember a `forget` command.
+    """
+    registry = registry_path(root, runner)
+    data = read_registry(registry)
+    alive = [
+        entry
+        for entry in data["leftovers"]
+        if entry.get("path") and Path(str(entry["path"])).exists()
+    ]
+    if len(alive) != len(data["leftovers"]):
+        data["leftovers"] = alive
+        write_registry(registry, data)
+    return [{**entry, "reason": "leftover"} for entry in alive]
+
+
+def all_orphans(root: Path, runner: Runner = subprocess.run) -> list[dict]:
+    """Everything machine-local that outlived the work: bindings, dirs, residue.
+
+    One command, because they are one problem seen from three angles — and
+    because whichever angle is missing is the one that made ~30 GB invisible.
+    Strays are deduplicated against recorded leftovers: a directory can be both.
+    """
+    leftovers = recorded_leftovers(root, runner)
+    recorded = {str(entry.get("path")) for entry in leftovers}
+    strays = [
+        entry for entry in stray_directories(root, runner) if entry["path"] not in recorded
+    ]
+    return orphan_bindings(root, runner) + leftovers + strays
 
 
 def render_policy(report: dict) -> str:
@@ -930,13 +1493,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("list", help="live sessions and worktree bindings")
     subparsers.add_parser("prune", help="drop sessions whose process is gone")
-    subparsers.add_parser("orphans", help="bindings with no worktree, or already archived")
+    subparsers.add_parser(
+        "orphans",
+        help="stale bindings, leftover directories and container residue nobody owns",
+    )
     subparsers.add_parser(
         "worktrees",
         help="every worktree git knows about, with whether it can be retired",
     )
+    residue = subparsers.add_parser(
+        "residue",
+        help="what a worktree still owns outside git (read-only)",
+    )
+    residue.add_argument("feature", nargs="?", default=None)
+    residue.add_argument("--path", type=Path, default=None)
     retirement = subparsers.add_parser(
-        "retire", help="remove a finished worktree, its branch and its binding"
+        "retire",
+        help="decommission a worktree: its stack, directory, branch and binding",
     )
     retirement.add_argument("feature", nargs="?", default=None)
     retirement.add_argument("--path", type=Path, default=None)
@@ -944,6 +1517,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="override the blockers — discards whatever the worktree still holds",
+    )
+    retirement.add_argument(
+        "--teardown",
+        default=None,
+        help="teardown command for this run, when sdd/project.md declares none",
+    )
+    retirement.add_argument(
+        "--skip-teardown",
+        action="store_true",
+        help="keep the containers, volumes and images on purpose",
     )
     return parser
 
@@ -1001,20 +1584,51 @@ def main(argv: list[str] | None = None) -> int:
                     for blocker in status.blockers:
                         print(f"           · {blocker}")
             return 0
+        elif args.command == "residue":
+            if not args.feature and not args.path:
+                print("ERROR: residue needs a feature or --path", file=sys.stderr)
+                return 2
+            where = args.path.resolve() if args.path else Path(resolve(root, args.feature) or "")
+            if not str(where):
+                print(
+                    f"ERROR: no worktree is bound to '{args.feature}'; pass --path",
+                    file=sys.stderr,
+                )
+                return 2
+            found = residue_of(where)
+            if args.json:
+                print(json.dumps(vars(found) | {"path": str(where)}, indent=2, default=list))
+            else:
+                print(f"{where}: {found.describe()}")
+            return 0
         elif args.command == "retire":
             if not args.feature and not args.path:
                 print("ERROR: retire needs a feature or --path", file=sys.stderr)
                 return 2
-            print(retire(root, args.feature, args.path, args.force))
+            outcome = retire(
+                root,
+                args.feature,
+                args.path,
+                args.force,
+                args.teardown,
+                args.skip_teardown,
+            )
+            if args.json:
+                print(json.dumps(vars(outcome), indent=2, default=jsonable))
+            else:
+                print(outcome.render())
+            # A leftover is not a success: the caller must be able to notice.
+            return 0 if outcome.directory_gone else 1
         elif args.command == "orphans":
-            orphans = orphan_bindings(root)
+            orphans = all_orphans(root)
             if args.json:
                 print(json.dumps(orphans, indent=2))
             else:
                 for orphan in orphans:
+                    detail = f" — {orphan['residue']}" if orphan.get("residue") else ""
                     print(
-                        f"{orphan['feature']} — {orphan['reason']} "
-                        f"({orphan.get('path', 'no path')})"
+                        f"{orphan.get('feature') or '(unknown)'} — {orphan['reason']} "
+                        f"({orphan.get('path', 'no path')}){detail}"
                     )
             return 1 if orphans else 0
         else:

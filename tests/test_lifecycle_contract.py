@@ -115,11 +115,36 @@ class LifecycleSkillContractTests(unittest.TestCase):
         STATE.md on the base branch — reaches somebody else's run."""
         archive = self.read_skill("archive")
         self.assertIn("git add -A sdd/", archive)
-        self.assertIn("Commit the archive?", archive)
+        self.assertIn("Commit the archive and publish it on `<base>`?", archive)
         self.assertNotIn("Suggest committing", archive)
         # One closing question, not one turn per decision.
         self.assertIn("both questions in the same call", archive)
         self.assertIn("Never pass `--force` on the user's behalf", archive)
+
+    def test_archive_publishes_the_bookkeeping_commit_on_the_base(self) -> None:
+        """An archive committed and never pushed leaves the base diverged from
+        origin forever: every later feature branches from `origin/<base>`, so it
+        branches from a base without the archive, and another clone still reads
+        the change as active."""
+        archive = self.read_skill("archive")
+        self.assertIn("publish-archive <feature>", archive)
+        self.assertIn("fast-forward", archive)
+        self.assertIn("force-push is never the answer", archive)
+        # Ship keeps owning feature branches; the two never touch the same ref.
+        ship = self.read_skill("ship")
+        self.assertIn("only phase that pushes a **feature branch**", ship)
+
+    def test_archive_decommissions_the_worktree_runtime_before_git(self) -> None:
+        """The order is the fix: the volumes the stack owned were what made the
+        directory undeletable, and once git unregisters the worktree a failed
+        deletion is invisible to everything that used to report it."""
+        archive = self.read_skill("archive")
+        self.assertIn("runtime → git → disk", archive)
+        self.assertIn("declares no teardown", archive)
+        self.assertIn("deny delete", archive)
+        # A leftover is never reported as a closed loop.
+        self.assertIn("Exit code `1`", archive)
+        self.assertIn("it is not a\n   closed loop", archive)
 
     def test_review_looks_across_worktrees_before_picking_a_mode(self) -> None:
         """A feature isolated in a worktree committed its change directory on its

@@ -1136,6 +1136,143 @@ def finalize_archive(
     return message
 
 
+def publish_archive(
+    root: Path,
+    feature: str,
+    dry_run: bool = False,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Publish the archive's bookkeeping commit on the base branch.
+
+    Why archive publishes at all, when ship owns publishing feature branches:
+    the archive commit is the *only* commit the flow creates directly on the base,
+    and leaving it local makes the base diverge from origin permanently. Every
+    later feature branches from `origin/<base>` (EnterWorktree's `fresh` default),
+    so it branches from a base that does not contain the archive — the check
+    reports "N local commit(s) NOT in origin" on every feature from then on, the
+    roadmap tick is invisible to every other clone, and a colleague's `/sdd:doctor`
+    still sees the change as active. The bookkeeping is not closed until it is
+    shared.
+
+    Every guard here answers "what exactly am I about to push?", because that is
+    the question that makes pushing to a shared branch safe:
+
+    - the change must be ARCHIVED, and HEAD must be on its recorded base;
+    - `sdd/` must be committed, or the push would publish half an archive;
+    - the local base must be a fast-forward of `origin/<base>`; if the remote
+      moved, that is the user's to integrate, never a force-push;
+    - every commit about to be pushed must touch `sdd/` only. Unrelated local work
+      on the base is not archive's to publish, and stopping is the answer.
+    """
+    archive = archived_change(root, feature)
+    if archive is None:
+        raise LifecycleError(
+            f"'{feature}' has no archive yet — run finalize-archive first."
+        )
+    data = read_state(archive)
+    if not data or data.get("state") != "ARCHIVED":
+        raise LifecycleError(
+            f"{archive.relative_to(root)} is not recorded as ARCHIVED, so there is "
+            "nothing to publish."
+        )
+    base = data.get("base_branch", "").strip()
+    if not base:
+        raise LifecycleError(
+            f"{archive.relative_to(root)} records no base_branch, so where to "
+            "publish is unknown. Fix STATE.md rather than guessing a branch."
+        )
+    current = run_command(["git", "branch", "--show-current"], root, runner).stdout.strip()
+    if current != base:
+        raise LifecycleError(
+            f"Publishing the archive must happen on '{base}' (shared rule 10), and "
+            f"HEAD is on '{current or '(detached)'}'."
+        )
+    pending = run_command(
+        ["git", "status", "--porcelain", "--", "sdd"], root, runner
+    ).stdout.strip()
+    if pending:
+        raise LifecycleError(
+            "sdd/ has uncommitted changes, so the archive commit is not complete "
+            f"yet — commit it before publishing:\n{pending}"
+        )
+    if not try_command(["git", "rev-parse", "--verify", "--quiet", "origin"], root, runner) \
+            and not try_command(["git", "remote", "get-url", "origin"], root, runner):
+        return (
+            "No 'origin' remote: the archive stays local, which is a supported "
+            "workflow (the merge gate proves merges without a remote too). Nothing "
+            "to publish."
+        )
+    if not try_command(["git", "fetch", "origin", base], root, runner):
+        raise LifecycleError(
+            f"`git fetch origin {base}` failed, so what the remote holds is "
+            "unknown. Nothing was pushed."
+        )
+    remote_ref = f"origin/{base}"
+    if not try_command(
+        ["git", "rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"],
+        root,
+        runner,
+    ):
+        raise LifecycleError(
+            f"'{remote_ref}' does not exist after fetching. Publish the base branch "
+            f"first: git push -u origin {base}."
+        )
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", remote_ref, base], root, runner
+    ):
+        raise LifecycleError(
+            f"'{remote_ref}' is not contained in your local '{base}': the remote "
+            "moved on. Integrate it first (git pull --rebase origin "
+            f"{base}) and re-run — never force-push a shared base."
+        )
+    range_spec = f"{remote_ref}..{base}"
+    commits = [
+        line
+        for line in run_command(
+            ["git", "log", "--format=%h %s", range_spec], root, runner
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+    if not commits:
+        return f"'{base}' already matches {remote_ref}: the archive is published."
+    touched = [
+        path
+        for path in run_command(
+            ["git", "diff", "--name-only", range_spec], root, runner
+        ).stdout.splitlines()
+        if path.strip()
+    ]
+    outside = sorted({path for path in touched if not path.startswith("sdd/")})
+    if outside:
+        listed = ", ".join(outside[:5]) + (" …" if len(outside) > 5 else "")
+        raise LifecycleError(
+            f"'{base}' carries {len(commits)} unpushed commit(s) touching files "
+            f"outside sdd/ ({listed}). Publishing them is not archive's call — push "
+            "them deliberately, then re-run."
+        )
+    listed = "; ".join(commits)
+    if dry_run:
+        return f"Would push {len(commits)} archive commit(s) to {remote_ref}: {listed}"
+    if not try_command(["git", "push", "origin", base], root, runner):
+        raise LifecycleError(
+            f"`git push origin {base}` was refused (a protected branch, or no "
+            "permission). The archive is committed locally and correct; publish it "
+            "the way this repository requires — e.g. a bookkeeping branch and PR: "
+            f"git switch -c sdd/archive-{feature} && git push -u origin "
+            f"sdd/archive-{feature}."
+        )
+    local_sha = run_command(["git", "rev-parse", base], root, runner).stdout.strip()
+    run_command(["git", "fetch", "origin", base], root, runner)
+    remote_sha = run_command(["git", "rev-parse", remote_ref], root, runner).stdout.strip()
+    if local_sha != remote_sha:
+        raise LifecycleError(
+            f"The push reported success but {remote_ref} is at {remote_sha[:8]} "
+            f"instead of {local_sha[:8]}. Check the remote before reporting a "
+            "closed loop."
+        )
+    return f"Published {len(commits)} archive commit(s) to {remote_ref} ({local_sha[:8]}): {listed}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -1154,6 +1291,16 @@ def build_parser() -> argparse.ArgumentParser:
     finalize = subparsers.add_parser("finalize-archive")
     finalize.add_argument("feature")
     finalize.add_argument("--specs-confirmed", action="store_true")
+    publish = subparsers.add_parser(
+        "publish-archive",
+        help="push the archive's bookkeeping commit to the base branch",
+    )
+    publish.add_argument("feature")
+    publish.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run every guard and report what would be pushed, without pushing",
+    )
     return parser
 
 
@@ -1178,6 +1325,8 @@ def main(argv: list[str] | None = None) -> int:
             # Name the evidence kind: how a merge was proven is part of the
             # answer, not an implementation detail.
             message = f"MERGED evidence {state} ({data.get('merge_evidence')})."
+        elif args.command == "publish-archive":
+            message = publish_archive(root, args.feature, dry_run=args.dry_run)
         else:
             message = finalize_archive(
                 root, args.feature, specs_confirmed=args.specs_confirmed

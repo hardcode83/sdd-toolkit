@@ -53,8 +53,22 @@ unrecognised declaration, which the validator already reported as `SDD026`.
 `worktrees` lists every worktree **git** knows about (not just the registered
 ones) with `RETIRABLE` or `en uso` plus its blockers. Report the retirable ones:
 their work has shipped and they are only taking up disk — `sdd_session.py retire
-<feature>` closes each. `orphans` adds bindings pointing at a worktree that no
-longer exists, which only need `release`.
+<feature>` closes each.
+
+`orphans` reports what outlived the work, in three kinds, and each has a different
+fix — name which kind each finding is:
+
+- `missing` / `archived`: a **binding** pointing at a worktree that is gone or
+  whose change already shipped. `release` (or `retire`) closes it.
+- `leftover`: a directory a previous `retire` could **not delete**. It is recorded
+  precisely because git no longer knows the path and nothing else would ever
+  mention it; the entry disappears by itself once the directory is gone.
+- `stray`: a directory under `.claude/worktrees/` that **git does not know about**
+  at all — a removal by hand, a crashed retirement, a clone that no longer exists.
+
+For the last two, report the container residue printed alongside them when there
+is any: those volumes and images are what the disk is actually holding. Do not
+delete anything from here.
 
 Label all of it as **machine-local** so nobody looks for it in the repository, and
 never retire anything from here: `/sdd:doctor` is read-only. Outside a git

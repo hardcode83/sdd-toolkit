@@ -62,7 +62,32 @@ isolation: on-conflict
      `references/isolation.md`.
 
      Si la verificación falla en un worktree por algo que esta sección no
-     menciona, eso ES el hallazgo: se documenta aquí, no se adivina. -->
+     menciona, eso ES el hallazgo: se documenta aquí, no se adivina.
+
+     (3) CÓMO SE DESMONTA — la línea `teardown:` de abajo. Simétrica al bootstrap:
+         lo que (1) levanta, esto lo tira. La ejecuta `/sdd:archive` al retirar el
+         worktree (`sdd_session.py retire`), DENTRO del worktree y ANTES de que git
+         borre nada. -->
+
+teardown:
+
+<!-- LÍNEA DE ARRIBA — el comando que desmonta el stack de un worktree. Ejemplos:
+
+       teardown: docker compose down --volumes --remove-orphans
+       teardown: make down
+       teardown: docker compose down --volumes --rmi local   (si además construyes imágenes)
+
+     Vacío = este proyecto no levanta nada por worktree. Si lo dejas vacío y sí
+     levanta algo, `retire` PARA y te dice qué escribir aquí: no adivina un
+     `down --volumes` sobre la base de datos de nadie.
+
+     Por qué importa el `--volumes`: compose ya aísla contenedores, redes y
+     volúmenes por directorio, así que cada worktree tiene su propio juego. Un
+     `down` sin `--volumes` deja esos volúmenes SIN etiqueta de proyecto, y un
+     volumen dangling ya no se puede atribuir nunca al worktree que lo creó: se
+     queda ocupando disco sin dueño. Medido en una máquina real: 56 volúmenes
+     colgados, 5.1 GB. Y en macOS son justo esos mountpoints los que llevan la ACL
+     `deny delete` que impide borrar el directorio del worktree. -->
 
 ## Conventions
 
