@@ -118,9 +118,24 @@ Write spec updates in the same language as the existing specs (or the user's lan
    A worktree owns more than files, and this decommissions all of it in one order
    — **runtime → git → disk**: it takes the project's declared `teardown:`
    (`sdd/project.md`) down *inside* the worktree, then removes the worktree,
-   deletes its branch, releases the binding, and verifies the directory is
+   deletes its branch, releases the binding, drops the worktree's now-dead
+   entries from Claude Code's plugin registry, and verifies the directory is
    actually gone, stripping the `deny delete` ACL that blocks it on macOS. Report
-   its three lines (`runtime` / `git` / `disk`) as they come.
+   its lines (`runtime` / `git` / `plugins` / `disk` / `branches`) as they come.
+
+   Two of those lines need relaying, not just printing:
+
+   - **`disk: clean`** is followed by the directory that no longer exists. Any
+     shell still sitting in it now has a cwd that does not resolve, and the
+     `getcwd`/`ENOENT` errors that follow name neither the worktree nor the
+     retirement. If the user is in that shell, tell them to `cd` out.
+   - **`branches:`** lists refs carrying the feature's name that retirement did
+     *not* touch: the published `origin/sdd/<feature>`, plus evidence, restore or
+     stray branches the change created. Each says `contained` or `NOT contained`.
+     **Never delete them on your own** — whose branch it is, is not the toolkit's
+     call (shared rule 9), and a remote ref may be somebody else's upstream.
+     Relay the list and let the user decide; `NOT contained` means it still holds
+     work that never reached the base.
 
    Two refusals are answers, not obstacles, and both must be relayed verbatim
    rather than worked around:

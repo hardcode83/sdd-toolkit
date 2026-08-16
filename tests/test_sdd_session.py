@@ -799,15 +799,11 @@ class DockerStub:
         return self._done()
 
 
-class DecommissionTests(SessionTestCase):
-    """What retirement owes the machine, not just the repository.
+class RetirementFixture(SessionTestCase):
+    """An archived change with a live worktree, plus the stubs to retire it.
 
-    Every one of these is a measured failure: `retire` only ever spoke git, so
-    the compose stack a worktree owned survived it — and its named volumes were
-    exactly what made the directory undeletable. Git unregistered the worktree
-    first, so the leftover was then invisible to `worktrees` (git no longer knew
-    it) and to `orphans` (the binding had just been released). Three changes of
-    that left ~30 GB and three orphan directories nobody reported.
+    Shared by both retirement suites rather than inherited from one to the
+    other: subclassing a suite of tests re-runs all of them under the new name.
     """
 
     def setUp(self) -> None:
@@ -857,6 +853,18 @@ class DecommissionTests(SessionTestCase):
             f"teardown: {command}\n",
             encoding="utf-8",
         )
+
+
+class DecommissionTests(RetirementFixture):
+    """What retirement owes the machine, not just the repository.
+
+    Every one of these is a measured failure: `retire` only ever spoke git, so
+    the compose stack a worktree owned survived it — and its named volumes were
+    exactly what made the directory undeletable. Git unregistered the worktree
+    first, so the leftover was then invisible to `worktrees` (git no longer knew
+    it) and to `orphans` (the binding had just been released). Three changes of
+    that left ~30 GB and three orphan directories nobody reported.
+    """
 
     def test_residue_is_attributed_by_what_docker_recorded(self) -> None:
         stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
@@ -1047,6 +1055,135 @@ class DecommissionTests(SessionTestCase):
             0, sdd_session.main(["--root", str(self.root), "residue", "alpha"])
         )
         self.assertTrue(self.linked.exists())
+
+
+class RetireResidueTests(RetirementFixture):
+    """What outlives a retirement that git and disk both reported clean.
+
+    Measured after closing one change: the worktree was gone, its local branch
+    deleted, the archive published — and `origin/sdd/<feature>`, two auxiliary
+    branches and ten plugin-registry entries were still there, with nothing left
+    in the repository that would ever name them again.
+    """
+
+    def publish(self, branch: str) -> None:
+        """A remote-tracking ref, without a network: what a push would leave."""
+        sha = self.git("rev-parse", branch).stdout.strip()
+        self.git("update-ref", f"refs/remotes/origin/{branch}", sha)
+
+    def use_plugin_registry(self, entries: list[dict]) -> Path:
+        config = self.root / "config"
+        registry = config / "plugins" / "installed_plugins.json"
+        registry.parent.mkdir(parents=True)
+        registry.write_text(
+            json.dumps({"version": 2, "plugins": {"toolkit@market": entries}}),
+            encoding="utf-8",
+        )
+        previous = os.environ.get(sdd_session.CONFIG_DIR_ENV)
+        os.environ[sdd_session.CONFIG_DIR_ENV] = str(config)
+        self.addCleanup(self._restore, sdd_session.CONFIG_DIR_ENV, previous)
+        return registry
+
+    def test_the_published_branch_outlives_the_local_one_and_is_reported(self) -> None:
+        self.without_docker()
+        self.git("remote", "add", "origin", "https://example.invalid/repo.git")
+        self.publish("sdd/alpha")
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertTrue(outcome.branch_deleted)
+        listed = {found.ref: found for found in outcome.surviving}
+        self.assertIn("origin/sdd/alpha", listed)
+        self.assertTrue(listed["origin/sdd/alpha"].remote)
+        self.assertTrue(listed["origin/sdd/alpha"].contained)
+
+    def commit_on(self, branch: str) -> None:
+        """A branch carrying work of its own, so containment means something."""
+        name = f"{branch.replace('/', '-')}.txt"
+        self.git("checkout", "-q", "-b", branch)
+        (self.root / name).write_text("wip", encoding="utf-8")
+        # Only this file: `add -A` would sweep the untracked archive fixture into
+        # the branch, and checking main back out would then delete it.
+        self.git("add", name)
+        self.git("commit", "-q", "-m", f"work on {branch}")
+        self.git("checkout", "-q", "main")
+
+    def test_auxiliary_branches_are_reported_merged_or_not(self) -> None:
+        self.without_docker()
+        self.git("branch", "sdd/alpha-evidence", "main")
+        self.commit_on("chore/restore-blocked-alpha")
+        outcome = sdd_session.retire(self.root, "alpha")
+        listed = {found.ref: found.contained for found in outcome.surviving}
+        # Both survive; only one of them is safe for the user to drop.
+        self.assertTrue(listed["sdd/alpha-evidence"])
+        self.assertFalse(listed["chore/restore-blocked-alpha"])
+
+    def test_reporting_a_branch_is_not_deleting_it(self) -> None:
+        """Shared rule 9: whose branch it is, is not the toolkit's call."""
+        self.without_docker()
+        self.git("branch", "sdd/alpha-evidence", "main")
+        sdd_session.retire(self.root, "alpha")
+        self.assertEqual(
+            "sdd/alpha-evidence",
+            self.git("rev-parse", "--abbrev-ref", "sdd/alpha-evidence").stdout.strip(),
+        )
+
+    def test_the_base_branch_is_never_listed_as_a_survivor(self) -> None:
+        self.without_docker()
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertNotIn("main", [found.ref for found in outcome.surviving])
+
+    def test_dead_plugin_entries_under_this_repo_are_dropped(self) -> None:
+        self.without_docker()
+        registry = self.use_plugin_registry(
+            [
+                {"scope": "local", "projectPath": str(self.linked)},
+                {"scope": "project", "projectPath": str(self.root)},
+            ]
+        )
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertEqual(1, outcome.plugin_entries_pruned)
+        kept = json.loads(registry.read_text(encoding="utf-8"))["plugins"]["toolkit@market"]
+        # The repo itself still exists, so its own entry is not residue.
+        self.assertEqual([str(self.root)], [entry["projectPath"] for entry in kept])
+
+    def test_another_projects_dead_entries_are_left_alone(self) -> None:
+        """One project silently rewriting another's records is not cleanup."""
+        self.without_docker()
+        elsewhere = self.root.parent / "other-repo" / ".claude" / "worktrees" / "sdd+beta"
+        registry = self.use_plugin_registry([{"scope": "local", "projectPath": str(elsewhere)}])
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertEqual(0, outcome.plugin_entries_pruned)
+        kept = json.loads(registry.read_text(encoding="utf-8"))["plugins"]["toolkit@market"]
+        self.assertEqual([str(elsewhere)], [entry["projectPath"] for entry in kept])
+
+    def test_a_broken_plugin_registry_never_fails_a_retirement(self) -> None:
+        """It is Claude Code's file: unreadable is not a reason to fail here."""
+        self.without_docker()
+        registry = self.use_plugin_registry([])
+        registry.write_text("{ not json", encoding="utf-8")
+        outcome = sdd_session.retire(self.root, "alpha")
+        self.assertEqual(0, outcome.plugin_entries_pruned)
+        self.assertTrue(outcome.directory_gone)
+
+    def test_the_report_says_to_leave_a_directory_that_is_gone(self) -> None:
+        self.without_docker()
+        rendered = sdd_session.retire(self.root, "alpha").render()
+        self.assertIn("must `cd` out", rendered)
+
+    def test_a_surviving_directory_is_not_told_to_be_left(self) -> None:
+        self.without_docker()
+        self.survive_removal()
+        rendered = sdd_session.retire(self.root, "alpha").render()
+        self.assertNotIn("must `cd` out", rendered)
+        self.assertIn("LEFTOVER at", rendered)
+
+    def test_the_json_output_carries_the_survivors(self) -> None:
+        self.without_docker()
+        self.git("branch", "sdd/alpha-evidence", "main")
+        outcome = sdd_session.retire(self.root, "alpha")
+        payload = json.loads(json.dumps(vars(outcome), default=sdd_session.jsonable))
+        self.assertIn(
+            "sdd/alpha-evidence", [found["ref"] for found in payload["surviving"]]
+        )
 
 
 class CommandLineTests(SessionTestCase):

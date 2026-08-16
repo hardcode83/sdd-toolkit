@@ -97,6 +97,12 @@ SIZE_UNITS = {
 # unidentifiable session must degrade to "no claim", never to a wrong claim.
 SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 PID_ENV = "CLAUDE_PID"
+# Where Claude Code records which plugins are installed for which project. A
+# worktree that installed one leaves an entry behind pointing at its directory,
+# and the file is global to the user, so the residue of one repo accumulates in
+# the whole environment. Honours CLAUDE_CONFIG_DIR the same way the CLI does.
+CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
+PLUGIN_REGISTRY = ("plugins", "installed_plugins.json")
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
@@ -677,6 +683,29 @@ def base_branch_for(root: Path, feature: str, runner: Runner = subprocess.run) -
     return default_branch(root, runner)
 
 
+def resolve_base_ref(root: Path, base: str, runner: Runner = subprocess.run) -> str:
+    """The ref that actually exists for `base`, published one first.
+
+    Prefer the published base, fall back to the local one — same order as
+    sdd_lifecycle.resolve_base_ref, because a repo with no remote is a
+    legitimate workflow the merge gate already supports.
+    """
+    return next(
+        (
+            candidate
+            for candidate in (f"origin/{base}", base)
+            if candidate
+            and try_git(
+                ["rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+                root,
+                runner,
+            )
+            is not None
+        ),
+        "",
+    )
+
+
 @dataclass(frozen=True)
 class WorktreeStatus:
     path: str
@@ -733,22 +762,7 @@ def worktree_status(
         archived = archived_feature(root, feature)
         base = base_branch_for(root, feature, runner)
         branch = entry.get("branch", "")
-        # Prefer the published base, fall back to the local one — same order as
-        # sdd_lifecycle.resolve_base_ref, because a repo with no remote is a
-        # legitimate workflow the merge gate already supports.
-        base_ref = next(
-            (
-                candidate
-                for candidate in (f"origin/{base}", base)
-                if try_git(
-                    ["rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
-                    root,
-                    runner,
-                )
-                is not None
-            ),
-            "",
-        )
+        base_ref = resolve_base_ref(root, base, runner)
         merged = bool(branch) and bool(base_ref) and (
             try_git(["merge-base", "--is-ancestor", branch, base_ref], root, runner)
             is not None
@@ -1104,6 +1118,127 @@ def remove_directory(path: Path, runner: Runner = subprocess.run) -> tuple[bool,
 
 
 @dataclass(frozen=True)
+class SurvivingBranch:
+    """A ref that carries the feature's name and outlives its worktree."""
+
+    ref: str
+    remote: bool
+    contained: bool
+
+    def describe(self) -> str:
+        where = "remote" if self.remote else "local"
+        return f"{self.ref} ({where}, {'contained' if self.contained else 'NOT contained'})"
+
+
+def surviving_branches(
+    root: Path,
+    feature: str,
+    branch: str,
+    base_ref: str,
+    runner: Runner = subprocess.run,
+) -> tuple[SurvivingBranch, ...]:
+    """Refs named after the feature that retiring does not touch.
+
+    `git branch -d` is local and only knows the worktree's own branch, so two
+    kinds of ref outlive a retirement with nothing left to report them: the
+    published counterpart (`origin/sdd/<feature>`) and whatever else the change
+    created along the way — evidence branches, restore branches, stray fixes.
+
+    Discovery is by name, over refs the repository already has: remote-tracking
+    refs answer for the published side without touching the network, so this
+    stays as offline and deterministic as every other retirement check. Matching
+    on the feature substring is deliberately generous — these are only ever
+    listed, never deleted (shared rule 9: whose branch it is, is not the
+    toolkit's call), so a false positive costs a line of output and a missed one
+    costs a ref nobody ever mentions again.
+    """
+    if not feature:
+        return ()
+    listing = try_git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        root,
+        runner,
+    )
+    if not listing:
+        return ()
+    base_names = {base_ref, base_ref.split("/", 1)[-1] if base_ref else ""}
+    remotes = try_git(["remote"], root, runner)
+    prefixes = tuple(f"{name}/" for name in (remotes or "").splitlines() if name)
+    found: list[SurvivingBranch] = []
+    for ref in sorted({line.strip() for line in listing.splitlines()}):
+        # The worktree's own local branch is deleted by then; its published
+        # counterpart is precisely what this exists to surface.
+        if not ref or ref.endswith("/HEAD") or ref in base_names or ref == branch:
+            continue
+        if feature not in ref:
+            continue
+        contained = bool(base_ref) and (
+            try_git(["merge-base", "--is-ancestor", ref, base_ref], root, runner) is not None
+        )
+        found.append(
+            SurvivingBranch(ref=ref, remote=ref.startswith(prefixes), contained=contained)
+        )
+    return tuple(found)
+
+
+def plugin_registry_path() -> Path:
+    """Claude Code's per-user record of which plugins belong to which project."""
+    configured = os.environ.get(CONFIG_DIR_ENV)
+    base = Path(configured) if configured else Path.home() / ".claude"
+    return base.joinpath(*PLUGIN_REGISTRY)
+
+
+def prune_plugin_entries(under: Path, registry: Path | None = None) -> int:
+    """Drop plugin entries whose projectPath no longer exists, under `under`.
+
+    An entry pointing at a directory that is gone is not recoverable and does
+    not mean anything: the project it was scoped to cannot be opened again. So
+    unlike a branch, there is no judgement to defer to the user — it is dead
+    weight, and it accumulates one entry per plugin per retired worktree.
+
+    Scoped to the repository being retired from rather than the exact worktree.
+    The exact worktree would leave every earlier retirement's entries behind
+    forever (they are only ever discoverable from the repo that made them), and
+    widening it further would have one project silently rewriting another's
+    records. Never raises: a malformed or absent registry is Claude Code's file,
+    not a reason to fail a retirement that already happened.
+    """
+    path = registry or plugin_registry_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        plugins = data["plugins"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    if not isinstance(plugins, dict):
+        return 0
+    root = under.resolve()
+    removed = 0
+    for name in list(plugins):
+        entries = plugins[name]
+        if not isinstance(entries, list):
+            continue
+        keep = []
+        for entry in entries:
+            project = isinstance(entry, dict) and entry.get("projectPath")
+            if project and not Path(str(project)).exists():
+                candidate = Path(str(project))
+                if candidate == root or root in candidate.parents:
+                    removed += 1
+                    continue
+            keep.append(entry)
+        if keep:
+            plugins[name] = keep
+        else:
+            del plugins[name]
+    if removed:
+        try:
+            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return 0
+    return removed
+
+
+@dataclass(frozen=True)
 class RetireOutcome:
     """What retiring actually did, per layer. Never a claim about a layer."""
 
@@ -1119,6 +1254,8 @@ class RetireOutcome:
     directory_gone: bool
     branch_deleted: bool
     binding_released: bool
+    surviving: tuple[SurvivingBranch, ...]
+    plugin_entries_pruned: int
     notes: tuple[str, ...]
 
     def render(self) -> str:
@@ -1138,9 +1275,24 @@ class RetireOutcome:
             + (f", branch {self.branch} deleted" if self.branch_deleted else "")
             + (", binding released" if self.binding_released else "")
         )
+        if self.plugin_entries_pruned:
+            lines.append(
+                f"  plugins: {self.plugin_entries_pruned} dead entr"
+                f"{'y' if self.plugin_entries_pruned == 1 else 'ies'} dropped from "
+                "Claude Code's plugin registry"
+            )
         lines.append(
             "  disk:    " + ("clean" if self.directory_gone else f"LEFTOVER at {self.path}")
         )
+        if self.directory_gone:
+            # The directory had to go, but a shell sitting in it is left with a
+            # cwd that no longer resolves, and the getcwd errors that follow name
+            # neither the worktree nor the retirement. One line here is cheaper
+            # than diagnosing that from scratch.
+            lines.append(f"           any shell still inside it must `cd` out: {self.path}")
+        if self.surviving:
+            lines.append("  branches: retire does not delete these — yours to judge:")
+            lines.extend(f"           {found.describe()}" for found in self.surviving)
         lines.extend(f"  ! {note}" for note in self.notes)
         return "\n".join(lines)
 
@@ -1265,6 +1417,18 @@ def retire(
         release(root, target.feature, runner)
         binding_released = True
 
+    # Asked after the branch deletion above, so what it reports is exactly what
+    # survived it. Nothing is excluded by name: a deleted branch is already gone
+    # from the ref listing, and one git refused to delete is precisely a survivor.
+    survivors = surviving_branches(
+        root,
+        target.feature,
+        "",
+        resolve_base_ref(root, base_branch_for(root, target.feature, runner), runner),
+        runner,
+    )
+    pruned = prune_plugin_entries(root)
+
     # The leak this closes: git no longer knows the path and the binding is gone,
     # so without a record NOTHING would ever mention this directory again.
     if not gone:
@@ -1288,6 +1452,8 @@ def retire(
         directory_gone=gone,
         branch_deleted=branch_deleted,
         binding_released=binding_released,
+        surviving=survivors,
+        plugin_entries_pruned=pruned,
         notes=tuple(notes),
     )
 

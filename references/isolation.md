@@ -310,6 +310,45 @@ order, and the order is the whole fix:
      worktree remove` by hand, a retirement that crashed, a directory from a clone
      that no longer exists all look the same from here.
 
+5. **What retirement cannot decide, it reports.** Deleting the worktree's branch
+   is `git branch -d`: local, and only the one branch git had checked out there.
+   Two kinds of ref routinely outlive that, and nothing in the repository would
+   ever name them again — measured on one closed change: `origin/sdd/<feature>`
+   plus an evidence branch and a restore branch, all three already contained in
+   `main`, all three still there after a retirement that reported clean.
+
+   So `retire` lists every ref carrying the feature's name, each marked
+   `contained` or `NOT contained` against the change's recorded base, and
+   **deletes none of them**. That asymmetry is the point: a branch is somebody's
+   claim on unlanded work, a remote ref may be another person's upstream, and
+   `--force` deleting either from a cleanup path is exactly the kind of guess
+   shared rule 9 forbids. Discovery is by name over refs the repo already has —
+   remote-tracking refs answer for the published side, so no network, and the
+   match is deliberately generous: only ever listed, a false positive costs one
+   line and a miss costs a ref nobody mentions again.
+
+6. **The plugin registry, which is not the repository's to begin with.** A
+   worktree that installed a plugin leaves an entry in Claude Code's per-user
+   `installed_plugins.json`, scoped by `projectPath` to a directory retirement
+   just deleted. Unlike a branch there is no judgement to defer: the project it
+   was scoped to cannot be opened again, so the entry is dead weight — and it
+   accumulates one per plugin per retired worktree, in a file global to the user,
+   so one repo's residue piles up in the whole environment (measured: 10 entries
+   from 5 retired worktrees).
+
+   `retire` drops the dead entries **under the repository it is retiring from** —
+   not just the exact worktree, which would strand every earlier retirement's
+   entries forever, and not the whole file, which would have one project silently
+   rewriting another's records. A malformed or absent registry is Claude Code's
+   file, not a reason to fail a retirement that already happened.
+
+7. **The directory is gone, and someone may be standing in it.** Deleting it is
+   correct, but a shell whose cwd was inside is left unable to resolve it, and the
+   `getcwd: No such file or directory` / `ENOENT` errors that follow mention
+   neither the worktree nor the retirement — nothing connects the symptom to the
+   cause. The `disk` line names the path so the answer (`cd` somewhere that
+   exists) is one line away instead of a diagnosis.
+
 **Never build the path by hand.** `EnterWorktree` flattens the `/` in a worktree
 name, so `sdd/<feature>` lands in `.claude/worktrees/sdd+<feature>` — a hardcoded
 `.claude/worktrees/sdd/<feature>` does not exist. `worktrees` and `retire` take
