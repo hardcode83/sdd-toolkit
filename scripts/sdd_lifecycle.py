@@ -1511,6 +1511,92 @@ def mark_ready(
     return "READY_FOR_PR recorded."
 
 
+def mark_recertified(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Re-anchor `implementation_sha` on the same open PR after a functional fix.
+
+    The canonical state stays `PR_OPEN`; the transition is the self-loop
+    `PR_OPEN -> PR_OPEN` whose new commit's `implementation_sha` equals the
+    parent SHA (the new reviewed HEAD) — never the commit's own SHA. The
+    previous helpers `ensure_clean_or_only_expected_state` and
+    `ensure_local_gates` cover the working tree, BLOCKED.md, incomplete
+    tasks and staged STATE.md; this function only adds the recertification-
+    specific preconditions (state, branch, local_review) and the
+    `gh pr view` validation that the same PR still exists and that the new
+    HEAD is among its commits (i.e. the user has pushed the fix). It does
+    not push.
+    """
+    change = active_change(root, feature)
+    expected_path = lifecycle_path(root, feature, runner)
+    ensure_clean_or_only_expected_state(root, expected_path, runner)
+    ensure_local_gates(change)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(
+            f"'{feature}' has no STATE.md to recertify against."
+        )
+    current = data.get("state", "")
+    if current != "PR_OPEN":
+        raise LifecycleError(
+            f"mark-recertified requires state PR_OPEN; found '{current}'. "
+            "Walk the change through /sdd:review and /sdd:ship first."
+        )
+    if data.get("local_review") != "APPROVED":
+        raise LifecycleError("Local review is not approved in STATE.md.")
+    head_branch = data.get("head_branch", "")
+    current_branch = run_command(
+        ["git", "branch", "--show-current"], root, runner
+    ).stdout.strip()
+    if current_branch != head_branch:
+        raise LifecycleError(
+            f"Recertification must run on '{head_branch}'; HEAD is on "
+            f"'{current_branch or '(detached)'}'. Switch first."
+        )
+    head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    if head == data.get("implementation_sha", ""):
+        return "Recertification is current; nothing to do."
+    pr_url = data.get("pr_url", "").strip()
+    if not pr_url:
+        raise LifecycleError(
+            f"STATE.md has no recorded pr_url; record the PR with "
+            f"/sdd:ship {feature} first."
+        )
+    payload = query_pr(pr_url, root, runner)
+    prospective = dict(data)
+    prospective["pr_url"] = pr_url.rstrip("/")
+    validate_pr_identity(prospective, payload)
+    github_state = payload.get("state")
+    if github_state == "MERGED":
+        raise LifecycleError(
+            f"PR #{prospective.get('pr_number')} is MERGED on GitHub; "
+            f"run /sdd:archive {feature} instead."
+        )
+    if github_state == "CLOSED":
+        raise LifecycleError(
+            f"PR #{prospective.get('pr_number')} was CLOSED without merge. "
+            f"Reopen it or open a new PR with /sdd:ship {feature}."
+        )
+    if github_state != "OPEN":
+        raise LifecycleError(f"Unsupported GitHub PR state '{github_state}'.")
+    commits = commit_oids(payload)
+    if head not in commits:
+        raise LifecycleError(
+            f"HEAD {head[:12]} is not in the Pull Request commits; "
+            f"the user must `git push origin {head_branch}` before "
+            f"recertifying."
+        )
+    new_data = dict(data)
+    new_data["implementation_sha"] = head  # parent SHA, never the commit's own
+    lifecycle = lifecycle_commit(
+        root, feature, "PR_OPEN->PR_OPEN", new_data, runner
+    )
+    classify_lifecycle_commit(root, lifecycle, feature, runner)
+    return f"PR_OPEN re-anchored at {head[:12]}."
+
+
 def record_pr(
     root: Path,
     feature: str,
@@ -1939,6 +2025,11 @@ def build_parser() -> argparse.ArgumentParser:
     ready = subparsers.add_parser("mark-ready")
     ready.add_argument("feature")
     ready.add_argument("--base", required=True)
+    recertify = subparsers.add_parser(
+        "mark-recertified",
+        help="re-anchor implementation_sha on the same open PR after a fix",
+    )
+    recertify.add_argument("feature")
     record = subparsers.add_parser("record-pr")
     record.add_argument("feature")
     record.add_argument("--url", required=True)
@@ -1989,6 +2080,8 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_local_verified(root, args.feature)
         elif args.command == "mark-ready":
             message = mark_ready(root, args.feature, args.base)
+        elif args.command == "mark-recertified":
+            message = mark_recertified(root, args.feature)
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
         elif args.command == "sync-base":
