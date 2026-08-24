@@ -37,7 +37,13 @@ ship never reviews, never merges the PR and never archives.
    - `PR_OPEN` → the PR already exists, but the base may have moved under it:
      run step 3, push if it changed anything, re-run `record-pr` with the
      recorded URL (idempotent, re-validates against GitHub), report the PR and
-     stop. Skip steps 4 and 5.
+     stop. Skip steps 4 and 5. **Before this branch**, check whether the
+     branch has unanchored commits: compare `HEAD` (from
+     `git rev-parse HEAD`) to the recorded `implementation_sha`. If they
+     differ, a functional commit landed on the open PR without recertification;
+     abort with an actionable message — "execute `/sdd:review <feature>` to
+     recertify the fix on the same PR" — and do NOT run step 3, do NOT
+     re-run `record-pr`, do NOT push. Ship publishes; it does not certify.
    - `ACTIVE` or `LOCAL_VERIFIED` → not publishable yet: no reviewed `implementation_sha` means nothing objective to attach the PR to. Point to `/sdd:review <feature>` and stop.
    - `MERGED` → point to `/sdd:archive <feature>` and stop.
    - A non-empty `BLOCKED.md` → do not publish work that is waiting on a human decision. Show the entries and stop.

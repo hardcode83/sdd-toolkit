@@ -222,6 +222,45 @@ class LifecycleSkillContractTests(unittest.TestCase):
             self.assertIn(state, status)
         self.assertIn("BLOCKED.md", status)
 
+    # ----- post-pr-recertification: skills reflect the recertification flow -----
+
+    def test_review_skill_branches_at_pr_open_for_recertify(self) -> None:
+        """C1 — review skill detects PR_OPEN and calls mark-recertified."""
+        review = self.read_skill("review")
+        # The new branch must be present.
+        self.assertIn("PR_OPEN", review)
+        self.assertIn("mark-recertified", review)
+        self.assertIn("recertification", review.lower())
+        # The push precondition is documented (user pushes before recertifying).
+        self.assertIn("git push", review)
+        # The recertification path replaces mark-local-verified + mark-ready
+        # for the PR_OPEN state — verify by checking that the word
+        # "recertif" and the command name co-occur with PR_OPEN context.
+        recert_idx = review.index("recertif")
+        open_idx = review.index("PR_OPEN", recert_idx)
+        self.assertGreater(open_idx, recert_idx - 200)
+
+    def test_ship_skill_refuses_pr_open_with_unanchored_head(self) -> None:
+        """C2 — ship skill refuses PR_OPEN + HEAD != implementation_sha and
+        redirects to /sdd:review."""
+        ship = self.read_skill("ship")
+        # The PR_OPEN case mentions the unanchored-check sub-branch.
+        pr_open_idx = ship.index("`PR_OPEN`")
+        # The "redirect" guidance is somewhere after the PR_OPEN case.
+        self.assertIn("recertif", ship.lower())
+        self.assertIn("/sdd:review", ship)
+        self.assertIn("HEAD", ship)
+        self.assertIn("implementation_sha", ship)
+
+    def test_auto_skill_resumes_pr_open_with_recertify_path(self) -> None:
+        """C3 — auto skill delegates PR_OPEN + unanchored commits to /sdd:review."""
+        auto = self.read_skill("auto")
+        # The resuming section explicitly branches PR_OPEN on HEAD vs anchor.
+        self.assertIn("HEAD == implementation_sha", auto)
+        self.assertIn("HEAD != implementation_sha", auto)
+        self.assertIn("mark-recertified", auto)
+        self.assertIn("/sdd:review", auto)
+
 
 if __name__ == "__main__":
     unittest.main()

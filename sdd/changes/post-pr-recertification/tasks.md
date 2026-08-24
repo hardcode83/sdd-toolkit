@@ -18,10 +18,10 @@
 
 ## 3. Skills
 
-- [ ] 3.1 Update `skills/review/SKILL.md`: after the branch guard (l. 68), read `STATE.md.state`. If `PR_OPEN`: launch the panel on the range `implementation_sha..HEAD` and on PASS call `mark-recertified` (replace `mark-local-verified` + `mark-ready`). Document the push precondition in the section that explains the branch guard. Update the "invalidates the recorded implementation_sha" note (l. 104-108) to point at the supported flow. [R6, D10]
-- [ ] 3.2 Update `skills/ship/SKILL.md`: in the `PR_OPEN` case of step 1 (l. 37-40), add a sub-branch `HEAD != implementation_sha` that aborts with an actionable message naming `/sdd:review <feature>` as the resume command. Keep the existing `HEAD == implementation_sha` branch (sync-base + record-pr idempotent) intact. [R7, D11]
-- [ ] 3.3 Update `skills/auto/SKILL.md`: in "Resuming a mid-flight feature" (l. 247-249), extend the `PR_OPEN` row to delegate to `/sdd:review` when `HEAD != implementation_sha` (no new auto logic — review applies the recertify branch). [alineamiento con R6]
-- [ ] 3.4 Add contract tests in `tests/test_lifecycle_contract.py`: `test_review_skill_branches_at_pr_open_for_recertify` (C1), `test_ship_skill_refuses_pr_open_with_unanchored_head` (C2), `test_auto_skill_resumes_pr_open_with_recertify_path` (C3). Each asserts substrings on the corresponding `SKILL.md`. [R6, R7]
+- [x] 3.1 Update `skills/review/SKILL.md`: after the branch guard (l. 68), read `STATE.md.state`. If `PR_OPEN`: launch the panel on the range `implementation_sha..HEAD` and on PASS call `mark-recertified` (replace `mark-local-verified` + `mark-ready`). Document the push precondition in the section that explains the branch guard. Update the "invalidates the recorded implementation_sha" note (l. 104-108) to point at the supported flow. [R6, D10]
+- [x] 3.2 Update `skills/ship/SKILL.md`: in the `PR_OPEN` case of step 1 (l. 37-40), add a sub-branch `HEAD != implementation_sha` that aborts with an actionable message naming `/sdd:review <feature>` as the resume command. Keep the existing `HEAD == implementation_sha` branch (sync-base + record-pr idempotent) intact. [R7, D11]
+- [x] 3.3 Update `skills/auto/SKILL.md`: in "Resuming a mid-flight feature" (l. 247-249), extend the `PR_OPEN` row to delegate to `/sdd:review` when `HEAD != implementation_sha` (no new auto logic — review applies the recertify branch). [alineamiento con R6]
+- [x] 3.4 Add contract tests in `tests/test_lifecycle_contract.py`: `test_review_skill_branches_at_pr_open_for_recertify` (C1), `test_ship_skill_refuses_pr_open_with_unanchored_head` (C2), `test_auto_skill_resumes_pr_open_with_recertify_path` (C3). Each asserts substrings on the corresponding `SKILL.md`. [R6, R7]
 
 ## 4. Verification
 
