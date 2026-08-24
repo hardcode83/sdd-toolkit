@@ -1314,24 +1314,134 @@ class PublishArchiveTests(unittest.TestCase):
         self.assertIn("outside sdd/", str(caught.exception))
         self.assertIn("src.py", str(caught.exception))
 
-    def test_a_remote_that_moved_on_is_the_users_to_integrate(self) -> None:
-        """Never a force-push, and never a silent merge on somebody's behalf."""
-        local = self.commit_archive()
-        # A colleague's commit reaches origin/main while we were archiving: it
-        # branches from the base we started at, so the two histories diverge.
-        self.git("switch", "-c", "colega", "main~1")
-        (self.root / "colega.md").write_text("otro trabajo\n", encoding="utf-8")
+    def colleague_pushes(
+        self,
+        relative: str,
+        content: str,
+        message: str = "colega",
+        base: str = "main~1",
+    ) -> None:
+        """Another archive reaches origin/<base> while this one was being made.
+
+        It branches from the base this archive started at, so the two histories
+        diverge — which is not an edge case: the archive commit is the only commit
+        the flow makes on the base, so parallel closings diverge by construction.
+        """
+        self.git("switch", "-c", "colega", base)
+        target = self.root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
         self.git("add", "-A")
-        self.git("commit", "-m", "trabajo del colega")
+        self.git("commit", "-m", message)
         self.git("push", "origin", "colega:main")
         self.git("switch", "main")
         self.git("branch", "-D", "colega")
+
+    def test_a_base_that_moved_on_is_integrated_and_then_published(self) -> None:
+        """The common case with features closing in parallel, not an exception."""
+        local = self.commit_archive()
+        self.colleague_pushes("colega.md", "otro trabajo\n")
         self.assertNotEqual(local, self.remote_sha())
+        message = publish_archive(self.root, "example")
+        self.assertIn("Integrated origin/main", message)
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(head, self.remote_sha())
+        # Rebased, not merged over: the colleague's work is still there, and the
+        # archive commit sits on top of it.
+        self.assertTrue((self.root / "colega.md").is_file())
+        self.assertEqual(
+            "chore(sdd): archive example",
+            self.git("show", "-s", "--format=%s", "HEAD").stdout.strip(),
+        )
+
+    def test_the_bookkeeping_both_archives_touched_is_unioned(self) -> None:
+        metrics = self.root / "sdd" / "metrics.md"
+        metrics.write_text("| feature | coste |\n| --- | --- |\n", encoding="utf-8")
+        self.git("add", "-A", "sdd")
+        self.git("commit", "-m", "tabla de metricas")
+        self.git("push", "origin", "main")
+        metrics.write_text(
+            "| feature | coste |\n| --- | --- |\n| example | 1 |\n", encoding="utf-8"
+        )
+        self.commit_archive()
+        self.colleague_pushes(
+            "sdd/metrics.md",
+            "| feature | coste |\n| --- | --- |\n| colega | 2 |\n",
+            "fila del colega",
+        )
+        message = publish_archive(self.root, "example")
+        self.assertIn("resolving sdd/metrics.md", message)
+        merged = metrics.read_text(encoding="utf-8")
+        self.assertIn("| example | 1 |", merged)
+        self.assertIn("| colega | 2 |", merged)
+        self.assertNotIn("<<<<", merged)
+        self.assertEqual(
+            self.git("rev-parse", "HEAD").stdout.strip(), self.remote_sha()
+        )
+
+    def test_a_conflict_it_cannot_decide_restores_the_branch_and_refuses(self) -> None:
+        """Never a force-push, and never a guessed resolution on somebody's spec."""
+        spec = self.root / "sdd" / "specs" / "example.md"
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        spec.write_text("# Example\n\ncomun\n", encoding="utf-8")
+        self.git("add", "-A", "sdd")
+        self.git("commit", "-m", "spec inicial")
+        self.git("push", "origin", "main")
+        spec.write_text("# Example\n\nlo que escribimos\n", encoding="utf-8")
+        local = self.commit_archive()
+        self.colleague_pushes(
+            "sdd/specs/example.md", "# Example\n\nlo que escribio el colega\n"
+        )
+        remote_before = self.remote_sha()
         with self.assertRaises(LifecycleError) as caught:
             publish_archive(self.root, "example")
-        self.assertIn("moved on", str(caught.exception))
-        self.assertNotIn("force", str(caught.exception).split("never")[0])
-        self.assertNotEqual(local, self.remote_sha())
+        message = str(caught.exception)
+        self.assertIn("sdd/specs/example.md", message)
+        self.assertIn("need a decision", message)
+        self.assertIn("never", message.lower())
+        # Nothing moved, on either side, and no rebase was left half-done.
+        self.assertEqual(local, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(remote_before, self.remote_sha())
+        self.assertEqual("", self.git("status", "--porcelain").stdout.strip())
+
+    def test_local_work_outside_sdd_is_never_integrated_either(self) -> None:
+        (self.root / "app.py").write_text("print('local')\n", encoding="utf-8")
+        self.git("add", "--", "app.py")
+        self.git("commit", "-m", "trabajo local no relacionado")
+        local = self.commit_archive()
+        self.colleague_pushes("colega.md", "otro trabajo\n", base="main~2")
+        with self.assertRaises(LifecycleError) as caught:
+            publish_archive(self.root, "example")
+        self.assertIn("outside sdd/", str(caught.exception))
+        self.assertEqual(local, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_an_archive_the_base_already_carries_is_not_pushed_twice(self) -> None:
+        """Two closings that made the identical bookkeeping change.
+
+        Git drops a commit whose patch the base already has, so integration ends
+        with nothing to push — and saying that is the honest answer, not an error.
+        """
+        metrics = self.root / "sdd" / "metrics.md"
+        metrics.write_text("| feature | coste |\n| --- | --- |\n", encoding="utf-8")
+        self.git("add", "-A", "sdd")
+        self.git("commit", "-m", "tabla de metricas")
+        self.git("push", "origin", "main")
+        row = "| feature | coste |\n| --- | --- |\n| example | 1 |\n"
+        metrics.write_text(row, encoding="utf-8")
+        self.commit_archive()
+        self.colleague_pushes("sdd/metrics.md", row, "la misma fila")
+        message = publish_archive(self.root, "example")
+        self.assertIn("already matches origin/main", message)
+        self.assertEqual(
+            self.git("rev-parse", "HEAD").stdout.strip(), self.remote_sha()
+        )
+
+    def test_a_dry_run_reports_the_integration_without_doing_it(self) -> None:
+        local = self.commit_archive()
+        self.colleague_pushes("colega.md", "otro trabajo\n")
+        message = publish_archive(self.root, "example", dry_run=True)
+        self.assertIn("Would integrate origin/main", message)
+        self.assertEqual(local, self.git("rev-parse", "HEAD").stdout.strip())
 
     def test_publishing_from_another_branch_is_refused(self) -> None:
         self.commit_archive()

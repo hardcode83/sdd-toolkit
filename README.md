@@ -841,9 +841,16 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   siempre: cada feature posterior ramifica de `origin/<base>` (el `fresh` de
   `EnterWorktree`), o sea de una base sin el archivo, el check canta commits sin
   pushear en **todas**, y otro clon sigue viendo el change como activo. Empuja solo
-  si el remoto es fast-forward y si lo que empujaría toca **solo** `sdd/`; un remoto
-  que avanzó lo integra el usuario, y un force-push no es nunca la respuesta. `ship`
-  sigue siendo la única fase que empuja una **rama de feature**: son refs distintas.
+  si lo que empujaría toca **solo** `sdd/`. Y desde 0.38 **integra** un remoto que
+  avanzó en vez de negarse: dos archives cerrando en paralelo divergen de
+  `origin/<base>` por construcción —el archive es el único commit que el flujo hace
+  ahí— y chocan en ficheros append-only por diseño, así que rebasa los commits
+  locales sobre `origin/<base>` resolviendo `sdd/metrics.md` y `sdd/roadmap.md`
+  quedándose las filas de los dos lados, y nombra lo que resolvió. Lo que no puede
+  decidir —una spec, un doc, código, o una unión que duplicaría una entrada—
+  **restaura la rama intacta y se niega**; un force-push no es nunca la respuesta.
+  `ship` sigue siendo la única fase que empuja una **rama de feature**: son refs
+  distintas.
 - Las **métricas** estaban rotas para concurrencia y worktrees lo empeoraba en
   silencio: un único `current-task` global era last-writer-wins, y como todas las
   sesiones exportan al mismo puerto (está en el `settings.json` versionado) solo

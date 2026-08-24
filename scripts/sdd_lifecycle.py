@@ -90,6 +90,9 @@ SYNC_SUBJECT_RE = re.compile(
 # the roadmap for. Everything else — code, specs, docs — is resolved by whoever
 # ran the command, never here.
 UNION_MERGE_PATHS = ("sdd/roadmap.md", "sdd/metrics.md")
+# A rebase resolves one commit at a time, so the loop is bounded by commits, not
+# by attempts. The cap is a runaway backstop, never a real limit.
+MAX_INTEGRATION_ROUNDS = 50
 LIFECYCLE_TRANSITIONS = {
     ("ACTIVE", "LOCAL_VERIFIED"),
     ("LOCAL_VERIFIED", "READY_FOR_PR"),
@@ -1216,6 +1219,117 @@ def render_sync(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def unpushed_bookkeeping(
+    root: Path, range_spec: str, runner: Runner = subprocess.run
+) -> tuple[list[str], list[str]]:
+    """The commits in a range and whatever they touch outside `sdd/`.
+
+    Asked before pushing AND before integrating, because both answer the same
+    question — what exactly is in these commits — and unrelated local work on the
+    base is not archive's to move either way.
+    """
+    commits = [
+        line
+        for line in run_command(
+            ["git", "log", "--format=%h %s", range_spec], root, runner
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+    touched = [
+        path
+        for path in run_command(
+            ["git", "diff", "--name-only", range_spec], root, runner
+        ).stdout.splitlines()
+        if path.strip()
+    ]
+    outside = sorted({path for path in touched if not path.startswith("sdd/")})
+    return commits, outside
+
+
+def integrate_base(
+    root: Path,
+    base: str,
+    remote_ref: str,
+    runner: Runner = subprocess.run,
+) -> list[str]:
+    """Rebase the local bookkeeping commits onto a base that moved on.
+
+    The archive commit is the only commit the flow makes directly on the base, so
+    two archives running in parallel diverge from origin by construction — and
+    the files they collide on (`sdd/metrics.md`, `sdd/roadmap.md`) are append-only
+    by design (ADR 0001). Integrating them is decidable; anything else is not, and
+    then this restores the branch and refuses exactly as before.
+
+    Returns the paths it resolved. Never force-pushes, never drops a commit.
+    """
+    dirty = status_paths(root, runner)
+    if dirty:
+        raise LifecycleError(
+            f"'{remote_ref}' moved on and integrating it needs a clean tree, but "
+            "these paths are not committed: "
+            + ", ".join(path for _, path in dirty[:5])
+        )
+    resolved: list[str] = []
+    attempt = runner(
+        ["git", "-c", "core.editor=true", "rebase", remote_ref],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    rounds = 0
+    while attempt.returncode:
+        rounds += 1
+        pending = unmerged_paths(root, runner)
+        detail = (attempt.stderr or attempt.stdout).strip()
+        if not pending and rounds <= MAX_INTEGRATION_ROUNDS and "--skip" in detail:
+            # The commit became empty: the base already carries what it did — two
+            # archives ticking the same roadmap entry, typically. Dropping it is
+            # what `git rebase` itself proposes, and it loses nothing.
+            attempt = runner(
+                ["git", "-c", "core.editor=true", "rebase", "--skip"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            continue
+        if not pending or rounds > MAX_INTEGRATION_ROUNDS:
+            try_command(["git", "rebase", "--abort"], root, runner)
+            raise LifecycleError(
+                f"Integrating '{remote_ref}' failed and the branch was restored "
+                f"unchanged: {detail or 'unknown error'}"
+            )
+        done, notes = resolve_bookkeeping(root, runner)
+        resolved.extend(done)
+        left = unmerged_paths(root, runner)
+        if left:
+            try_command(["git", "rebase", "--abort"], root, runner)
+            listed = ", ".join(left)
+            because = ("; ".join(notes) + ". ") if notes else ""
+            raise LifecycleError(
+                f"'{remote_ref}' moved on and these paths need a decision: "
+                f"{listed}. {because}The branch was restored unchanged — integrate "
+                f"it yourself (git pull --rebase origin {base}) and re-run. Never "
+                "force-push a shared base."
+            )
+        attempt = runner(
+            ["git", "-c", "core.editor=true", "rebase", "--continue"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", remote_ref, base], root, runner
+    ):
+        raise LifecycleError(
+            f"After integrating, '{base}' still does not contain '{remote_ref}'. "
+            "Stopping rather than pushing an unknown state."
+        )
+    return sorted(set(resolved))
+
+
 def query_pr(url: str, root: Path, runner: Runner = subprocess.run) -> dict[str, object]:
     result = run_command(
         [
@@ -1662,8 +1776,12 @@ def publish_archive(
 
     - the change must be ARCHIVED, and HEAD must be on its recorded base;
     - `sdd/` must be committed, or the push would publish half an archive;
-    - the local base must be a fast-forward of `origin/<base>`; if the remote
-      moved, that is the user's to integrate, never a force-push;
+    - the local base must end up a fast-forward of `origin/<base>`. When the
+      remote moved on — the normal case with features closing in parallel — the
+      local archive commits are rebased onto it, resolving only the append-only
+      bookkeeping files (`sdd/metrics.md`, `sdd/roadmap.md`) whose merge is
+      decidable. Anything else restores the branch untouched and refuses: it is
+      the user's to integrate, and never a force-push;
     - every commit about to be pushed must touch `sdd/` only. Unrelated local work
       on the base is not archive's to publish, and stopping is the answer.
     """
@@ -1720,32 +1838,38 @@ def publish_archive(
             f"'{remote_ref}' does not exist after fetching. Publish the base branch "
             f"first: git push -u origin {base}."
         )
+    integrated: list[str] = []
+    diverged = False
     if not try_command(
         ["git", "merge-base", "--is-ancestor", remote_ref, base], root, runner
     ):
-        raise LifecycleError(
-            f"'{remote_ref}' is not contained in your local '{base}': the remote "
-            "moved on. Integrate it first (git pull --rebase origin "
-            f"{base}) and re-run — never force-push a shared base."
-        )
+        # The remote moved on. With features closing in parallel this is the
+        # normal case, not an exception: the archive commit is the only commit the
+        # flow makes on the base, so two archives diverge by construction — and
+        # they collide on files that are append-only by design.
+        fork = run_command(
+            ["git", "merge-base", remote_ref, base], root, runner
+        ).stdout.strip()
+        local, outside = unpushed_bookkeeping(root, f"{fork}..{base}", runner)
+        if outside:
+            listed = ", ".join(outside[:5]) + (" …" if len(outside) > 5 else "")
+            raise LifecycleError(
+                f"'{remote_ref}' moved on, and your local '{base}' carries "
+                f"{len(local)} commit(s) touching files outside sdd/ ({listed}). "
+                "Integrating them is not archive's call — rebase them deliberately, "
+                "then re-run."
+            )
+        if dry_run:
+            return (
+                f"Would integrate {remote_ref} under {len(local)} local archive "
+                f"commit(s), then push: {'; '.join(local)}"
+            )
+        integrated = integrate_base(root, base, remote_ref, runner)
+        diverged = True
     range_spec = f"{remote_ref}..{base}"
-    commits = [
-        line
-        for line in run_command(
-            ["git", "log", "--format=%h %s", range_spec], root, runner
-        ).stdout.splitlines()
-        if line.strip()
-    ]
+    commits, outside = unpushed_bookkeeping(root, range_spec, runner)
     if not commits:
         return f"'{base}' already matches {remote_ref}: the archive is published."
-    touched = [
-        path
-        for path in run_command(
-            ["git", "diff", "--name-only", range_spec], root, runner
-        ).stdout.splitlines()
-        if path.strip()
-    ]
-    outside = sorted({path for path in touched if not path.startswith("sdd/")})
     if outside:
         listed = ", ".join(outside[:5]) + (" …" if len(outside) > 5 else "")
         raise LifecycleError(
@@ -1754,6 +1878,10 @@ def publish_archive(
             "them deliberately, then re-run."
         )
     listed = "; ".join(commits)
+    prefix = ""
+    if diverged:
+        detail = f", resolving {', '.join(integrated)}" if integrated else ""
+        prefix = f"Integrated {remote_ref} under the local archive commit(s){detail}. "
     if dry_run:
         return f"Would push {len(commits)} archive commit(s) to {remote_ref}: {listed}"
     if not try_command(["git", "push", "origin", base], root, runner):
@@ -1773,7 +1901,10 @@ def publish_archive(
             f"instead of {local_sha[:8]}. Check the remote before reporting a "
             "closed loop."
         )
-    return f"Published {len(commits)} archive commit(s) to {remote_ref} ({local_sha[:8]}): {listed}"
+    return (
+        f"{prefix}Published {len(commits)} archive commit(s) to {remote_ref} "
+        f"({local_sha[:8]}): {listed}"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

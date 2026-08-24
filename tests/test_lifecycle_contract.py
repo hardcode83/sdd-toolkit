@@ -132,7 +132,11 @@ class LifecycleSkillContractTests(unittest.TestCase):
         the change as active."""
         archive = self.read_skill("archive")
         self.assertIn("publish-archive <feature>", archive)
-        self.assertIn("fast-forward", archive)
+        # A base that moved on is integrated rather than refused (0.38) — two
+        # archives closing in parallel diverge by construction — but only for the
+        # append-only bookkeeping, and never by rewriting a shared base.
+        self.assertIn("integrated, not refused", archive)
+        self.assertIn("restores the branch untouched and refuses", archive)
         self.assertIn("force-push is never the answer", archive)
         # Ship keeps owning feature branches; the two never touch the same ref.
         ship = self.read_skill("ship")

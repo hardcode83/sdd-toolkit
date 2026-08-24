@@ -215,12 +215,22 @@ Write spec updates in the same language as the existing specs (or the user's lan
       leaves the base diverged from origin forever: every later feature branches
       from `origin/<base>` (`EnterWorktree`'s `fresh` default), the check reports
       unpushed commits on every one of them, and any other clone still reads this
-      change as active. `publish-archive` fetches, refuses unless the local base is
-      a fast-forward of `origin/<base>`, and refuses if the commits it would push
-      touch anything outside `sdd/` — relay those refusals verbatim; a diverged
-      remote is the user's to integrate and a force-push is never the answer. It is
-      idempotent, and a repository with no remote is told so rather than failed. If
-      the push is refused because the base is protected, it prints the
+      change as active. `publish-archive` fetches and refuses if the commits it
+      would push touch anything outside `sdd/`.
+
+      **A base that moved on is integrated, not refused.** Two archives closing in
+      parallel diverge from `origin/<base>` by construction — the archive commit is
+      the only commit the flow makes there — and they collide on files that are
+      append-only by design (ADR 0001). So `publish-archive` rebases the local
+      archive commits onto `origin/<base>` and resolves `sdd/metrics.md` and
+      `sdd/roadmap.md` by keeping both sides' rows; its message names what it
+      resolved. Anything it cannot decide — a spec, a doc, code, or a union that
+      would duplicate an entry — **restores the branch untouched and refuses**:
+      relay that verbatim and integrate nothing by hand on the user's behalf. On
+      a shared base a force-push is never the answer.
+
+      It is idempotent, and a repository with no remote is told so rather than
+      failed. If the push is refused because the base is protected, it prints the
       bookkeeping-branch fallback: hand that off, do not invent a workaround.
    2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run `retire` for each.
 
