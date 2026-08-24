@@ -719,6 +719,8 @@ class WorktreeStatus:
     clean: bool
     unpushed: int
     occupied_by: str
+    is_here: bool
+    suggested_teardown: str
     blockers: tuple[str, ...]
 
     @property
@@ -772,14 +774,21 @@ def worktree_status(
         unpushed = int(ahead) if ahead and ahead.isdigit() else 0
         occupied = live.get(str(path), "")
 
+        # Standing in it is a fact about the CALLER, not about the worktree, and
+        # it used to be a blocker — which made the common case impossible: under
+        # a per-feature session (an Orca workspace, a `claude` started inside the
+        # worktree) /sdd:archive runs from the very directory it has to remove,
+        # so its own worktree could never be retired and every run ended by
+        # telling the user to do it from somewhere else. `retire` relocates to
+        # the main worktree instead, which is mechanical; what it cannot do is
+        # move a shell it does not own, so this is reported rather than dropped.
+        is_here = path == here or is_within(here, path)
+        suggested = ""
+
         blockers: list[str] = []
         if is_main:
             blockers.append("this is the main worktree")
         else:
-            if path == here:
-                # Removing the directory you are standing in leaves the caller
-                # with a cwd that no longer exists and a git that cannot answer.
-                blockers.append("you are inside it — retire it from another worktree")
             if occupied:
                 blockers.append(f"a live session ({occupied}) is working in it")
             if not feature:
@@ -802,6 +811,9 @@ def worktree_status(
                 # there instead would make this listing a lie.
                 residue = residue_of(path, runner)
                 if not residue.empty:
+                    # Derived, not decided: the line the user would have had to
+                    # write, carried to whoever asks them for it.
+                    suggested = residue.suggested_teardown
                     blockers.append(
                         f"{RESIDUE_BLOCKER} {residue.describe()} and sdd/project.md "
                         "declares no teardown"
@@ -820,6 +832,8 @@ def worktree_status(
                 clean=clean,
                 unpushed=unpushed,
                 occupied_by=occupied,
+                is_here=is_here,
+                suggested_teardown=suggested,
                 blockers=tuple(blockers),
             )
         )
@@ -881,6 +895,28 @@ class Residue:
     @property
     def empty(self) -> bool:
         return not (self.projects or self.containers or self.volumes or self.images)
+
+    @property
+    def suggested_teardown(self) -> str:
+        """The teardown this residue would need, or "" when none can be derived.
+
+        Only a compose stack can be answered mechanically: the project name came
+        from docker, so `docker compose down` run *inside* the worktree addresses
+        exactly this stack and nothing else. The command stays cwd-relative
+        because that is the form a committed `teardown:` must have — every
+        worktree runs the same line and each one takes down its own stack.
+        Containers with no compose project get "" rather than a guess: nothing
+        here knows what started them.
+
+        Suggesting is not deciding. Whether `--volumes` destroys data somebody
+        needs stays the project's call (shared rule 9); this only saves typing
+        the line they would have had to write by hand, at the moment they are
+        being asked for it.
+        """
+        if not self.available or not self.projects:
+            return ""
+        command = "docker compose down --volumes --remove-orphans"
+        return f"{command} --rmi local" if self.images else command
 
     def describe(self) -> str:
         if not self.available:
@@ -1256,6 +1292,8 @@ class RetireOutcome:
     binding_released: bool
     surviving: tuple[SurvivingBranch, ...]
     plugin_entries_pruned: int
+    self_retired: bool
+    relocated_to: str
     notes: tuple[str, ...]
 
     def render(self) -> str:
@@ -1289,7 +1327,13 @@ class RetireOutcome:
             # cwd that no longer resolves, and the getcwd errors that follow name
             # neither the worktree nor the retirement. One line here is cheaper
             # than diagnosing that from scratch.
-            lines.append(f"           any shell still inside it must `cd` out: {self.path}")
+            if self.self_retired:
+                lines.append(
+                    "           you were standing in it — this session's working "
+                    f"directory is gone; move to {self.relocated_to} now"
+                )
+            else:
+                lines.append(f"           any shell still inside it must `cd` out: {self.path}")
         if self.surviving:
             lines.append("  branches: retire does not delete these — yours to judge:")
             lines.extend(f"           {found.describe()}" for found in self.surviving)
@@ -1349,12 +1393,18 @@ def retire(
             (b for b in remaining if b.startswith(RESIDUE_BLOCKER)), ""
         )
         if stranded:
+            # The suggested line is derived from what docker reported, so
+            # answering this refusal is a copy, not a decision to reconstruct.
+            line = (
+                target.suggested_teardown
+                or "docker compose down --volumes --remove-orphans"
+            )
             raise SessionError(
                 f"Refusing to retire {target.path}: {stranded}, so retiring now "
                 "would leave that on disk with no way left to attribute it. "
                 "Declare it in the 'Worktree bootstrap' section of "
                 "sdd/project.md, e.g.\n"
-                "    teardown: docker compose down --volumes --remove-orphans\n"
+                f"    teardown: {line}\n"
                 "or pass it once with --teardown '<command>'. `--skip-teardown` "
                 "keeps the resources deliberately; --force retires anyway."
             )
@@ -1388,8 +1438,32 @@ def retire(
             "--volumes / --remove-orphans / --rmi local)"
         )
 
+    # Everything from here on must run from somewhere that still exists. When the
+    # caller is standing in the worktree — the normal case for a session started
+    # inside it — the process cwd is about to be deleted, and every later step
+    # (`git branch -d`, the binding release, the ACL strip, the plugin registry)
+    # would fail with `Unable to read current working directory` while reporting
+    # the retirement as done. Relocating to the main worktree is mechanical and
+    # keeps the whole order intact; the teardown above already ran inside the
+    # worktree, where it had to.
+    #
+    # It also has to happen BEFORE the inventory is consumed: docker and chmod
+    # inherit this process's cwd, and a deleted one makes them unable to start.
+    main_worktree = common_dir(root, runner).parent.resolve()
+    git_root = root
+    if target.is_here:
+        try:
+            os.chdir(main_worktree)
+        except OSError as error:
+            raise SessionError(
+                f"Cannot retire {target.path} from inside it: moving to the main "
+                f"worktree {main_worktree} failed ({error}). Retire it from "
+                "another directory."
+            ) from error
+        git_root = main_worktree
+
     removal = ["worktree", "remove"] + (["--force"] if force else []) + [target.path]
-    unregistered = try_git(removal, root, runner) is not None
+    unregistered = try_git(removal, git_root, runner) is not None
     if not unregistered:
         raise SessionError(
             f"`git worktree remove {target.path}` failed. The teardown above did "
@@ -1403,9 +1477,9 @@ def retire(
 
     branch_deleted = False
     if target.branch:
-        deletion = try_git(["branch", "-d", target.branch], root, runner)
+        deletion = try_git(["branch", "-d", target.branch], git_root, runner)
         if deletion is None and force:
-            deletion = try_git(["branch", "-D", target.branch], root, runner)
+            deletion = try_git(["branch", "-D", target.branch], git_root, runner)
         branch_deleted = deletion is not None
         if not branch_deleted:
             notes.append(
@@ -1414,25 +1488,27 @@ def retire(
 
     binding_released = False
     if target.feature:
-        release(root, target.feature, runner)
+        release(git_root, target.feature, runner)
         binding_released = True
 
     # Asked after the branch deletion above, so what it reports is exactly what
     # survived it. Nothing is excluded by name: a deleted branch is already gone
     # from the ref listing, and one git refused to delete is precisely a survivor.
     survivors = surviving_branches(
-        root,
+        git_root,
         target.feature,
         "",
-        resolve_base_ref(root, base_branch_for(root, target.feature, runner), runner),
+        resolve_base_ref(
+            git_root, base_branch_for(git_root, target.feature, runner), runner
+        ),
         runner,
     )
-    pruned = prune_plugin_entries(root)
+    pruned = prune_plugin_entries(git_root)
 
     # The leak this closes: git no longer knows the path and the binding is gone,
     # so without a record NOTHING would ever mention this directory again.
     if not gone:
-        record_leftover(root, worktree, target.feature, after, runner)
+        record_leftover(git_root, worktree, target.feature, after, runner)
         notes.append(
             f"{target.path} survived deletion and is now recorded as a leftover: "
             "`sdd_session.py orphans` and /sdd:doctor will keep reporting it until "
@@ -1454,6 +1530,8 @@ def retire(
         binding_released=binding_released,
         surviving=survivors,
         plugin_entries_pruned=pruned,
+        self_retired=target.is_here,
+        relocated_to=str(main_worktree) if target.is_here else "",
         notes=tuple(notes),
     )
 
@@ -1749,6 +1827,16 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{mark}  {label}  {status.path}")
                     for blocker in status.blockers:
                         print(f"           · {blocker}")
+                    if status.is_here and not status.is_main:
+                        print(
+                            "           · you are inside it — retire relocates to "
+                            "the main worktree, and this directory disappears"
+                        )
+                    if status.suggested_teardown:
+                        print(
+                            "           · declare it to unblock: teardown: "
+                            f"{status.suggested_teardown}"
+                        )
             return 0
         elif args.command == "residue":
             if not args.feature and not args.path:
@@ -1763,9 +1851,24 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             found = residue_of(where)
             if args.json:
-                print(json.dumps(vars(found) | {"path": str(where)}, indent=2, default=list))
+                print(
+                    json.dumps(
+                        vars(found)
+                        | {
+                            "path": str(where),
+                            "suggested_teardown": found.suggested_teardown,
+                        },
+                        indent=2,
+                        default=list,
+                    )
+                )
             else:
                 print(f"{where}: {found.describe()}")
+                if found.suggested_teardown and not read_teardown(root):
+                    print(
+                        "sdd/project.md declares no teardown; this residue would "
+                        f"need: teardown: {found.suggested_teardown}"
+                    )
             return 0
         elif args.command == "retire":
             if not args.feature and not args.path:

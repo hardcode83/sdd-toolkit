@@ -28,10 +28,24 @@ Write spec updates in the same language as the existing specs (or the user's lan
    before continuing.
 
    Check where you are: `git rev-parse --git-dir` returning a path under
-   `.git/worktrees/` means this is a linked worktree. Leave it first
+   `.git/worktrees/` means this is a linked worktree; `sdd_session.py --root .
+   check` names the main one (`main_worktree` in its JSON). Prefer to leave first
    (`EnterWorktree` with the main worktree's `path`, or `ExitWorktree` with
-   `action: "keep"`) and re-run there. Never archive from inside the feature's own
-   worktree: the directory being moved would be the one you are standing in.
+   `action: "keep"`) and re-run there.
+
+   What that rule is actually about is the **base branch**, not the directory:
+   steps 3–6 write `sdd/specs/`, `sdd/roadmap.md` and `sdd/metrics.md`, and those
+   writes belong on the base — from the feature's branch they would land in the
+   change nobody is going to merge again. So if you cannot move (a session pinned
+   to one workspace, per-feature Orca-style sessions), the question to answer is
+   where the base branch is checked out and whether you are on it, and git allows
+   exactly one worktree to hold it at a time. If you are not on it and cannot get
+   to it, say so and stop before writing anything: half an archive on the wrong
+   branch costs more than a re-run.
+
+   What is **no longer** a reason to stop is standing in the worktree that has to
+   be retired. Retirement relocates itself (step 7), so the feature's own session
+   can close the loop instead of ending with an instruction for somebody else.
 
 1. **Verify objective merge evidence before any final-state write.** Run:
 
@@ -123,6 +137,25 @@ Write spec updates in the same language as the existing specs (or the user's lan
    actually gone, stripping the `deny delete` ACL that blocks it on macOS. Report
    its lines (`runtime` / `git` / `plugins` / `disk` / `branches`) as they come.
 
+   **A listing where nothing is `RETIRABLE` is not automatically the answer.**
+   Two of the reasons used to be dead ends and no longer are — read them as work
+   to finish in this turn, not as findings to report:
+
+   - **you are standing in it** is not a blocker any more. `retire` moves itself
+     to the main worktree before touching git, because everything after the
+     removal (`git branch -d`, the binding, the ACL strip, the plugin registry)
+     runs from a directory that no longer exists otherwise. The listing says so
+     on its own line, and the outcome's `disk:` line names where you were moved.
+     **Do the retirement last** and, the moment it reports `disk: clean`, enter
+     the main worktree (`EnterWorktree` with its `path`) before running anything
+     else — including step 9. Your working directory is gone; a `git` or `python3`
+     call from there fails with `Unable to read current working directory` and
+     names neither the worktree nor the retirement.
+   - **a stack nobody declared how to stop** now comes with the exact line to
+     declare, derived from what docker reported (`declare it to unblock:
+     teardown: …`). That line is the answer to the closing question in step 8,
+     not a homework assignment for the user.
+
    Two of those lines need relaying, not just printing:
 
    - **`disk: clean`** is followed by the directory that no longer exists. Any
@@ -141,12 +174,18 @@ Write spec updates in the same language as the existing specs (or the user's lan
    rather than worked around:
 
    - **"it still owns … and sdd/project.md declares no teardown"** — the worktree
-     has containers or volumes and the project never said how to stop them. Show
-     the inventory and the `teardown:` line it suggests, and offer to record it in
-     `sdd/project.md` (that is a project decision, shared rule 9 — never guess a
-     `down --volumes` over somebody's database). `--teardown '<cmd>'` for one run
-     and `--skip-teardown` (keep the resources on purpose) both exist; use them
-     only if the user says so.
+     has containers or volumes and the project never said how to stop them. The
+     refusal already carries the line to declare, derived from the compose project
+     docker itself reported (`teardown: docker compose down --volumes
+     --remove-orphans`, plus `--rmi local` when it also built images; a container
+     with no compose project gets no suggestion, because nothing here knows what
+     started it). Do not turn that into a separate turn: show the inventory and
+     **carry the suggested line into the step 8 question**, which offers to record
+     it in `sdd/project.md` and retire in the same answer. Whether `--volumes` may
+     run at all is still the project's call (shared rule 9 — never guess it over
+     somebody's database), which is why it is asked once and never assumed.
+     `--teardown '<cmd>'` for one run and `--skip-teardown` (keep the resources on
+     purpose) both exist; use them only if the user says so.
    - **"the declared teardown failed"** — nothing was deleted and the stack is
      still attributable. That is deliberate: after git removes the directory, the
      volumes are dangling and no command can tell whose they were.
@@ -185,8 +224,18 @@ Write spec updates in the same language as the existing specs (or the user's lan
       bookkeeping-branch fallback: hand that off, do not invent a workaround.
    2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run `retire` for each.
 
-   Never pass `--force` on the user's behalf, and never retire a worktree the command refuses. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
-9. **Verify the commit, not the working tree.** Once the archive is committed, run
+      When step 7 found a worktree whose only blocker was an **undeclared
+      teardown**, this is the same question, with the line it derived already in
+      it: "record `teardown: <command>` in `sdd/project.md` and retire?". A yes
+      writes that line into the **Worktree bootstrap** section, commits it with the
+      archive, and retires. That is the whole point of asking here: the answer
+      arrives once, in the turn that needed it, instead of the user having to come
+      back and ask for the cleanup a second time.
+
+   Never pass `--force` on the user's behalf, and never retire a worktree the command refuses for any other reason. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
+9. **Verify the commit, not the working tree.** If a retirement in step 8 moved
+   you out of the worktree you were standing in, enter the main worktree first —
+   otherwise this step cannot run at all. Once the archive is committed, run
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.
    Run it **after** the commit: a clean doctor on an uncommitted tree proves
    nothing about what landed, and that gap is exactly how an orphaned `STATE.md`

@@ -53,7 +53,11 @@ unrecognised declaration, which the validator already reported as `SDD026`.
 `worktrees` lists every worktree **git** knows about (not just the registered
 ones) with `RETIRABLE` or `en uso` plus its blockers. Report the retirable ones:
 their work has shipped and they are only taking up disk — `sdd_session.py retire
-<feature>` closes each.
+<feature>` closes each. Two of its note lines are answers rather than findings,
+so relay them as such: `you are inside it` says retirement will relocate to the
+main worktree (it is not a blocker), and `declare it to unblock: teardown: …` is
+the exact line the project has to declare for a worktree whose stack nothing
+knows how to stop.
 
 `orphans` reports what outlived the work, in three kinds, and each has a different
 fix — name which kind each finding is:

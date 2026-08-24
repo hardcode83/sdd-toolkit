@@ -123,7 +123,9 @@ Un aviso práctico: un worktree recién creado **no tiene** tu `.env` ni `node_m
 
 **¿Dónde está el trabajo de la otra sesión?** → `/sdd:status` agrega todos los worktrees del repo y lista las sesiones vivas. Un change puede no estar en el directorio desde el que lanzaste el comando.
 
-**Terminé y mergeé** → `/sdd:archive` corre **en el worktree principal** (muta specs, roadmap y mueve directorios: es el punto de serialización del flujo) y te ofrece retirar el worktree y su rama. Si algo quedó sin commitear allí, `git worktree remove` se niega — y eso es lo correcto: trabajo sin commitear es trabajo que nunca llegó al merge.
+**Terminé y mergeé** → `/sdd:archive` corre **en el worktree principal** (muta specs, roadmap y mueve directorios: es el punto de serialización del flujo) y te ofrece retirar el worktree y su rama en la misma pregunta de cierre. Si algo quedó sin commitear allí, `git worktree remove` se niega — y eso es lo correcto: trabajo sin commitear es trabajo que nunca llegó al merge.
+
+Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **estar dentro** del worktree que hay que retirar ya no lo bloquea (`retire` se muda al principal antes de tocar git y te dice a dónde moverte tú), y si el worktree tiene un stack de docker que el proyecto nunca dijo cómo parar, la pregunta de cierre llega con la línea `teardown:` ya escrita a partir de lo que reportó docker — decidir si ese `--volumes` puede correr sigue siendo tuyo, teclearlo no. Declárala una vez en *Worktree bootstrap* y no vuelve a preguntar.
 
 **Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso. Cuando nace de otra entrada, esa relación es justo para lo que sirven los metadatos: `completes:` si cierra lo que aquella dejó a medias, `needs:` si depende de algo que crea.
 

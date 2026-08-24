@@ -765,7 +765,23 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   qué línea escribir (regla 9: no adivina un `down --volumes` sobre la BD de
   nadie). La atribución no es un nombre derivado de la ruta: la lee de lo que
   docker grabó (`com.docker.compose.project.working_dir` y los config files que
-  reporta `docker compose ls`).
+  reporta `docker compose ls`). Desde 0.38 esa línea es **derivada**, no genérica:
+  sale del proyecto compose que reportó docker (`docker compose down --volumes
+  --remove-orphans`, más `--rmi local` si el worktree también tiene imágenes que
+  compose construyó), la imprimen `worktrees` y `residue`, y `/sdd:archive` la
+  lleva ya escrita a su pregunta de cierre — decidir sigue siendo del proyecto;
+  teclearla, no.
+- **Retirar el worktree en el que estás** ya no es un bloqueo (0.38). `retire` se
+  muda al worktree principal antes de tocar git: `git worktree remove` sí funciona
+  desde dentro, pero todo lo que va después —`git branch -d`, liberar el binding,
+  quitar la ACL, limpiar el registro de plugins— corre con un cwd que ya no
+  resuelve y falla con `Unable to read current working directory` mientras el
+  retiro se declara hecho. Tratarlo como bloqueo salía más caro: con una sesión
+  por feature (un workspace de Orca, un `claude` arrancado dentro del worktree) la
+  sesión que archiva **es** la que está dentro, así que el worktree nunca lo
+  retiraba la ejecución que había terminado su trabajo, y cada archive acababa
+  pidiendo que alguien lo hiciera desde otro sitio. La línea `disk:` dice a dónde
+  te mudó: hay que moverse con ella antes de ejecutar nada más.
 - Lo que **sobrevive** al retiro se registra, no se anuncia una vez. Era la fuga
   de verdad: git desregistra antes de borrar, así que tras un borrado fallido ni
   `worktrees` (que pregunta a git) ni `orphans` (que preguntaba al registro) tenían

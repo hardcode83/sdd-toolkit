@@ -88,7 +88,10 @@
       Verify the branch before the first edit, not after.
     - `/sdd:archive` runs **only in the main worktree, on the base branch, one
       change at a time**: it mutates `sdd/specs/`, ticks the roadmap and moves
-      directories. Being post-merge, that was already true in practice.
+      directories. Being post-merge, that was already true in practice. The
+      retirement it offers is the exception: `retire` relocates itself to the main
+      worktree, so a session standing in the worktree it has to remove closes the
+      loop instead of handing it to somebody else.
 11. **A phase does not inherit the previous phase's context.** Rule 1 already
     makes this safe: everything a phase needs is in `sdd/`, so starting with an
     empty context loses nothing — and a phase that *would* break without the

@@ -624,10 +624,54 @@ class RetirementTests(SessionTestCase):
         self.assertEqual("", status.occupied_by)
         self.assertTrue(status.retirable, status.blockers)
 
-    def test_you_cannot_retire_the_worktree_you_are_standing_in(self) -> None:
-        blockers = sdd_session.worktree_status(self.linked)
-        mine = [s for s in blockers if Path(s.path) == self.linked.resolve()][0]
-        self.assertTrue(any("inside it" in b for b in mine.blockers), mine.blockers)
+    def test_standing_in_it_is_reported_but_no_longer_blocks(self) -> None:
+        """Where the caller stands is a fact about the caller, not the worktree.
+
+        As a blocker it made the common case impossible: a session started inside
+        the worktree archives from the very directory that has to go.
+        """
+        statuses = sdd_session.worktree_status(self.linked)
+        mine = [s for s in statuses if Path(s.path) == self.linked.resolve()][0]
+        self.assertTrue(mine.is_here)
+        self.assertFalse(any("inside it" in b for b in mine.blockers), mine.blockers)
+
+    def test_retiring_from_inside_relocates_instead_of_refusing(self) -> None:
+        """The failure that left every per-feature session's worktree behind.
+
+        Verified against real git: `git worktree remove` does succeed from
+        inside, and everything after it — `git branch -d`, the binding release,
+        the ACL strip, the plugin registry — then fails with `Unable to read
+        current working directory` while the retirement reports itself done.
+        """
+        self.git("add", "sdd")
+        self.git("commit", "-m", "archive alpha")
+        subprocess.run(
+            ["git", "reset", "--hard", "main"],
+            cwd=self.linked,
+            check=True,
+            capture_output=True,
+        )
+        origin = Path.cwd()
+        os.chdir(self.linked)
+        self.addCleanup(os.chdir, origin)
+
+        status = [
+            s
+            for s in sdd_session.worktree_status(self.linked)
+            if Path(s.path) == self.linked.resolve()
+        ][0]
+        self.assertTrue(status.is_here)
+        self.assertTrue(status.retirable, status.blockers)
+
+        outcome = sdd_session.retire(self.linked, "alpha")
+        self.assertTrue(outcome.self_retired)
+        self.assertEqual(str(self.root), outcome.relocated_to)
+        self.assertTrue(outcome.directory_gone)
+        self.assertTrue(outcome.branch_deleted, outcome.notes)
+        self.assertTrue(outcome.binding_released or not outcome.feature)
+        self.assertFalse(self.linked.exists())
+        self.assertEqual(str(self.root), os.getcwd())
+        self.assertIn("this session's working directory is gone", outcome.render())
 
     def test_a_dead_session_does_not_block(self) -> None:
         self.write_registry(
@@ -875,6 +919,31 @@ class DecommissionTests(RetirementFixture):
         self.assertEqual(("sddalpha_data",), found.volumes)
         self.assertEqual(1, found.running)
         self.assertEqual(int(1.5 * 10**9) + 935 * 10**6, found.size)
+
+    def test_the_teardown_to_declare_is_derived_from_what_docker_reported(self) -> None:
+        """The answer to the refusal is a copy, not a reconstruction.
+
+        The project still decides whether `--volumes` may run (shared rule 9);
+        what it no longer has to do is work out the command while being asked.
+        """
+        stub = DockerStub(self.linked, containers=("alpha-db-1",), volumes=("sddalpha_data",))
+        found = sdd_session.residue_of(self.linked, stub)
+        self.assertEqual(
+            "docker compose down --volumes --remove-orphans --rmi local",
+            found.suggested_teardown,
+        )
+        status = [
+            s
+            for s in sdd_session.worktree_status(self.root, stub)
+            if Path(s.path) == self.linked.resolve()
+        ][0]
+        self.assertEqual(found.suggested_teardown, status.suggested_teardown)
+
+    def test_containers_with_no_compose_project_are_never_guessed_at(self) -> None:
+        """Nothing here knows what started them, so nothing is suggested."""
+        bare = sdd_session.Residue(True, (), ("stray-db",), 1, (), (), 0)
+        self.assertEqual("", bare.suggested_teardown)
+        self.assertEqual("", sdd_session.Residue(False, (), (), 0, (), (), 0).suggested_teardown)
 
     def test_another_worktrees_stack_is_never_attributed_to_this_one(self) -> None:
         elsewhere = self.root / ".claude" / "worktrees" / "sdd+beta"
