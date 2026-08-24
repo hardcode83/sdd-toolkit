@@ -1,0 +1,31 @@
+# Tasks: post-pr-recertification
+
+## 1. State machine primitives
+
+- [ ] 1.1 Add `{("PR_OPEN", "PR_OPEN")}` to `LIFECYCLE_TRANSITIONS` in `scripts/sdd_lifecycle.py` (l. 96-103). Verify that the set is otherwise unchanged. [R3, D4]
+- [ ] 1.2 Extend `classify_lifecycle_commit` in `scripts/sdd_lifecycle.py` with the recertify branch: insert before the final `elif` (l. 716-717) a block that, only when `transition == "PR_OPEN->PR_OPEN"`, validates `child_state.implementation_sha == parent` and `parent_state.implementation_sha != parent`. The existing guards for `READY_FOR_PR` and `LOCAL_VERIFIED` and the final `elif` stay intact. [R2, D5]
+- [ ] 1.3 Add unit tests in `tests/test_sdd_lifecycle.py` for the new transition: `test_classify_lifecycle_commit_accepts_recertify_transition` (T6, valid subject + body + parent SHA) and `test_recertify_refuses_recertify_subject_with_wrong_anchor` (N8, child SHA != parent). Re-run pre-existing classifier tests to confirm no regression. [R2, D5]
+
+## 2. `mark_recertified` command
+
+- [ ] 2.1 Implement `mark_recertified(root, feature, runner)` skeleton in `scripts/sdd_lifecycle.py` with the local-only gates: `state == PR_OPEN` (D9), `git branch --show-current == data["head_branch"]` (D6), working tree clean (no path outside `sdd/changes/<feature>/STATE.md`), no staged STATE.md, no BLOCKED.md (N3, N4, N9, N10), tasks checked, `local_review == APPROVED` (N11, N12). Each gate raises `LifecycleError` with the message described in its negative test. [R5, D6, D9]
+- [ ] 2.2 Add the `gh pr view` validation block: query `<recorded pr_url>`, reject when `state != OPEN` (N1, N2), reject when `repository`/`baseRefName`/`headRefName`/`url`/`number` mismatch STATE (N6), require `old implementation_sha ∈ commits[]` (N15) and `HEAD ∈ commits[]` (N14). Reuse `query_pr`, `validate_pr_metadata`, `validate_pr_identity`. [R1.2, R1.4, D7]
+- [ ] 2.3 Implement the lifecycle commit step: short-circuit with the idempotent message when `HEAD == implementation_sha` (T2); otherwise capture `HEAD = parent_sha`, set `data["implementation_sha"] = parent_sha` (D3, never the commit's own SHA), build the subject `chore(sdd): lifecycle <feature> PR_OPEN->PR_OPEN`, body with `SDD-Lifecycle-Feature: <feature>` and `SDD-Prior-Implementation-SHA: <old>`, then call `lifecycle_commit` and `classify_lifecycle_commit` (D2, D5). [R1.1, D3, D5]
+- [ ] 2.4 Wire the CLI: add the subparser `mark-recertified <feature>` to `build_parser` (l. 1910-1959) and the corresponding branch in `main` (l. 1962-2011). Success message: `"PR_OPEN re-anchored at <sha[:12]>."`. No-op message: `"Recertification is current; nothing to do."`. Errors via `LifecycleError` → exit 1. [R1, D1]
+- [ ] 2.5 Add success-path tests in `tests/test_sdd_lifecycle.py`: `test_recertify_re_anchors_and_passes_validate_ship` (T1), `test_recertify_is_idempotent_when_head_matches_anchor` (T2), `test_recertify_preserves_pr_identity` (T3), `test_recertify_chained_two_cycles` (T4), `test_validate_ship_suffix_accepts_recertify_commit` (T5). [R1.1, R4, D3, D8]
+- [ ] 2.6 Add error-path tests in `tests/test_sdd_lifecycle.py`: N1, N2, N3, N4, N5, N6, N9, N10, N11, N12, N13, N14, N15. Use the existing `gh_runner` factory and `LifecycleError` regex assertions from the design matrix. [R1.2-R1.4, R5]
+- [ ] 2.7 Add the no-push test `test_recertify_does_not_invoke_git_push` (N16) using a recording runner pattern (mirrors `test_ship_pushes_only_after_all_lifecycle_gates_pass` l. 308-347): instrument the runner, assert no command list contains `["git", "push", ...]`. [R1, D7]
+
+## 3. Skills
+
+- [ ] 3.1 Update `skills/review/SKILL.md`: after the branch guard (l. 68), read `STATE.md.state`. If `PR_OPEN`: launch the panel on the range `implementation_sha..HEAD` and on PASS call `mark-recertified` (replace `mark-local-verified` + `mark-ready`). Document the push precondition in the section that explains the branch guard. Update the "invalidates the recorded implementation_sha" note (l. 104-108) to point at the supported flow. [R6, D10]
+- [ ] 3.2 Update `skills/ship/SKILL.md`: in the `PR_OPEN` case of step 1 (l. 37-40), add a sub-branch `HEAD != implementation_sha` that aborts with an actionable message naming `/sdd:review <feature>` as the resume command. Keep the existing `HEAD == implementation_sha` branch (sync-base + record-pr idempotent) intact. [R7, D11]
+- [ ] 3.3 Update `skills/auto/SKILL.md`: in "Resuming a mid-flight feature" (l. 247-249), extend the `PR_OPEN` row to delegate to `/sdd:review` when `HEAD != implementation_sha` (no new auto logic — review applies the recertify branch). [alineamiento con R6]
+- [ ] 3.4 Add contract tests in `tests/test_lifecycle_contract.py`: `test_review_skill_branches_at_pr_open_for_recertify` (C1), `test_ship_skill_refuses_pr_open_with_unanchored_head` (C2), `test_auto_skill_resumes_pr_open_with_recertify_path` (C3). Each asserts substrings on the corresponding `SKILL.md`. [R6, R7]
+
+## 4. Verification
+
+- [ ] 4.1 Run the toolkit's full test suite with the CI command: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`. All tests, pre-existing and new, must pass. [N17, R3]
+- [ ] 4.2 Smoke-test the new CLI surface: `python3 scripts/sdd_lifecycle.py mark-recertified --help` exits 0 and prints usage; `python3 scripts/sdd_lifecycle.py mark-recertified nonexistent-feature` exits 1 with a `LifecycleError` ("active change 'nonexistent-feature' was not found"). [R1, D1]
+- [ ] 4.3 End-to-end smoke: a synthetic throw-away repo running the full lifecycle ACTIVE → LOCAL_VERIFIED → READY_FOR_PR → PR_OPEN → functional fix → `mark-recertified` → `validate-ship` → `require_merge` (with a fake MERGED payload) confirms the merge gate accepts the recertified anchor. Capture the script at `tests/fixtures/recertify-e2e/` if reusable, otherwise run it ad-hoc and discard. [R1, D8, D10]
+- [ ] 4.4 Out-of-scope guard: `git diff origin/main -- scripts/sdd_lifecycle.py` confirms no functional changes to `record_pr`, `mark_ready`, `mark_local_verified`, `sync_base`, `commit_sync`, `require_merge`, `validate_ship_suffix`, `publish_archive`. `git diff origin/main -- skills/` confirms only `review`, `ship`, `auto` are touched, not `archive`, `new`, `design`, `run`, `tasks`, `init`, `doctor`, `status`, `history`, `diagram`. [R3, R7]
