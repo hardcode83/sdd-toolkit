@@ -214,12 +214,18 @@ def lifecycle_commit(
     transition: str,
     data: dict[str, str],
     runner: Runner = subprocess.run,
+    body_lines: list[str] | None = None,
 ) -> str:
     """Persist one lifecycle transition as one STATE-only commit.
 
     The helper owns only the canonical STATE bytes it is asked to write. It
     refuses unrelated dirty/staged paths, never rewrites history, and restores
     its temporary staging/bytes if the commit command fails.
+
+    Optional `body_lines` are appended as additional `-m` paragraphs (e.g.
+    `SDD-Prior-Implementation-SHA: <old>` for traceability); they are not
+    classified by the lifecycle commit classifier — only the subject and the
+    canonical `SDD-Lifecycle-Feature` trailer are.
     """
     expected_path = lifecycle_path(root, feature, runner)
     ensure_clean_or_only_expected_state(root, expected_path, runner)
@@ -231,18 +237,21 @@ def lifecycle_commit(
     try:
         run_command(["git", "add", "--", expected_path], root, runner)
         subject = f"chore(sdd): lifecycle {feature} {transition}"
+        commit_args: list[str] = [
+            "git",
+            "commit",
+            "--only",
+            "-m",
+            subject,
+            "-m",
+            f"SDD-Lifecycle-Feature: {feature}",
+        ]
+        for line in body_lines or []:
+            commit_args.extend(["-m", line])
+        commit_args.append("--")
+        commit_args.append(expected_path)
         result = runner(
-            [
-                "git",
-                "commit",
-                "--only",
-                "-m",
-                subject,
-                "-m",
-                f"SDD-Lifecycle-Feature: {feature}",
-                "--",
-                expected_path,
-            ],
+            commit_args,
             cwd=root,
             check=False,
             capture_output=True,
@@ -1590,8 +1599,14 @@ def mark_recertified(
         )
     new_data = dict(data)
     new_data["implementation_sha"] = head  # parent SHA, never the commit's own
+    old_anchor = data.get("implementation_sha", "")
     lifecycle = lifecycle_commit(
-        root, feature, "PR_OPEN->PR_OPEN", new_data, runner
+        root,
+        feature,
+        "PR_OPEN->PR_OPEN",
+        new_data,
+        body_lines=[f"SDD-Prior-Implementation-SHA: {old_anchor}"],
+        runner=runner,
     )
     classify_lifecycle_commit(root, lifecycle, feature, runner)
     return f"PR_OPEN re-anchored at {head[:12]}."
