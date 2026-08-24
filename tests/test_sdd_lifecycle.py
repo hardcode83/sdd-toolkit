@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import sdd_lifecycle  # noqa: E402
 from sdd_lifecycle import (  # noqa: E402
     classify_lifecycle_commit,
+    commit_sync,
+    duplicate_bookkeeping_keys,
     LifecycleError,
     initial_state,
     finalize_archive,
@@ -26,6 +28,7 @@ from sdd_lifecycle import (  # noqa: E402
     require_merge,
     stage_archive_move,
     start_change,
+    sync_base,
     update_roadmap,
     validate_feature_slug,
     validate_ship_suffix,
@@ -960,6 +963,267 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn(
             "- [x] example", (self.root / "sdd/roadmap.md").read_text(encoding="utf-8")
         )
+
+
+class SyncBaseTests(unittest.TestCase):
+    """The base moving under an open PR — the one stretch nothing owned.
+
+    Review stops at READY_FOR_PR and archive refuses to start before the merge,
+    so with several features in flight the integration happened by hand in
+    between and left no record of what was resolved. These pin what may be
+    resolved mechanically, what must be handed back, and what a merge on a
+    feature branch has to prove before ship will accept it.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.change = self.root / "sdd" / "changes" / FEATURE
+        self.change.mkdir(parents=True)
+        (self.change / "proposal.md").write_text(
+            "# Proposal\n\n## Requirements\n\n### R1 — Example\n", encoding="utf-8"
+        )
+        (self.change / "tasks.md").write_text(
+            "# Tasks\n\n- [x] 1.1 Complete behavior [R1]\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] example — lifecycle fixture → changes/example/\n",
+            encoding="utf-8",
+        )
+        (self.root / "README.md").write_text("# fixture\n\ncomun\n", encoding="utf-8")
+        write_state(self.change, initial_state())
+        self.git("init", "-b", "sdd/example")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "SDD Test")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+        self.git("branch", "main")
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=self.root, check=True, capture_output=True, text=True
+        )
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def commit(self, message: str) -> str:
+        self.git("add", "-A")
+        self.git("commit", "-m", message)
+        return self.head()
+
+    def ready(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        self.implementation_sha = read_state(self.change)["implementation_sha"]
+
+    def base_gains(self, relative: str, content: str, message: str = "base work") -> str:
+        """A commit lands on the base while this branch is out for review."""
+        self.git("checkout", "main")
+        target = self.root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        sha = self.commit(message)
+        self.git("checkout", "sdd/example")
+        return sha
+
+    def test_a_base_that_has_not_moved_is_left_untouched(self) -> None:
+        self.ready()
+        before = self.head()
+        report = sync_base(self.root, FEATURE)
+        self.assertFalse(report["synced"])
+        self.assertEqual([], report["pending"])
+        self.assertIn("already contains", str(report["reason"]))
+        self.assertEqual(before, self.head())
+
+    def test_a_base_that_moved_is_merged_and_the_reviewed_anchor_survives(self) -> None:
+        """Merge, never rebase: the anchor is what every later gate reads."""
+        self.ready()
+        base_sha = self.base_gains("colega.md", "otro trabajo\n")
+        report = sync_base(self.root, FEATURE)
+        self.assertTrue(report["synced"], report)
+        commit = str(report["commit"])
+        parents = self.git("show", "-s", "--format=%P", commit).stdout.split()
+        self.assertEqual(2, len(parents))
+        self.assertEqual(base_sha, parents[1])
+        self.assertEqual(
+            f"chore(sdd): sync example main@{base_sha[:12]}",
+            self.git("show", "-s", "--format=%s", commit).stdout.strip(),
+        )
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", self.implementation_sha, "HEAD"],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+        )
+        self.assertIn(commit, validate_ship_suffix(self.root, FEATURE))
+
+    def test_a_bookkeeping_conflict_is_resolved_by_keeping_both_lines(self) -> None:
+        roadmap = self.root / "sdd" / "roadmap.md"
+        roadmap.write_text(
+            roadmap.read_text() + "- [ ] otra — de la rama → changes/otra/\n",
+            encoding="utf-8",
+        )
+        self.commit("roadmap entry for this change")
+        self.ready()
+        self.git("checkout", "main")
+        base_roadmap = self.root / "sdd" / "roadmap.md"
+        base_roadmap.write_text(
+            base_roadmap.read_text() + "- [ ] tercera — de la base → changes/tercera/\n",
+            encoding="utf-8",
+        )
+        self.commit("roadmap entry on the base")
+        self.git("checkout", "sdd/example")
+
+        report = sync_base(self.root, FEATURE)
+        self.assertTrue(report["synced"], report)
+        self.assertEqual(["sdd/roadmap.md"], report["resolved"])
+        merged = roadmap.read_text(encoding="utf-8")
+        self.assertIn("- [ ] otra — de la rama", merged)
+        self.assertIn("- [ ] tercera — de la base", merged)
+        self.assertNotIn("<<<<", merged)
+        self.assertIn(str(report["commit"]), validate_ship_suffix(self.root, FEATURE))
+
+    def test_a_union_that_would_duplicate_an_entry_is_not_a_resolution(self) -> None:
+        """Both sides touching the SAME entry is a decision, not a union."""
+        roadmap = self.root / "sdd" / "roadmap.md"
+        roadmap.write_text(
+            "# Roadmap\n\n- [ ] example — reescrito en la rama → changes/example/\n",
+            encoding="utf-8",
+        )
+        self.commit("reword the entry")
+        self.ready()
+        self.git("checkout", "main")
+        roadmap.write_text(
+            "# Roadmap\n\n- [x] example — lifecycle fixture → changes/example/\n",
+            encoding="utf-8",
+        )
+        self.commit("tick the entry on the base")
+        self.git("checkout", "sdd/example")
+
+        report = sync_base(self.root, FEATURE)
+        self.assertFalse(report["synced"])
+        self.assertEqual(["sdd/roadmap.md"], report["pending"])
+        self.assertTrue(
+            any("duplicate" in note for note in report["notes"]), report["notes"]
+        )
+        self.assertTrue(sdd_lifecycle.merge_in_progress(self.root))
+
+    def test_a_code_conflict_is_left_in_progress_and_recorded_when_resolved(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text("# fixture\n\nde la rama\n", encoding="utf-8")
+        self.commit("branch edit")
+        self.ready()
+        self.base_gains("README.md", "# fixture\n\nde la base\n", "base edit")
+
+        report = sync_base(self.root, FEATURE)
+        self.assertFalse(report["synced"])
+        self.assertEqual(["README.md"], report["pending"])
+        self.assertTrue(sdd_lifecycle.merge_in_progress(self.root))
+
+        readme.write_text("# fixture\n\nde la rama y de la base\n", encoding="utf-8")
+        self.git("add", "--", "README.md")
+        commit, conflicts = commit_sync(
+            self.root, FEATURE, verification="python3 -m unittest"
+        )
+        self.assertEqual(["README.md"], conflicts)
+        body = self.git("show", "-s", "--format=%B", commit).stdout
+        self.assertIn("SDD-Sync-Resolved: README.md", body)
+        self.assertIn("SDD-Sync-Verified: python3 -m unittest -> ok", body)
+        self.assertIn("SDD-Lifecycle-Feature: example", body)
+        self.assertIn(commit, validate_ship_suffix(self.root, FEATURE))
+
+    def test_a_failed_verification_is_recorded_rather_than_hidden(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text("# fixture\n\nde la rama\n", encoding="utf-8")
+        self.commit("branch edit")
+        self.ready()
+        self.base_gains("README.md", "# fixture\n\nde la base\n", "base edit")
+        sync_base(self.root, FEATURE)
+        readme.write_text("# fixture\n\nresuelto\n", encoding="utf-8")
+        self.git("add", "--", "README.md")
+        commit, _ = commit_sync(self.root, FEATURE, verification="make test", failed=True)
+        self.assertIn(
+            "SDD-Sync-Verified: make test -> FAILED",
+            self.git("show", "-s", "--format=%B", commit).stdout,
+        )
+
+    def test_leftover_conflict_markers_are_never_recorded_as_resolved(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text("# fixture\n\nde la rama\n", encoding="utf-8")
+        self.commit("branch edit")
+        self.ready()
+        self.base_gains("README.md", "# fixture\n\nde la base\n", "base edit")
+        sync_base(self.root, FEATURE)
+        readme.write_text(
+            "# fixture\n\n<<<<<<< HEAD\nde la rama\n=======\nde la base\n>>>>>>> main\n",
+            encoding="utf-8",
+        )
+        self.git("add", "--", "README.md")
+        with self.assertRaises(LifecycleError) as caught:
+            commit_sync(self.root, FEATURE)
+        self.assertIn("conflict markers", str(caught.exception))
+
+    def test_ship_rejects_a_merge_it_did_not_authorize(self) -> None:
+        self.ready()
+        self.git("checkout", "-b", "otra", "main")
+        (self.root / "otra.md").write_text("otra rama\n", encoding="utf-8")
+        self.commit("otra rama")
+        self.git("checkout", "sdd/example")
+        self.git("merge", "--no-edit", "otra")
+        with self.assertRaises(LifecycleError) as caught:
+            validate_ship_suffix(self.root, FEATURE)
+        self.assertIn("unauthorized subject", str(caught.exception))
+
+    def test_a_sync_that_did_not_come_from_the_base_is_rejected(self) -> None:
+        """The subject is a claim; containment in the base is the fact."""
+        self.ready()
+        self.git("checkout", "-b", "otra", "main")
+        (self.root / "otra.md").write_text("otra rama\n", encoding="utf-8")
+        foreign = self.commit("otra rama")
+        self.git("checkout", "sdd/example")
+        self.git("merge", "--no-commit", "--no-ff", "otra")
+        self.git(
+            "commit",
+            "-m",
+            f"chore(sdd): sync example main@{foreign[:12]}",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        with self.assertRaises(LifecycleError) as caught:
+            validate_ship_suffix(self.root, FEATURE)
+        self.assertIn("not contained in", str(caught.exception))
+
+    def test_syncing_needs_a_published_state_and_a_clean_tree(self) -> None:
+        with self.assertRaises(LifecycleError) as caught:
+            sync_base(self.root, FEATURE)
+        self.assertIn("is ACTIVE", str(caught.exception))
+        self.ready()
+        (self.root / "suelto.md").write_text("sin commitear\n", encoding="utf-8")
+        with self.assertRaises(LifecycleError) as caught:
+            sync_base(self.root, FEATURE)
+        self.assertIn("clean", str(caught.exception))
+
+
+class UnionResolutionTests(unittest.TestCase):
+    def test_a_repeated_metrics_row_is_detected(self) -> None:
+        text = (
+            "| feature | coste |\n| --- | --- |\n| alpha | 1 |\n| alpha | 2 |\n"
+            "| beta | 3 |\n"
+        )
+        self.assertEqual(["alpha"], duplicate_bookkeeping_keys("sdd/metrics.md", text))
+
+    def test_a_table_separator_is_not_a_row(self) -> None:
+        text = "| feature |\n| --- |\n| --- |\n"
+        self.assertEqual([], duplicate_bookkeeping_keys("sdd/metrics.md", text))
+
+    def test_unrelated_roadmap_entries_are_not_duplicates(self) -> None:
+        text = (
+            "- [ ] alpha — una → changes/alpha/\n"
+            "- [x] beta — otra → changes/archive/2026-01-01-beta/\n"
+        )
+        self.assertEqual([], duplicate_bookkeeping_keys("sdd/roadmap.md", text))
 
 
 class PublishArchiveTests(unittest.TestCase):

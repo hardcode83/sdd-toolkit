@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Callable
@@ -76,6 +77,19 @@ FEATURE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LIFECYCLE_SUBJECT_RE = re.compile(
     r"^chore\(sdd\): lifecycle (?P<feature>[^ ]+) (?P<transition>[^ ]+)$"
 )
+# The one commit on a feature branch that is neither implementation nor a
+# lifecycle transition: the base branch merged in, so an open PR stays mergeable
+# while other features land. Merge and never rebase — `implementation_sha` is the
+# reviewed anchor every later gate reads, and a rebase would rewrite it out of
+# existence.
+SYNC_SUBJECT_RE = re.compile(
+    r"^chore\(sdd\): sync (?P<feature>[^ ]+) (?P<base>[^ @]+)@(?P<sha>[0-9a-f]{7,40})$"
+)
+# Files whose merge is decidable without judgement: append-only bookkeeping where
+# each side only ever adds its own line, which is exactly what ADR 0001 shaped
+# the roadmap for. Everything else — code, specs, docs — is resolved by whoever
+# ran the command, never here.
+UNION_MERGE_PATHS = ("sdd/roadmap.md", "sdd/metrics.md")
 LIFECYCLE_TRANSITIONS = {
     ("ACTIVE", "LOCAL_VERIFIED"),
     ("LOCAL_VERIFIED", "READY_FOR_PR"),
@@ -464,9 +478,6 @@ def verify_equivalent_merge(
     matching base commit SHA, or "" when the base carries no such change.
     """
     implementation_sha = state["implementation_sha"]
-    merge_base = run_command(
-        ["git", "merge-base", base_ref, implementation_sha], root, runner
-    ).stdout.strip()
     branch_tip = implementation_sha
     if try_command(
         ["git", "rev-parse", "--verify", f"{state['head_branch']}^{{commit}}"],
@@ -476,7 +487,34 @@ def verify_equivalent_merge(
         branch_tip = run_command(
             ["git", "rev-parse", f"{state['head_branch']}^{{commit}}"], root, runner
         ).stdout.strip()
-    branch_total = range_fingerprint(root, merge_base, branch_tip, runner)
+    # Two possible boundaries for "what this branch introduces", and which one
+    # holds depends on how the branch met the base:
+    #   * against the branch TIP — correct once the base was merged INTO the
+    #     branch (sync-base), where the old branch point would carry every base
+    #     commit the sync brought in and match no squash of this change;
+    #   * against the reviewed COMMIT — correct when the branch was rebased and
+    #     the base fast-forwarded onto it, where the tip is already contained in
+    #     the base and the diff from there is empty.
+    # With neither, they are the same commit. Take the first that describes
+    # anything; only if both are empty does the branch really introduce nothing.
+    merge_base = ""
+    branch_total = ""
+    for candidate in dict.fromkeys(
+        (
+            run_command(
+                ["git", "merge-base", base_ref, branch_tip], root, runner
+            ).stdout.strip(),
+            run_command(
+                ["git", "merge-base", base_ref, implementation_sha], root, runner
+            ).stdout.strip(),
+        )
+    ):
+        if not candidate:
+            continue
+        fingerprint = range_fingerprint(root, candidate, branch_tip, runner)
+        if fingerprint:
+            merge_base, branch_total = candidate, fingerprint
+            break
     if not branch_total:
         raise LifecycleError(
             f"Reviewed commit {implementation_sha[:12]} changes nothing relative to "
@@ -686,6 +724,12 @@ def validate_ship_suffix(
 
     The lifecycle allowlist is exactly ``sdd/changes/<feature>/STATE.md``;
     generic observability such as ``sdd/metrics.md`` is deliberately excluded.
+
+    Two shapes are authorized, and nothing else: a STATE-only lifecycle commit,
+    and the base-sync merge `sync-base` records. The walk follows `--first-parent`
+    for exactly that reason — a sync merge brings the base's whole history onto
+    the branch, and validating those commits as if the flow had made them would
+    fail every one of them.
     """
     change = active_change(root, feature)
     data = read_state(change)
@@ -706,11 +750,470 @@ def validate_ship_suffix(
     if status_paths(root, runner):
         raise LifecycleError("Worktree must be clean before ship.")
     commits = run_command(
-        ["git", "rev-list", "--reverse", f"{implementation_sha}..{head}"], root, runner
+        ["git", "rev-list", "--reverse", "--first-parent", f"{implementation_sha}..{head}"],
+        root,
+        runner,
     ).stdout.split()
     for commit in commits:
-        classify_lifecycle_commit(root, commit, feature, runner)
+        parents = run_command(
+            ["git", "show", "-s", "--format=%P", commit], root, runner
+        ).stdout.split()
+        if len(parents) == 2:
+            validate_sync_commit(root, commit, feature, data.get("base_branch", ""), runner)
+        else:
+            classify_lifecycle_commit(root, commit, feature, runner)
     return commits
+
+
+def unmerged_paths(root: Path, runner: Runner = subprocess.run) -> list[str]:
+    """The paths git itself reports as unresolved — the only authority on that."""
+    return sorted(
+        {
+            line.strip()
+            for line in run_command(
+                ["git", "diff", "--name-only", "--diff-filter=U"], root, runner
+            ).stdout.splitlines()
+            if line.strip()
+        }
+    )
+
+
+def merge_in_progress(root: Path, runner: Runner = subprocess.run) -> bool:
+    return (
+        try_command(
+            ["git", "rev-parse", "--verify", "--quiet", "MERGE_HEAD"], root, runner
+        )
+        is not None
+    )
+
+
+def leftover_conflict_markers(
+    root: Path, runner: Runner = subprocess.run
+) -> list[str]:
+    """Staged paths that still carry conflict markers.
+
+    `git diff --cached --check` is git's own detector, which is the point: a
+    resolution is not judged by whether it looks tidy, and "I resolved it" is a
+    claim until git stops finding markers in it.
+    """
+    try:
+        result = runner(
+            ["git", "diff", "--cached", "--check"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:  # pragma: no cover - git is present everywhere here
+        raise LifecycleError(f"Could not execute 'git': {error}") from error
+    if not result.returncode:
+        return []
+    found = {
+        line.split(":", 1)[0].strip()
+        for line in (result.stdout or "").splitlines()
+        if "conflict marker" in line and ":" in line
+    }
+    return sorted(found)
+
+
+def recorded_conflicts(root: Path, runner: Runner = subprocess.run) -> list[str]:
+    """The files git listed as conflicted in MERGE_MSG.
+
+    Read from git's own message instead of remembered by the caller: the
+    resolution spans two commands — one starts the merge, another records it —
+    and what the caller remembers in between is not evidence.
+    """
+    located = try_command(["git", "rev-parse", "--git-path", "MERGE_MSG"], root, runner)
+    if located is None:
+        return []
+    path = Path(located.stdout.strip())
+    if not path.is_absolute():
+        path = root / path
+    if not path.is_file():
+        return []
+    listed: list[str] = []
+    collecting = False
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.lstrip("#").strip()
+        if stripped.lower().startswith("conflicts:"):
+            collecting = True
+            continue
+        if collecting and stripped:
+            listed.append(stripped)
+        elif collecting:
+            break
+    return listed
+
+
+def duplicate_bookkeeping_keys(path: str, text: str) -> list[str]:
+    """Keys a union merge duplicated, which is where a union stops being safe.
+
+    Union keeps both sides' lines, and that is exactly right while each side only
+    adds its own. If both sides touched the SAME entry — a roadmap tick against
+    an edit of the same line, two rows for one feature in the metrics table — the
+    result holds two copies of it, and two copies is not a resolution. Detecting
+    it is what keeps the automatic path honest rather than merely quiet.
+    """
+    seen: dict[str, int] = {}
+    name = path.rsplit("/", 1)[-1]
+    for line in text.splitlines():
+        key = ""
+        if name == "roadmap.md":
+            entry = ROADMAP_ENTRY_RE.match(line)
+            if entry:
+                body = entry.group("body")
+                key = roadmap_feature(body) or body.strip()
+        elif name == "metrics.md" and line.startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            candidate = cells[0] if cells else ""
+            # A table separator (|---|---|) is not a row.
+            if candidate and set(candidate) - set("-: "):
+                key = candidate
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+    return sorted(key for key, count in seen.items() if count > 1)
+
+
+def union_resolve(
+    root: Path, path: str, runner: Runner = subprocess.run
+) -> tuple[bool, str]:
+    """Resolve one append-only bookkeeping file by keeping both sides' lines.
+
+    `git merge-file --union` is the same union git applies to a `merge=union`
+    attribute, so this adds no merge semantics of its own. What it adds is the
+    check afterwards, and the refusal to touch anything else: returns
+    ``(False, why)`` without staging anything, so the caller reports the file
+    instead of pretending it was handled.
+    """
+    if path not in UNION_MERGE_PATHS:
+        return False, "not an append-only bookkeeping file"
+    ours = try_command(["git", "show", f":2:{path}"], root, runner)
+    theirs = try_command(["git", "show", f":3:{path}"], root, runner)
+    if ours is None or theirs is None:
+        # One side deleted it. Which side wins is a decision, not a union.
+        return False, "one side deleted it"
+    ancestor = try_command(["git", "show", f":1:{path}"], root, runner)
+    with tempfile.TemporaryDirectory() as scratch:
+        stages: dict[int, str] = {}
+        for stage, blob in ((1, ancestor), (2, ours), (3, theirs)):
+            handle = Path(scratch) / f"stage{stage}"
+            handle.write_text(blob.stdout if blob else "", encoding="utf-8")
+            stages[stage] = str(handle)
+        merged = try_command(
+            ["git", "merge-file", "--union", "-p", stages[2], stages[1], stages[3]],
+            root,
+            runner,
+        )
+        content = merged.stdout if merged else ""
+    if merged is None:
+        return False, "git merge-file could not union it"
+    duplicates = duplicate_bookkeeping_keys(path, content)
+    if duplicates:
+        return False, f"a union would duplicate {', '.join(duplicates)}"
+    (repo_root(root, runner) / path).write_text(content, encoding="utf-8")
+    run_command(["git", "add", "--", path], root, runner)
+    return True, ""
+
+
+def resolve_bookkeeping(
+    root: Path, runner: Runner = subprocess.run
+) -> tuple[list[str], list[str]]:
+    """Union-resolve every conflicted bookkeeping file. Returns (resolved, why).
+
+    Everything it cannot decide is left conflicted on purpose: an unresolved path
+    is visible to git, to the caller and to the next command, while a guessed one
+    is visible to nobody.
+    """
+    resolved: list[str] = []
+    notes: list[str] = []
+    for path in unmerged_paths(root, runner):
+        if path not in UNION_MERGE_PATHS:
+            continue
+        ok, why = union_resolve(root, path, runner)
+        if ok:
+            resolved.append(path)
+        else:
+            notes.append(f"{path}: {why}")
+    return resolved, notes
+
+
+def validate_sync_commit(
+    root: Path,
+    commit: str,
+    feature: str,
+    base_branch: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Authorize one base-sync merge on the feature branch.
+
+    A merge commit is the one two-parent commit the flow makes, and it is
+    authorized by facts rather than by its message alone: its second parent must
+    be contained in the base branch (so what came in is the base and nothing
+    else), and it must not touch STATE.md — a sync integrates code, it never
+    rewrites the lifecycle anchor the merge gate reads.
+    """
+    parents = run_command(
+        ["git", "show", "-s", "--format=%P", commit], root, runner
+    ).stdout.split()
+    if len(parents) != 2:
+        raise LifecycleError(
+            f"Commit {commit[:12]} is a merge with {len(parents)} parents; only a "
+            "two-parent base sync is authorized."
+        )
+    subject = run_command(
+        ["git", "show", "-s", "--format=%s", commit], root, runner
+    ).stdout.strip()
+    match = SYNC_SUBJECT_RE.fullmatch(subject)
+    if not match:
+        raise LifecycleError(
+            f"Commit {commit[:12]} is a merge with an unauthorized subject "
+            f"('{subject}'). Only `sync-base` may merge into a feature branch."
+        )
+    if validate_feature_slug(match.group("feature")) != feature:
+        raise LifecycleError(
+            f"Merge {commit[:12]} targets sync feature '{match.group('feature')}', "
+            f"not '{feature}'."
+        )
+    body = run_command(["git", "show", "-s", "--format=%B", commit], root, runner).stdout
+    trailer = f"SDD-Lifecycle-Feature: {feature}"
+    if sum(line.strip() == trailer for line in body.splitlines()) != 1:
+        raise LifecycleError(f"Merge {commit[:12]} is missing its exact lifecycle trailer.")
+    if not base_branch:
+        raise LifecycleError(
+            f"Merge {commit[:12]} cannot be authorized: STATE.md records no "
+            "base_branch to check its second parent against."
+        )
+    base_ref = resolve_base_ref(root, base_branch, runner)
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", parents[1], base_ref], root, runner
+    ):
+        raise LifecycleError(
+            f"Merge {commit[:12]} brought in {parents[1][:12]}, which is not "
+            f"contained in '{base_ref}': that is not a base sync."
+        )
+    expected_path = lifecycle_path(root, feature, runner)
+    touched = run_command(
+        ["git", "diff", "--name-only", f"{commit}^1", commit, "--", expected_path],
+        root,
+        runner,
+    ).stdout.strip()
+    if touched:
+        raise LifecycleError(
+            f"Merge {commit[:12]} modifies {expected_path}. A base sync integrates "
+            "code; the lifecycle anchor is written only by lifecycle commits."
+        )
+    return "sync"
+
+
+def commit_sync(
+    root: Path,
+    feature: str,
+    verification: str = "",
+    failed: bool = False,
+    runner: Runner = subprocess.run,
+) -> tuple[str, list[str]]:
+    """Record the merge in progress as the branch's authorized sync commit."""
+    change = active_change(root, feature)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(f"'{feature}' has no STATE.md to sync against.")
+    base = data.get("base_branch", "").strip()
+    if not base:
+        raise LifecycleError("STATE.md records no base_branch, so there is no base to sync from.")
+    if not merge_in_progress(root, runner):
+        raise LifecycleError(
+            "No merge is in progress, so there is nothing to record. Start one with "
+            f"sync-base {feature}."
+        )
+    pending = unmerged_paths(root, runner)
+    if pending:
+        raise LifecycleError(
+            "These paths are still unresolved, so the sync cannot be recorded: "
+            + ", ".join(pending)
+        )
+    markers = leftover_conflict_markers(root, runner)
+    if markers:
+        raise LifecycleError(
+            "git still finds conflict markers in the resolution: "
+            + ", ".join(markers)
+            + ". Fix them before recording the sync."
+        )
+    merged_sha = run_command(
+        ["git", "rev-parse", "MERGE_HEAD"], root, runner
+    ).stdout.strip()
+    base_ref = resolve_base_ref(root, base, runner)
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", merged_sha, base_ref], root, runner
+    ):
+        raise LifecycleError(
+            f"The merge in progress brings in {merged_sha[:12]}, which is not "
+            f"contained in '{base_ref}'. Only the base branch may be synced in."
+        )
+    conflicts = recorded_conflicts(root, runner)
+    subject = f"chore(sdd): sync {feature} {base}@{merged_sha[:12]}"
+    verified = "not run"
+    if verification:
+        verified = f"{verification} -> {'FAILED' if failed else 'ok'}"
+    body = "\n".join(
+        [
+            f"SDD-Sync-Base: {base_ref}@{merged_sha}",
+            f"SDD-Sync-Resolved: {', '.join(conflicts) if conflicts else 'none'}",
+            f"SDD-Sync-Verified: {verified}",
+            f"SDD-Lifecycle-Feature: {feature}",
+        ]
+    )
+    result = runner(
+        ["git", "commit", "-m", subject, "-m", body],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise LifecycleError(f"Recording the sync commit failed: {detail or 'unknown error'}")
+    commit = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    # Fail here rather than at ship's next gate: a sync the ship validator would
+    # reject is worse than no sync, because it blocks the branch permanently.
+    validate_sync_commit(root, commit, feature, base, runner)
+    return commit, conflicts
+
+
+def sync_base(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> dict[str, object]:
+    """Bring the base branch into the feature branch, before the PR is judged.
+
+    Why this exists: with several features in flight the base moves under every
+    open PR, and "the PR has conflicts" was the one stretch of the flow nothing
+    owned — review stops at READY_FOR_PR, ship published, archive refuses to
+    start before the merge, so the integration happened by hand in between and
+    left no record.
+
+    Why merge and never rebase: `implementation_sha` is the reviewed anchor every
+    later gate reads, and a rebase rewrites it out of existence — the merge gate
+    would have nothing left to prove. A merge keeps it an ancestor of HEAD, which
+    is exactly what validate-ship asserts.
+
+    Bookkeeping conflicts are resolved here because their merge is decidable;
+    everything else is left conflicted, in the working tree, for whoever ran the
+    command to resolve and then record with `record-sync`. It never pushes.
+    """
+    change = active_change(root, feature)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(f"'{feature}' has no STATE.md.")
+    state = data.get("state")
+    if state not in {"READY_FOR_PR", "PR_OPEN"}:
+        raise LifecycleError(
+            f"Syncing the base applies to a change being published, and '{feature}' "
+            f"is {state}. Nothing was touched."
+        )
+    for field in ("base_branch", "head_branch", "implementation_sha"):
+        if not data.get(field):
+            raise LifecycleError(f"STATE.md is missing {field}; run /sdd:review to record it.")
+    base = data["base_branch"]
+    head = data["head_branch"]
+    current = run_command(["git", "branch", "--show-current"], root, runner).stdout.strip()
+    if current != head:
+        raise LifecycleError(
+            f"The base is synced into the feature branch '{head}', and HEAD is on "
+            f"'{current or '(detached)'}'."
+        )
+    if merge_in_progress(root, runner):
+        raise LifecycleError(
+            "A merge is already in progress here. Finish it (resolve the paths and "
+            f"run record-sync {feature}) or abandon it (git merge --abort)."
+        )
+    dirty = status_paths(root, runner)
+    if dirty:
+        raise LifecycleError(
+            "The worktree must be clean before merging the base into it: "
+            + ", ".join(path for _, path in dirty[:5])
+        )
+    if try_command(["git", "remote", "get-url", "origin"], root, runner):
+        if not try_command(["git", "fetch", "origin", base], root, runner):
+            raise LifecycleError(
+                f"`git fetch origin {base}` failed, so what the base holds is "
+                "unknown. Nothing was merged."
+            )
+    base_ref = resolve_base_ref(root, base, runner)
+    base_sha = run_command(
+        ["git", "rev-parse", f"{base_ref}^{{commit}}"], root, runner
+    ).stdout.strip()
+    report: dict[str, object] = {
+        "feature": feature,
+        "base_ref": base_ref,
+        "base_sha": base_sha,
+        "synced": False,
+        "commit": "",
+        "resolved": [],
+        "pending": [],
+        "notes": [],
+        "behind": 0,
+    }
+    if try_command(
+        ["git", "merge-base", "--is-ancestor", base_ref, "HEAD"], root, runner
+    ):
+        report["reason"] = f"'{head}' already contains {base_ref} ({base_sha[:8]})."
+        return report
+    report["behind"] = len(
+        run_command(
+            ["git", "rev-list", f"HEAD..{base_ref}"], root, runner
+        ).stdout.split()
+    )
+    merge = runner(
+        ["git", "merge", "--no-ff", "--no-commit", base_ref],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    pending = unmerged_paths(root, runner)
+    if merge.returncode and not pending:
+        try_command(["git", "merge", "--abort"], root, runner)
+        detail = (merge.stderr or merge.stdout).strip()
+        raise LifecycleError(
+            f"`git merge {base_ref}` failed without leaving conflicts to resolve, "
+            f"so nothing was changed: {detail or 'unknown error'}"
+        )
+    resolved, notes = resolve_bookkeeping(root, runner)
+    report["resolved"] = resolved
+    report["notes"] = notes
+    pending = unmerged_paths(root, runner)
+    if pending:
+        # Deliberately left in progress: the resolution is the caller's, and an
+        # aborted merge would throw away the part already done.
+        report["pending"] = pending
+        report["reason"] = (
+            f"{len(pending)} path(s) need a decision. Resolve them, then run "
+            f"record-sync {feature}."
+        )
+        return report
+    commit, conflicts = commit_sync(root, feature, runner=runner)
+    report["synced"] = True
+    report["commit"] = commit
+    report["resolved"] = conflicts or resolved
+    report["reason"] = f"Merged {base_ref} ({base_sha[:8]}) into '{head}'."
+    return report
+
+
+def render_sync(report: dict[str, object]) -> str:
+    lines = [f"sync {report['feature']} <- {report['base_ref']}@{str(report['base_sha'])[:12]}"]
+    if report.get("commit"):
+        lines.append(f"  merged:   {str(report['commit'])[:12]}")
+    resolved = report.get("resolved") or []
+    if resolved:
+        lines.append(f"  resolved: {', '.join(resolved)}")
+    for note in report.get("notes") or []:
+        lines.append(f"  ! {note}")
+    pending = report.get("pending") or []
+    if pending:
+        lines.append(f"  PENDING:  {', '.join(pending)}")
+    lines.append(f"  {report.get('reason', '')}")
+    return "\n".join(lines)
 
 
 def query_pr(url: str, root: Path, runner: Runner = subprocess.run) -> dict[str, object]:
@@ -1288,6 +1791,27 @@ def build_parser() -> argparse.ArgumentParser:
     record = subparsers.add_parser("record-pr")
     record.add_argument("feature")
     record.add_argument("--url", required=True)
+    sync = subparsers.add_parser(
+        "sync-base",
+        help="merge the base branch into the feature branch (exit 2 = conflicts left)",
+    )
+    sync.add_argument("feature")
+    sync.add_argument("--json", action="store_true", help="machine-readable output")
+    record_sync = subparsers.add_parser(
+        "record-sync",
+        help="record a resolved base sync as the branch's authorized merge commit",
+    )
+    record_sync.add_argument("feature")
+    record_sync.add_argument(
+        "--verification",
+        default="",
+        help="the project's verification command that was run on the resolution",
+    )
+    record_sync.add_argument(
+        "--failed",
+        action="store_true",
+        help="record that the verification command failed (nothing is hidden)",
+    )
     finalize = subparsers.add_parser("finalize-archive")
     finalize.add_argument("feature")
     finalize.add_argument("--specs-confirmed", action="store_true")
@@ -1316,6 +1840,24 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_ready(root, args.feature, args.base)
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
+        elif args.command == "sync-base":
+            report = sync_base(root, args.feature)
+            print(json.dumps(report, indent=2) if args.json else render_sync(report))
+            # Exit 2 is the actionable outcome, not a failure: the merge is in
+            # progress and the paths it names need a decision. A distinct code is
+            # what lets the caller branch on it without parsing prose.
+            return 2 if report["pending"] else 0
+        elif args.command == "record-sync":
+            commit, conflicts = commit_sync(
+                root, args.feature, args.verification, args.failed
+            )
+            listed = ", ".join(conflicts) if conflicts else "no conflicts"
+            message = f"Sync recorded as {commit[:12]} ({listed})."
+            if args.failed:
+                message += (
+                    " The verification FAILED and that is recorded in the commit: "
+                    "do not publish this as verified."
+                )
         elif args.command == "validate-ship":
             commits = validate_ship_suffix(root, args.feature)
             message = f"Ship lifecycle gates passed ({len(commits)} suffix commit(s))."
