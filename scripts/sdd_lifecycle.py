@@ -100,6 +100,11 @@ LIFECYCLE_TRANSITIONS = {
     # A PR that was already merged can be recorded before the local state has
     # observed it as OPEN. It is still a lifecycle-only transition.
     ("READY_FOR_PR", "MERGED"),
+    # Recertification: re-anchor the reviewed `implementation_sha` on the same
+    # open PR after a functional fix. The canonical state stays PR_OPEN; the
+    # transition is a self-loop authorized only by the dedicated branch in
+    # `classify_lifecycle_commit` (D5 of post-pr-recertification).
+    ("PR_OPEN", "PR_OPEN"),
 }
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -712,6 +717,21 @@ def classify_lifecycle_commit(
         if child_state.get("implementation_sha") != parent:
             raise LifecycleError(
                 "LOCAL_VERIFIED lifecycle commit must preserve its implementation parent."
+            )
+    elif before == "PR_OPEN" and after == "PR_OPEN":
+        # Recertification: child.implementation_sha must equal the parent SHA
+        # (the new reviewed HEAD, never the recertify commit's own SHA — see
+        # the `commit in child_text` guard above), and the parent's recorded
+        # anchor must differ (a real re-anchor happened).
+        if child_state.get("implementation_sha") != parent:
+            raise LifecycleError(
+                "Recertification must record the reviewed HEAD (the parent of "
+                "the recertify commit) as the new implementation_sha anchor."
+            )
+        if parent_state.get("implementation_sha") == parent:
+            raise LifecycleError(
+                "Recertification requires a new implementation_sha anchor; the "
+                "parent STATE.md already points at the reviewed HEAD."
             )
     elif child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
         raise LifecycleError("Lifecycle commit changed the stable implementation_sha anchor.")

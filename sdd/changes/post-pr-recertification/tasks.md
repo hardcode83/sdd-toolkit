@@ -2,9 +2,9 @@
 
 ## 1. State machine primitives
 
-- [ ] 1.1 Add `{("PR_OPEN", "PR_OPEN")}` to `LIFECYCLE_TRANSITIONS` in `scripts/sdd_lifecycle.py` (l. 96-103). Verify that the set is otherwise unchanged. [R3, D4]
-- [ ] 1.2 Extend `classify_lifecycle_commit` in `scripts/sdd_lifecycle.py` with the recertify branch: insert before the final `elif` (l. 716-717) a block that, only when `transition == "PR_OPEN->PR_OPEN"`, validates `child_state.implementation_sha == parent` and `parent_state.implementation_sha != parent`. The existing guards for `READY_FOR_PR` and `LOCAL_VERIFIED` and the final `elif` stay intact. [R2, D5]
-- [ ] 1.3 Add unit tests in `tests/test_sdd_lifecycle.py` for the new transition: `test_classify_lifecycle_commit_accepts_recertify_transition` (T6, valid subject + body + parent SHA) and `test_recertify_refuses_recertify_subject_with_wrong_anchor` (N8, child SHA != parent). Re-run pre-existing classifier tests to confirm no regression. [R2, D5]
+- [x] 1.1 Add `{("PR_OPEN", "PR_OPEN")}` to `LIFECYCLE_TRANSITIONS` in `scripts/sdd_lifecycle.py` (l. 96-103). Verify that the set is otherwise unchanged. [R3, D4]
+- [x] 1.2 Extend `classify_lifecycle_commit` in `scripts/sdd_lifecycle.py` with the recertify branch: insert before the final `elif` (l. 716-717) a block that, only when `transition == "PR_OPEN->PR_OPEN"`, validates `child_state.implementation_sha == parent` and `parent_state.implementation_sha != parent`. The existing guards for `READY_FOR_PR` and `LOCAL_VERIFIED` and the final `elif` stay intact. [R2, D5]
+- [x] 1.3 Add unit tests in `tests/test_sdd_lifecycle.py` for the new transition: `test_classify_lifecycle_commit_accepts_recertify_transition` (T6, valid subject + body + parent SHA) and `test_recertify_refuses_recertify_subject_with_wrong_anchor` (N8, child SHA != parent). Re-run pre-existing classifier tests to confirm no regression. [R2, D5]
 
 ## 2. `mark_recertified` command
 

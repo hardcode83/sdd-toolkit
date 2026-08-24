@@ -1541,5 +1541,132 @@ class RoadmapTickTests(unittest.TestCase):
         )
 
 
+class LifecycleRecertifyTests(unittest.TestCase):
+    """Tests for the `mark-recertified` flow (post-pr-recertification).
+
+    Section 1 of `sdd/changes/post-pr-recertification/tasks.md` covers the
+    classifier-only paths (T6, N8). Subsequent sections extend this class with
+    the command-level and skill-level tests.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.change = self.root / "sdd" / "changes" / FEATURE
+        self.change.mkdir(parents=True)
+        (self.change / "proposal.md").write_text(
+            "# Proposal\n", encoding="utf-8"
+        )
+        (self.change / "tasks.md").write_text(
+            "# Tasks\n\n- [x] 1.1 Done [R1]\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "specs").mkdir()
+        (self.root / "sdd" / "specs" / "example.md").write_text(
+            "# Example\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] example → changes/example/\n", encoding="utf-8"
+        )
+        write_state(self.change, initial_state())
+        self.git("init", "-b", "sdd/example")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "SDD Test")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+        self.fixture_sha = self.git("rev-parse", "HEAD").stdout.strip()
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def ready_pr_open(self) -> None:
+        """Bring the change to `state=PR_OPEN` with old_anchor recorded.
+
+        Bypasses `record_pr` (which would need a gh fixture) by writing the
+        STATE-only lifecycle commit directly — the classifier is what we want
+        to exercise here, not the gh integration.
+        """
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        # mark_ready already wrote READY_FOR_PR->PR_OPEN? No — it stops at
+        # READY_FOR_PR. Build the PR_OPEN lifecycle commit by hand to mirror
+        # what `record_pr` does in spirit, without invoking gh.
+        state = read_state(self.change)
+        old_anchor = state["implementation_sha"]
+        self.old_anchor = old_anchor
+        new_state = dict(state)
+        new_state["state"] = "PR_OPEN"
+        new_state["pr_state"] = "OPEN"
+        new_state["pr_url"] = PR_URL
+        new_state["pr_number"] = "17"
+        new_state["repository"] = "example/project"
+        new_state["head_branch"] = "sdd/example"
+        new_state["base_branch"] = "main"
+        write_state(self.change, new_state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        self.pr_open_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(old_anchor, read_state(self.change)["implementation_sha"])
+
+    def _add_fix_commit(self) -> str:
+        """Add a functional fix commit; return its SHA (the parent of any
+        subsequent recertify commit)."""
+        (self.root / "fix.txt").write_text("fix from review\n", encoding="utf-8")
+        self.git("add", "fix.txt")
+        self.git("commit", "-m", "fix from review")
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def _commit_recertify(self, anchor_in_state: str) -> str:
+        """Write the recertify STATE-only commit with the given implementation_sha;
+        return the recertify commit's SHA."""
+        state = read_state(self.change)
+        state["implementation_sha"] = anchor_in_state
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+            "-m",
+            f"SDD-Prior-Implementation-SHA: {self.old_anchor}",
+        )
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def test_classify_lifecycle_commit_accepts_recertify_transition(self) -> None:
+        """T6 — self-loop PR_OPEN->PR_OPEN with child.implementation_sha == parent."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        recertify_commit = self._commit_recertify(anchor_in_state=new_anchor)
+        feature, transition = classify_lifecycle_commit(
+            self.root, recertify_commit, FEATURE
+        )
+        self.assertEqual(FEATURE, feature)
+        self.assertEqual("PR_OPEN->PR_OPEN", transition)
+
+    def test_recertify_refuses_recertify_subject_with_wrong_anchor(self) -> None:
+        """N8 — self-loop with child.implementation_sha != parent is rejected."""
+        self.ready_pr_open()
+        self._add_fix_commit()  # the parent SHA, which we will NOT record
+        recertify_commit = self._commit_recertify(anchor_in_state="0" * 40)
+        with self.assertRaisesRegex(
+            LifecycleError, "Recertification must record the reviewed HEAD"
+        ):
+            classify_lifecycle_commit(self.root, recertify_commit, FEATURE)
+
+
 if __name__ == "__main__":
     unittest.main()
