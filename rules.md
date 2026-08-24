@@ -37,8 +37,8 @@
    is already checked `[x]`, regenerating destroys verified progress —
    call that out explicitly before letting the user pick regenerate.
 7. **Phases**: `/sdd:init` → `/sdd:new` → `/sdd:design` (optional if trivial)
-   → `/sdd:tasks` → `/sdd:run` → `/sdd:review` → `/sdd:ship` (push + PR +
-   recorded evidence) → merge → `/sdd:archive`. Review proves local readiness;
+   → `/sdd:tasks` → `/sdd:run` → `/sdd:review` → `/sdd:ship` (base sync + push +
+   PR + recorded evidence) → merge → `/sdd:archive`. Review proves local readiness;
    ship publishes it; only objective merge
    evidence permits archive, living-spec updates, and the final roadmap tick.
    Support: `/sdd:status`
@@ -88,7 +88,10 @@
       Verify the branch before the first edit, not after.
     - `/sdd:archive` runs **only in the main worktree, on the base branch, one
       change at a time**: it mutates `sdd/specs/`, ticks the roadmap and moves
-      directories. Being post-merge, that was already true in practice.
+      directories. Being post-merge, that was already true in practice. The
+      retirement it offers is the exception: `retire` relocates itself to the main
+      worktree, so a session standing in the worktree it has to remove closes the
+      loop instead of handing it to somebody else.
 11. **A phase does not inherit the previous phase's context.** Rule 1 already
     makes this safe: everything a phase needs is in `sdd/`, so starting with an
     empty context loses nothing — and a phase that *would* break without the

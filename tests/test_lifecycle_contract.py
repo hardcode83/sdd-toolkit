@@ -28,8 +28,10 @@ class LifecycleSkillContractTests(unittest.TestCase):
         self.assertIn("Re-running is idempotent", ship)
         self.assertIn("Never fabricate a URL", ship)
         self.assertIn("leave the change at `READY_FOR_PR`", ship)
-        # Ship publishes and nothing else: no review, no merge, no archive.
-        self.assertIn("never merges and never archives", ship)
+        # Ship publishes and nothing else. Since 0.38 it does merge the BASE
+        # into the branch (sync-base), so the boundary is stated precisely: the
+        # PR is still never merged by ship, and archiving is still not its job.
+        self.assertIn("never merges the PR and never archives", ship)
         self.assertIn("/sdd:archive <feature>", ship)
         # Auto reaches it by reference, not by copy.
         auto = self.read_skill("auto")
@@ -48,7 +50,9 @@ class LifecycleSkillContractTests(unittest.TestCase):
         ship = self.read_skill("ship")
         bootstrap = ship.index("branch-claim/bootstrap")
         record = ship.index("record-pr <feature> --url <PR-URL>")
-        final_push = ship.index("Push the final lifecycle commit")
+        # The single push now carries the sync merge as well as the lifecycle
+        # commit, which is why the step no longer names only the latter.
+        final_push = ship.index("Push the branch.")
         self.assertLess(bootstrap, record)
         self.assertLess(record, final_push)
         self.assertIn("exactly\n   once", ship[final_push:])
@@ -128,7 +132,11 @@ class LifecycleSkillContractTests(unittest.TestCase):
         the change as active."""
         archive = self.read_skill("archive")
         self.assertIn("publish-archive <feature>", archive)
-        self.assertIn("fast-forward", archive)
+        # A base that moved on is integrated rather than refused (0.38) — two
+        # archives closing in parallel diverge by construction — but only for the
+        # append-only bookkeeping, and never by rewriting a shared base.
+        self.assertIn("integrated, not refused", archive)
+        self.assertIn("restores the branch untouched and refuses", archive)
         self.assertIn("force-push is never the answer", archive)
         # Ship keeps owning feature branches; the two never touch the same ref.
         ship = self.read_skill("ship")

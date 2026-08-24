@@ -277,10 +277,37 @@ order, and the order is the whole fix:
    past it: `--teardown '<command>'` for one run, or `--skip-teardown` to keep the
    resources on purpose.
 
+   The line it tells you to declare is **derived, not generic**: the compose
+   project came from docker's own labels, so the suggestion is
+   `docker compose down --volumes --remove-orphans`, plus `--rmi local` when the
+   worktree also owns images compose built. Containers with no compose project get
+   no suggestion at all — nothing here knows what started them, and a guess would
+   be worse than the question. `worktrees` prints the same line under the blocker
+   (`declare it to unblock: teardown: …`) and `residue` prints it too, so whoever
+   is being asked is asked with the answer already written out. Deciding is still
+   the project's (shared rule 9); typing it is not.
+
    A teardown that succeeds and still leaves residue (the classic `down` without
    `--volumes`) is reported, with what to widen.
 
-3. **Then git, then the disk — and the ACL that used to win.** `git worktree
+3. **Then git — from a directory that will still exist.** When the caller is
+   standing in the worktree, `retire` moves itself to the **main** worktree before
+   it runs a single git command, and the outcome says where it moved you. This is
+   not a courtesy: `git worktree remove` does succeed from inside (verified), and
+   then every step after it — `git branch -d`, the binding release, the ACL strip,
+   the plugin registry — runs with a working directory that no longer resolves and
+   fails with `Unable to read current working directory`, while the retirement
+   reports itself done. The measured cost of treating this as a blocker instead
+   was worse: under a per-feature session (an Orca workspace, a `claude` started
+   inside the worktree) the archiving session *is* the one standing there, so the
+   worktree could never be retired by the run that finished its work, and every
+   archive ended by asking somebody to do it from elsewhere.
+
+   A session that retires its own directory must move with it — `EnterWorktree`
+   with the main worktree's path — before running anything else. The `disk:` line
+   names where.
+
+4. **Then the disk — and the ACL that used to win.** `git worktree
    remove` unregisters before it deletes, so a failed deletion leaves files git no
    longer tracks. When that happens `retire` finishes the job itself: on macOS the
    blocker is almost always `Permission denied` on directories that are **empty and
@@ -295,7 +322,7 @@ order, and the order is the whole fix:
    chmod -R -N <dir>
    ```
 
-4. **What survives is recorded, not announced once.** This is the leak that made
+5. **What survives is recorded, not announced once.** This is the leak that made
    ~30 GB invisible. After a failed deletion git no longer knows the path and the
    binding has been released, so `worktrees` (which asks git) and the old
    `orphans` (which asked the registry) both had nothing to report — every failed
@@ -310,7 +337,7 @@ order, and the order is the whole fix:
      worktree remove` by hand, a retirement that crashed, a directory from a clone
      that no longer exists all look the same from here.
 
-5. **What retirement cannot decide, it reports.** Deleting the worktree's branch
+6. **What retirement cannot decide, it reports.** Deleting the worktree's branch
    is `git branch -d`: local, and only the one branch git had checked out there.
    Two kinds of ref routinely outlive that, and nothing in the repository would
    ever name them again — measured on one closed change: `origin/sdd/<feature>`
@@ -327,7 +354,7 @@ order, and the order is the whole fix:
    match is deliberately generous: only ever listed, a false positive costs one
    line and a miss costs a ref nobody mentions again.
 
-6. **The plugin registry, which is not the repository's to begin with.** A
+7. **The plugin registry, which is not the repository's to begin with.** A
    worktree that installed a plugin leaves an entry in Claude Code's per-user
    `installed_plugins.json`, scoped by `projectPath` to a directory retirement
    just deleted. Unlike a branch there is no judgement to defer: the project it
@@ -342,12 +369,14 @@ order, and the order is the whole fix:
    rewriting another's records. A malformed or absent registry is Claude Code's
    file, not a reason to fail a retirement that already happened.
 
-7. **The directory is gone, and someone may be standing in it.** Deleting it is
+8. **The directory is gone, and someone may be standing in it.** Deleting it is
    correct, but a shell whose cwd was inside is left unable to resolve it, and the
    `getcwd: No such file or directory` / `ENOENT` errors that follow mention
    neither the worktree nor the retirement — nothing connects the symptom to the
    cause. The `disk` line names the path so the answer (`cd` somewhere that
-   exists) is one line away instead of a diagnosis.
+   exists) is one line away instead of a diagnosis. When the caller was the one
+   inside, the same line names the main worktree it was moved to, because then the
+   shell that has to move is the one reading the output.
 
 **Never build the path by hand.** `EnterWorktree` flattens the `/` in a worktree
 name, so `sdd/<feature>` lands in `.claude/worktrees/sdd+<feature>` — a hardcoded
@@ -367,7 +396,7 @@ and names every one that does not:
 | The tree is clean | Uncommitted work never reached the merge |
 | Nothing unpushed | Same, one step later |
 | **No other live session inside** | Removing a worktree under a running session leaves it with a cwd git cannot read — its `.git` points at metadata git just pruned |
-| You are not standing in it | Same failure, applied to yourself |
+| ~~You are not standing in it~~ | **No longer a condition.** `retire` moves itself to the main worktree before it touches git, so the feature's own session can retire its own worktree — see step 3 below |
 | Git has not locked it | `git worktree unlock` is a deliberate decision, not an obstacle |
 | **Its runtime residue can be taken down** | A stack the project never said how to stop would be stranded, and unattributable a second later (step 2 above) |
 

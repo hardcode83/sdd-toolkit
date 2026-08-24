@@ -12,7 +12,7 @@ Todo el estado vive en `sdd/` dentro de tu repo — **specs** (qué hace el sist
 /sdd:tasks ──► checklist verificable         ── tú apruebas ──►
 /sdd:run ──► implementa + panel de revisores por sección
 /sdd:review ──► valida localmente y deja READY_FOR_PR
-/sdd:ship ──► push + PR + evidencia registrada  (review te lo ofrece)
+/sdd:ship ──► sync de la base + push + PR + evidencia registrada  (review te lo ofrece)
 Pull Request ──► revisión remota + CI ──► MERGED
 /sdd:archive ──► verifica el merge, fusiona specs/ y archiva
 ```
@@ -75,7 +75,7 @@ Durante el run: cada tarea se verifica (tests/lint del proyecto) antes de marcar
 ```
 /sdd:review    # panel a escala feature; si pasa, registra READY_FOR_PR
                # y te ofrece publicar en la misma pregunta
-/sdd:ship      # push + PR + record-pr → PR_OPEN. STATE.md conserva URL, ramas y SHA
+/sdd:ship      # sync-base + push + PR + record-pr → PR_OPEN. STATE.md conserva URL, ramas y SHA
 # mergeas el PR (eso sigue siendo tuyo)
 /sdd:archive   # exige MERGED verificable; entonces actualiza specs/roadmap/archive
 ```
@@ -123,7 +123,11 @@ Un aviso práctico: un worktree recién creado **no tiene** tu `.env` ni `node_m
 
 **¿Dónde está el trabajo de la otra sesión?** → `/sdd:status` agrega todos los worktrees del repo y lista las sesiones vivas. Un change puede no estar en el directorio desde el que lanzaste el comando.
 
-**Terminé y mergeé** → `/sdd:archive` corre **en el worktree principal** (muta specs, roadmap y mueve directorios: es el punto de serialización del flujo) y te ofrece retirar el worktree y su rama. Si algo quedó sin commitear allí, `git worktree remove` se niega — y eso es lo correcto: trabajo sin commitear es trabajo que nunca llegó al merge.
+**Terminé y mergeé** → `/sdd:archive` corre **en el worktree principal** (muta specs, roadmap y mueve directorios: es el punto de serialización del flujo) y te ofrece retirar el worktree y su rama en la misma pregunta de cierre. Si algo quedó sin commitear allí, `git worktree remove` se niega — y eso es lo correcto: trabajo sin commitear es trabajo que nunca llegó al merge.
+
+Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **estar dentro** del worktree que hay que retirar ya no lo bloquea (`retire` se muda al principal antes de tocar git y te dice a dónde moverte tú), y si el worktree tiene un stack de docker que el proyecto nunca dijo cómo parar, la pregunta de cierre llega con la línea `teardown:` ya escrita a partir de lo que reportó docker — decidir si ese `--volumes` puede correr sigue siendo tuyo, teclearlo no. Declárala una vez en *Worktree bootstrap* y no vuelve a preguntar.
+
+**El PR salió con conflictos porque mergeé otra feature antes** → ya no es tu problema: `/sdd:ship` sincroniza la base en la rama antes de abrir el PR (merge, nunca rebase, para no destruir el `implementation_sha` revisado). El bookkeeping append-only (`roadmap.md`, `metrics.md`) lo une él; un conflicto de código lo resuelve, **vuelve a pasar la verificación del proyecto** y solo entonces publica. Si esa verificación falla, no abre el PR: entrada en `BLOCKED.md` y a `/sdd:review`.
 
 **Una feature para YA** → `/sdd:new mi-feature` directamente; el roadmap no es un peaje. Eso sí: si existe roadmap, te preguntará si registrarla como entrada ad-hoc (con nota de procedencia, tipo *"añadido tras X"*) — di que sí salvo que sea exploratorio: las features fuera del roadmap son invisibles para `/sdd:status` y el tracking de progreso. Cuando nace de otra entrada, esa relación es justo para lo que sirven los metadatos: `completes:` si cierra lo que aquella dejó a medias, `needs:` si depende de algo que crea.
 
@@ -211,8 +215,11 @@ La identidad de implementación vive en `implementation_sha` y no cambia cuando
 se persiste metadata. `mark-ready` y `record-pr` crean commits lifecycle
 STATE-only, sin self-reference; `record-pr` no hace push. El gate ejecutable es
 `scripts/sdd_lifecycle.py validate-ship`, invocado por `skills/ship`, y valida
-ancestry y todos los commits del sufijo uno por uno. La única allowlist es
-`sdd/changes/<feature>/STATE.md`; el push sigue siendo exclusivo de ship.
+ancestry y todos los commits del sufijo uno por uno, recorridos por
+`--first-parent`. Pasan dos formas: el commit lifecycle STATE-only (allowlist
+`sdd/changes/<feature>/STATE.md`) y el merge de sync de la base que registra
+`sync-base` —dos padres, el segundo contenido en la base, `STATE.md` intacto—.
+El push sigue siendo exclusivo de ship.
 
 1. **Los documentos mandan.** Si el código y la spec discrepan, se arregla el que esté mintiendo — nunca se divergen en silencio.
 2. **Tú eres el gate.** Ninguna fase avanza sola; aprobar el proposal es la decisión más barata e importante del ciclo.

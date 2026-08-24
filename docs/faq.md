@@ -97,6 +97,8 @@ Porque el proposal de la feature 5 escrito el día uno estaría anclado a lo que
 
 ## ¿En equipo, quién tiene qué feature? ¿Y si dos personas cogen la misma?
 
+Y del lado del PR, `/sdd:ship` sincroniza la base en la rama antes de abrirlo (merge, nunca rebase): el bookkeeping append-only lo une él, y un conflicto de código lo resuelve, lo vuelve a verificar con el comando del proyecto y solo entonces publica.
+
 El candado es la **rama remota `sdd/<feature>`**: `/sdd:new` comprueba si existe (y avisa con el dueño), y ofrece pushear tu claim antes de escribir; auto lo publica *antes* de trabajar. `/sdd:status` enseña las ramas de otros como "en curso por otros". Los conflictos de merge restantes son señal, no ruido: dos features tocando la misma `specs/<capability>.md` tenían que coordinarse igualmente.
 
 Ese candado es de *equipo*. El caso de **varias sesiones tuyas en la misma máquina** es otro problema y tiene su propia respuesta, abajo. Los dos checks corren, porque la rama de un compañero y el proceso de un compañero son hechos distintos.

@@ -162,7 +162,7 @@ Regla de trabajo que hacen cumplir: **el bump va en la PR de la propia feature**
 | `/sdd:status [feature] [filtro]` | Sin argumento: lifecycle, PR, changes activos y las vistas del roadmap (frontera paralelizable, olas, camino crítico, grafo). Con feature: vista quirúrgica de su `tasks.md`. | haiku |
 | `/sdd:doctor` | Valida de forma determinista y read-only la coherencia de roadmap y su grafo de dependencias, changes, requisitos, tareas, archives, bloqueos y referencias locales. | — |
 | `/sdd:review [feature]` | Con feature: valida localmente y, si pasa, registra `READY_FOR_PR` y ofrece publicar con `/sdd:ship`. Sin argumento: enumera los changes activos **de todos los worktrees** y pregunta; si no hay ninguno, drift specs↔código. | sonnet |
-| `/sdd:ship [feature]` | Publica un change en `READY_FOR_PR`: push, PR y evidencia registrada (`record-pr`). No revisa, no mergea, no archiva. Sin remoto o sin `gh`, entrega la acción manual exacta en vez de fallar. | sonnet |
+| `/sdd:ship [feature]` | Publica un change en `READY_FOR_PR`: sincroniza la base en la rama (`sync-base`, merge nunca rebase), push, PR y evidencia registrada (`record-pr`). Resuelve solo el bookkeeping append-only; un conflicto de código lo resuelve y **vuelve a verificar** con el comando del proyecto antes de publicar. No revisa, no mergea el PR, no archiva. Sin remoto o sin `gh`, entrega la acción manual exacta en vez de fallar. | sonnet |
 | `/sdd:auto [N\|feature]` | Modo autónomo hasta PR, sin preguntar nunca: coge N entradas de la frontera del roadmap, implementa, revisa, registra `READY_FOR_PR`, abre el PR y se detiene sin archivar. | sonnet |
 | `/sdd:history [feature\|pregunta]` | La memoria del proyecto: timeline de changes archivados, ficha completa de uno (decisiones + alternativas rechazadas + coste + commits), o arqueología de decisiones con citas y chequeo de vigencia. | haiku |
 | `/sdd:diagram` | Genera diagramas (Mermaid/PlantUML: flowcharts, secuencia, C4, ER, infra AWS) a `~/diagrams/`. La fase design lo usa para ilustrar decisiones. Requiere `mmdc`/`plantuml`. | — |
@@ -197,7 +197,7 @@ automáticamente ninguno de los dos.
 | `ACTIVE` | `/sdd:new <feature>` inicia el change. | Existe trabajo local en curso; todavía no ha superado revisión. |
 | `LOCAL_VERIFIED` | `/sdd:review <feature>` termina con tests y panel aprobados. | La implementación cumple localmente proposal, design y tareas. |
 | `READY_FOR_PR` | La misma review registra la identidad Git revisada. | El change está completo localmente y listo para abrir PR; no implica CI, aprobación remota ni merge. |
-| `PR_OPEN` | `/sdd:ship <feature>` —que es también el paso de publicación de `/sdd:auto`— hace push, crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados. |
+| `PR_OPEN` | `/sdd:ship <feature>` —que es también el paso de publicación de `/sdd:auto`— sincroniza la base en la rama, hace push, crea el PR, comprueba su identidad con `gh pr view` y registra la referencia. | Existe un PR abierto para la rama, base, repositorio y SHA esperados, con la base ya integrada. |
 | `MERGED` | `/sdd:archive <feature>` consulta GitHub y `verify-merge` valida la evidencia. | GitHub confirma el merge y su commit; aún pueden faltar la actualización documental y el movimiento físico. |
 | `ARCHIVED` | El mismo `/sdd:archive` fusiona specs, consolida métricas, completa roadmap, finaliza el archive, lo **publica** en la base (`publish-archive`) y **decomisiona** el worktree (stack incluido). | El merge está reflejado en todas las fuentes de verdad SDD, visible en `origin/<base>` y sin residuo en la máquina. |
 
@@ -216,6 +216,44 @@ ese tramo, y `/sdd:auto` ejecuta esta misma skill en su paso 7: un solo hogar
 para la lógica (regla 1), no dos copias que divergen. Review lo ofrece con una
 sola pregunta al pasar el verdict, de modo que llegar hasta ahí cuesta un tap y
 no una secuencia de instrucciones.
+
+### Sincronizar la base antes de que nadie juzgue el PR (0.38)
+
+Con varias features en vuelo la base se mueve por debajo de cada PR abierto, y
+«esta rama tiene conflictos» era otro tramo sin dueño: la review ya había
+terminado, `/sdd:archive` se niega a empezar antes del merge, y la integración
+se hacía a mano en medio, sin dejar registro de qué se resolvió. Ahora es parte
+de `/sdd:ship`, en cada ejecución, y es un no-op cuando la base no se movió:
+
+```bash
+python3 scripts/sdd_lifecycle.py --root . sync-base <feature>
+```
+
+- **Merge, nunca rebase.** Un rebase reescribiría `implementation_sha`, que es el
+  ancla que lee el gate de merge (regla 8): el merge lo mantiene ancestro de
+  `HEAD`, que es justo lo que exige `validate-ship`. El commit resultante es
+  `chore(sdd): sync <feature> <base>@<sha>`, con trailers que registran de dónde
+  vino (`SDD-Sync-Base`), qué se resolvió (`SDD-Sync-Resolved`) y con qué se
+  verificó (`SDD-Sync-Verified`).
+- **Lo decidible se resuelve solo; lo demás se devuelve.** Los ficheros de
+  bookkeeping *append-only* (`sdd/roadmap.md`, `sdd/metrics.md`, el formato que
+  ADR 0001 diseñó precisamente para eso) se unen quedándose las líneas de los dos
+  lados. Todo lo demás —código, specs, docs— sale con código de salida **`2`** y
+  la lista de paths pendientes, con el merge **en curso**: los resuelve quien
+  ejecutó ship. Una unión que **duplicaría** una entrada no es una resolución y se
+  reporta como pendiente, no se aplica.
+- **Una resolución no la ha revisado nadie.** La aprobación registrada contra
+  `implementation_sha` es anterior. Así que ship vuelve a ejecutar la verificación
+  **declarada por el proyecto** (regla 9, nunca un comando inventado) y la
+  registra con `record-sync --verification '<cmd>'`; `--failed` la registra
+  fallando, y entonces no se abre ni se actualiza ningún PR: entrada en
+  `BLOCKED.md` y a `/sdd:review`. El commit de sync se queda en local, sin pushear,
+  así que no se pierde nada.
+- `record-sync` se niega si git todavía encuentra marcadores de conflicto
+  (`git diff --cached --check`, su propio detector) y si el segundo padre del
+  merge no está contenido en la base. `validate-ship` recorre el sufijo por
+  `--first-parent` y autoriza exactamente dos formas de commit: el lifecycle
+  STATE-only y este merge de sync, que además no puede tocar `STATE.md`.
 
 ### Estado y evidencia
 
@@ -765,7 +803,23 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   qué línea escribir (regla 9: no adivina un `down --volumes` sobre la BD de
   nadie). La atribución no es un nombre derivado de la ruta: la lee de lo que
   docker grabó (`com.docker.compose.project.working_dir` y los config files que
-  reporta `docker compose ls`).
+  reporta `docker compose ls`). Desde 0.38 esa línea es **derivada**, no genérica:
+  sale del proyecto compose que reportó docker (`docker compose down --volumes
+  --remove-orphans`, más `--rmi local` si el worktree también tiene imágenes que
+  compose construyó), la imprimen `worktrees` y `residue`, y `/sdd:archive` la
+  lleva ya escrita a su pregunta de cierre — decidir sigue siendo del proyecto;
+  teclearla, no.
+- **Retirar el worktree en el que estás** ya no es un bloqueo (0.38). `retire` se
+  muda al worktree principal antes de tocar git: `git worktree remove` sí funciona
+  desde dentro, pero todo lo que va después —`git branch -d`, liberar el binding,
+  quitar la ACL, limpiar el registro de plugins— corre con un cwd que ya no
+  resuelve y falla con `Unable to read current working directory` mientras el
+  retiro se declara hecho. Tratarlo como bloqueo salía más caro: con una sesión
+  por feature (un workspace de Orca, un `claude` arrancado dentro del worktree) la
+  sesión que archiva **es** la que está dentro, así que el worktree nunca lo
+  retiraba la ejecución que había terminado su trabajo, y cada archive acababa
+  pidiendo que alguien lo hiciera desde otro sitio. La línea `disk:` dice a dónde
+  te mudó: hay que moverse con ella antes de ejecutar nada más.
 - Lo que **sobrevive** al retiro se registra, no se anuncia una vez. Era la fuga
   de verdad: git desregistra antes de borrar, así que tras un borrado fallido ni
   `worktrees` (que pregunta a git) ni `orphans` (que preguntaba al registro) tenían
@@ -787,9 +841,16 @@ worktrees preguntándole a git y lee el `STATE.md` de cada uno.
   siempre: cada feature posterior ramifica de `origin/<base>` (el `fresh` de
   `EnterWorktree`), o sea de una base sin el archivo, el check canta commits sin
   pushear en **todas**, y otro clon sigue viendo el change como activo. Empuja solo
-  si el remoto es fast-forward y si lo que empujaría toca **solo** `sdd/`; un remoto
-  que avanzó lo integra el usuario, y un force-push no es nunca la respuesta. `ship`
-  sigue siendo la única fase que empuja una **rama de feature**: son refs distintas.
+  si lo que empujaría toca **solo** `sdd/`. Y desde 0.38 **integra** un remoto que
+  avanzó en vez de negarse: dos archives cerrando en paralelo divergen de
+  `origin/<base>` por construcción —el archive es el único commit que el flujo hace
+  ahí— y chocan en ficheros append-only por diseño, así que rebasa los commits
+  locales sobre `origin/<base>` resolviendo `sdd/metrics.md` y `sdd/roadmap.md`
+  quedándose las filas de los dos lados, y nombra lo que resolvió. Lo que no puede
+  decidir —una spec, un doc, código, o una unión que duplicaría una entrada—
+  **restaura la rama intacta y se niega**; un force-push no es nunca la respuesta.
+  `ship` sigue siendo la única fase que empuja una **rama de feature**: son refs
+  distintas.
 - Las **métricas** estaban rotas para concurrencia y worktrees lo empeoraba en
   silencio: un único `current-task` global era last-writer-wins, y como todas las
   sesiones exportan al mismo puerto (está en el `settings.json` versionado) solo
@@ -897,8 +958,10 @@ mismo para la transición `READY_FOR_PR -> PR_OPEN` y nunca hace push.
 
 Antes de publicar, `scripts/sdd_lifecycle.py validate-ship <feature>` exige que
 el anchor sea ancestro de `HEAD`, que el worktree esté limpio y que cada commit
-del sufijo sea un commit lifecycle single-parent, con subject/trailer,
-transición y único path permitido:
-`sdd/changes/<feature>/STATE.md`. Código, specs, evidence, métricas, traversal
-y commits STATE-only falsos se rechazan individualmente. `skills/ship` es el
-único dueño del push.
+del sufijo —recorrido por `--first-parent`— sea una de dos formas: un commit
+lifecycle single-parent, con subject/trailer, transición y único path permitido
+(`sdd/changes/<feature>/STATE.md`), o el **merge de sync** que registra
+`sync-base` (dos padres, el segundo contenido en la base, `STATE.md` intacto).
+Código, specs, evidence, métricas, traversal, commits STATE-only falsos y
+cualquier otro merge se rechazan individualmente. `skills/ship` es el único
+dueño del push.

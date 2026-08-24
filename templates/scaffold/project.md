@@ -78,8 +78,10 @@ teardown:
        teardown: docker compose down --volumes --rmi local   (si además construyes imágenes)
 
      Vacío = este proyecto no levanta nada por worktree. Si lo dejas vacío y sí
-     levanta algo, `retire` PARA y te dice qué escribir aquí: no adivina un
-     `down --volumes` sobre la base de datos de nadie.
+     levanta algo, `retire` PARA y te dice qué escribir aquí —la línea exacta,
+     derivada del proyecto compose que reportó docker— pero no la escribe él: no
+     adivina un `down --volumes` sobre la base de datos de nadie. La pregunta de
+     cierre de `/sdd:archive` te la ofrece ya redactada; decidir es tuyo.
 
      Por qué importa el `--volumes`: compose ya aísla contenedores, redes y
      volúmenes por directorio, así que cada worktree tiene su propio juego. Un
