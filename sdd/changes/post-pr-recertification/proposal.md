@@ -94,7 +94,7 @@ Acceptance criteria:
 - **Relajar `validate_ship_suffix`**. El suffix tras recertificar es lifecycle-only por construcción; ningún commit funcional llega al rango nuevo.
 - **Manipulación manual de `STATE.md`**. El guard `commit in child_text` y el allowlist de paths siguen activos; editar a mano sigue dando error en `validate_ship_suffix`.
 - **Recertificar PR cerrado o mergeado**. `MERGED` y `CLOSED` rechazan; para `MERGED` el camino es `/sdd:archive`, para `CLOSED`-sin-merge el camino es reabrir o abrir PR nuevo vía `/sdd:ship`.
-- **Push automático desde `mark-recertified`**. El push sigue siendo responsabilidad de ship; el usuario ejecuta `git push origin <head_branch>` antes de `/sdd:review` cuando hay un fix.
+- **Push automático desde `mark-recertified`**. `mark-recertified` NO hace push y `/sdd:review` NO hace push. Cuando un PR ya está abierto y se añade un fix funcional, el usuario debe ejecutar un push normal (`git push origin <head_branch>`, nunca force-push) a `head_branch` antes de invocar `/sdd:review`; el skill verifica el nuevo rango y, si PASS, ejecuta `mark-recertified`. Esto NO modifica el contrato normal de `/sdd:ship` para la publicación inicial del PR.
 - **Cambios ajenos al lifecycle post-PR**: `scripts/sdd_session.py`, `scripts/sdd-doctor.py`, `scripts/sdd_roadmap.py`, `scripts/sdd_session.py`, `templates/`, `rules.md`, `docs/`, `references/`, `skills/status`, `skills/auto`, `skills/archive` (salvo nota documental) — nada de esto entra en el alcance.
 
 ## Affected specs
