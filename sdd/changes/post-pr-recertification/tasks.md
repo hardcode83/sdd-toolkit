@@ -16,7 +16,7 @@
 - [x] 2.6 Add error-path tests in `tests/test_sdd_lifecycle.py`: N1, N2, N3, N4, N5, N6, N9, N10, N11, N12, N13, N14, N15. Use the existing `gh_runner` factory and `LifecycleError` regex assertions from the design matrix. [R1.2-R1.4, R5]
 - [x] 2.7 Add the no-push test `test_recertify_does_not_invoke_git_push` (N16) using a recording runner pattern (mirrors `test_ship_pushes_only_after_all_lifecycle_gates_pass` l. 308-347): instrument the runner, assert no command list contains `["git", "push", ...]`. [R1, D7]
 
-## 3. Skills
+## 3. Skills <!-- panel: PASS 2026-08-25 -->
 
 - [x] 3.1 Update `skills/review/SKILL.md`: after the branch guard (l. 68), read `STATE.md.state`. If `PR_OPEN`: launch the panel on the range `implementation_sha..HEAD` and on PASS call `mark-recertified` (replace `mark-local-verified` + `mark-ready`). Document the push precondition in the section that explains the branch guard. Update the "invalidates the recorded implementation_sha" note (l. 104-108) to point at the supported flow. [R6, D10]
 - [x] 3.2 Update `skills/ship/SKILL.md`: in the `PR_OPEN` case of step 1 (l. 37-40), add a sub-branch `HEAD != implementation_sha` that aborts with an actionable message naming `/sdd:review <feature>` as the resume command. Keep the existing `HEAD == implementation_sha` branch (sync-base + record-pr idempotent) intact. [R7, D11]
