@@ -1565,8 +1565,27 @@ def mark_recertified(
             f"'{current_branch or '(detached)'}'. Switch first."
         )
     head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
-    if head == data.get("implementation_sha", ""):
+    recorded_anchor = data.get("implementation_sha", "")
+    if head == recorded_anchor:
         return "Recertification is current; nothing to do."
+    # Detect a re-invocation after a successful recertify: HEAD is the most
+    # recent `PR_OPEN->PR_OPEN` lifecycle commit whose parent equals the
+    # recorded anchor. The recertify commit is local-only (`mark_recertified`
+    # never pushes), so the subsequent `gh pr view` HEAD-in-commits check
+    # would otherwise surface a misleading "push first" error. Returning the
+    # no-op here preserves R4.1's idempotency spirit.
+    if recorded_anchor:
+        head_subject = run_command(
+            ["git", "log", "-1", "--format=%s", head], root, runner
+        ).stdout.strip()
+        head_parents = run_command(
+            ["git", "log", "-1", "--format=%P", head], root, runner
+        ).stdout.strip().split()
+        if (
+            head_subject == f"chore(sdd): lifecycle {feature} PR_OPEN->PR_OPEN"
+            and recorded_anchor in head_parents
+        ):
+            return "Recertification is current; nothing to do."
     pr_url = data.get("pr_url", "").strip()
     if not pr_url:
         raise LifecycleError(

@@ -1764,6 +1764,34 @@ class LifecycleRecertifyTests(unittest.TestCase):
         message = self._recertify(self._pr_payload("OPEN"))
         self.assertEqual("Recertification is current; nothing to do.", message)
 
+    def test_recertify_is_no_op_after_successful_recertify(self) -> None:
+        """R4.3 (spirit) — re-invoking mark-recertified after a successful
+        recertify, with no new functional fix, returns the graceful no-op
+        instead of the misleading 'HEAD not in PR commits' error. The
+        recertify commit is local-only (`mark_recertified` never pushes), so
+        the gh HEAD-in-commits check would otherwise surface a confusing
+        push-first error."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor]))
+        # HEAD is now the local recertify commit. Re-invoke without a new fix.
+        # The gh payload still reports only the pushed commits, which do NOT
+        # include the local recertify commit — yet the no-op path must take
+        # precedence.
+        message = self._recertify(
+            self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor])
+        )
+        self.assertEqual("Recertification is current; nothing to do.", message)
+        # No additional commit was written.
+        log_output = self.git(
+            "log", "--format=%s", "HEAD"
+        ).stdout.strip()
+        self.assertEqual(
+            log_output.count("chore(sdd): lifecycle example PR_OPEN->PR_OPEN"),
+            1,
+            "no second recertify commit should be written on no-op re-invocation",
+        )
+
     def test_recertify_preserves_pr_identity(self) -> None:
         """T3 — pr_url/pr_number/pr_state/repository/head_branch/base_branch
         are byte-identical before and after mark-recertified."""
@@ -1912,6 +1940,37 @@ class LifecycleRecertifyTests(unittest.TestCase):
         self._add_fix_commit()
         with self.assertRaisesRegex(LifecycleError, "baseRefName mismatch"):
             self._recertify(self._pr_payload("OPEN", base="develop"))
+
+    # --- N7: manual STATE.md edit + lifecycle-shaped subject ---
+
+    def test_recertify_refuses_manual_state_md_edit_with_code_commit(self) -> None:
+        """N7 — a hand-crafted commit with subject `PR_OPEN->PR_OPEN` whose
+        STATE.md edit changed `implementation_sha` to a stale value is caught
+        by `classify_lifecycle_commit` (R3.2: child.implementation_sha must
+        equal parent). This proves the integrity guard fires even when a
+        user tries to bypass `mark_recertified`."""
+        self.ready_pr_open()
+        # Manually edit STATE.md: change implementation_sha to a value that
+        # is NOT the parent SHA, then commit with the lifecycle-shaped
+        # subject. This mimics a hostile or careless user.
+        state = read_state(self.change)
+        state["implementation_sha"] = "f" * 40  # arbitrary, not the parent
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        manual_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        # The classifier rejects with the recertification-specific message,
+        # not with a generic "unauthorized subject" — both are valid per D13.
+        with self.assertRaisesRegex(
+            LifecycleError, "Recertification must record the reviewed HEAD"
+        ):
+            classify_lifecycle_commit(self.root, manual_commit, FEATURE)
 
     # --- N9: state != PR_OPEN (paramétrica) ---
 
