@@ -5,7 +5,7 @@ local_review: APPROVED
 repository: hardcode83/sdd-toolkit
 base_branch: main
 head_branch: sdd/post-pr-recertification
-implementation_sha: a9167e4227f17ba9117a2937102fa47ec0f8fd59
+implementation_sha: 0bcc084a4cc25f1cebd769897b25b0d366c5920c
 pr_number: 51
 pr_url: https://github.com/hardcode83/sdd-toolkit/pull/51
 pr_state: OPEN
