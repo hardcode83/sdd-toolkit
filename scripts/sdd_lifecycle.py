@@ -100,6 +100,11 @@ LIFECYCLE_TRANSITIONS = {
     # A PR that was already merged can be recorded before the local state has
     # observed it as OPEN. It is still a lifecycle-only transition.
     ("READY_FOR_PR", "MERGED"),
+    # Recertification: re-anchor the reviewed `implementation_sha` on the same
+    # open PR after a functional fix. The canonical state stays PR_OPEN; the
+    # transition is a self-loop authorized only by the dedicated branch in
+    # `classify_lifecycle_commit` (D5 of post-pr-recertification).
+    ("PR_OPEN", "PR_OPEN"),
 }
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -209,12 +214,18 @@ def lifecycle_commit(
     transition: str,
     data: dict[str, str],
     runner: Runner = subprocess.run,
+    body_lines: list[str] | None = None,
 ) -> str:
     """Persist one lifecycle transition as one STATE-only commit.
 
     The helper owns only the canonical STATE bytes it is asked to write. It
     refuses unrelated dirty/staged paths, never rewrites history, and restores
     its temporary staging/bytes if the commit command fails.
+
+    Optional `body_lines` are appended as additional `-m` paragraphs (e.g.
+    `SDD-Prior-Implementation-SHA: <old>` for traceability); they are not
+    classified by the lifecycle commit classifier — only the subject and the
+    canonical `SDD-Lifecycle-Feature` trailer are.
     """
     expected_path = lifecycle_path(root, feature, runner)
     ensure_clean_or_only_expected_state(root, expected_path, runner)
@@ -226,18 +237,21 @@ def lifecycle_commit(
     try:
         run_command(["git", "add", "--", expected_path], root, runner)
         subject = f"chore(sdd): lifecycle {feature} {transition}"
+        commit_args: list[str] = [
+            "git",
+            "commit",
+            "--only",
+            "-m",
+            subject,
+            "-m",
+            f"SDD-Lifecycle-Feature: {feature}",
+        ]
+        for line in body_lines or []:
+            commit_args.extend(["-m", line])
+        commit_args.append("--")
+        commit_args.append(expected_path)
         result = runner(
-            [
-                "git",
-                "commit",
-                "--only",
-                "-m",
-                subject,
-                "-m",
-                f"SDD-Lifecycle-Feature: {feature}",
-                "--",
-                expected_path,
-            ],
+            commit_args,
             cwd=root,
             check=False,
             capture_output=True,
@@ -712,6 +726,21 @@ def classify_lifecycle_commit(
         if child_state.get("implementation_sha") != parent:
             raise LifecycleError(
                 "LOCAL_VERIFIED lifecycle commit must preserve its implementation parent."
+            )
+    elif before == "PR_OPEN" and after == "PR_OPEN":
+        # Recertification: child.implementation_sha must equal the parent SHA
+        # (the new reviewed HEAD, never the recertify commit's own SHA — see
+        # the `commit in child_text` guard above), and the parent's recorded
+        # anchor must differ (a real re-anchor happened).
+        if child_state.get("implementation_sha") != parent:
+            raise LifecycleError(
+                "Recertification must record the reviewed HEAD (the parent of "
+                "the recertify commit) as the new implementation_sha anchor."
+            )
+        if parent_state.get("implementation_sha") == parent:
+            raise LifecycleError(
+                "Recertification requires a new implementation_sha anchor; the "
+                "parent STATE.md already points at the reviewed HEAD."
             )
     elif child_state.get("implementation_sha") != parent_state.get("implementation_sha"):
         raise LifecycleError("Lifecycle commit changed the stable implementation_sha anchor.")
@@ -1491,6 +1520,117 @@ def mark_ready(
     return "READY_FOR_PR recorded."
 
 
+def mark_recertified(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Re-anchor `implementation_sha` on the same open PR after a functional fix.
+
+    The canonical state stays `PR_OPEN`; the transition is the self-loop
+    `PR_OPEN -> PR_OPEN` whose new commit's `implementation_sha` equals the
+    parent SHA (the new reviewed HEAD) — never the commit's own SHA. The
+    previous helpers `ensure_clean_or_only_expected_state` and
+    `ensure_local_gates` cover the working tree, BLOCKED.md, incomplete
+    tasks and staged STATE.md; this function only adds the recertification-
+    specific preconditions (state, branch, local_review) and the
+    `gh pr view` validation that the same PR still exists and that the new
+    HEAD is among its commits (i.e. the user has pushed the fix). It does
+    not push.
+    """
+    change = active_change(root, feature)
+    expected_path = lifecycle_path(root, feature, runner)
+    ensure_clean_or_only_expected_state(root, expected_path, runner)
+    ensure_local_gates(change)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(
+            f"'{feature}' has no STATE.md to recertify against."
+        )
+    current = data.get("state", "")
+    if current != "PR_OPEN":
+        raise LifecycleError(
+            f"mark-recertified requires state PR_OPEN; found '{current}'. "
+            "Walk the change through /sdd:review and /sdd:ship first."
+        )
+    if data.get("local_review") != "APPROVED":
+        raise LifecycleError("Local review is not approved in STATE.md.")
+    head_branch = data.get("head_branch", "")
+    current_branch = run_command(
+        ["git", "branch", "--show-current"], root, runner
+    ).stdout.strip()
+    if current_branch != head_branch:
+        raise LifecycleError(
+            f"Recertification must run on '{head_branch}'; HEAD is on "
+            f"'{current_branch or '(detached)'}'. Switch first."
+        )
+    head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    recorded_anchor = data.get("implementation_sha", "")
+    if head == recorded_anchor:
+        return "Recertification is current; nothing to do."
+    # Detect a re-invocation after a successful recertify: HEAD is the most
+    # recent `PR_OPEN->PR_OPEN` lifecycle commit whose parent equals the
+    # recorded anchor. The recertify commit is local-only (`mark_recertified`
+    # never pushes), so the subsequent `gh pr view` HEAD-in-commits check
+    # would otherwise surface a misleading "push first" error. Returning the
+    # no-op here preserves R4.1's idempotency spirit.
+    if recorded_anchor:
+        head_subject = run_command(
+            ["git", "log", "-1", "--format=%s", head], root, runner
+        ).stdout.strip()
+        head_parents = run_command(
+            ["git", "log", "-1", "--format=%P", head], root, runner
+        ).stdout.strip().split()
+        if (
+            head_subject == f"chore(sdd): lifecycle {feature} PR_OPEN->PR_OPEN"
+            and recorded_anchor in head_parents
+        ):
+            return "Recertification is current; nothing to do."
+    pr_url = data.get("pr_url", "").strip()
+    if not pr_url:
+        raise LifecycleError(
+            f"STATE.md has no recorded pr_url; record the PR with "
+            f"/sdd:ship {feature} first."
+        )
+    payload = query_pr(pr_url, root, runner)
+    prospective = dict(data)
+    prospective["pr_url"] = pr_url.rstrip("/")
+    validate_pr_identity(prospective, payload)
+    github_state = payload.get("state")
+    if github_state == "MERGED":
+        raise LifecycleError(
+            f"PR #{prospective.get('pr_number')} is MERGED on GitHub; "
+            f"run /sdd:archive {feature} instead."
+        )
+    if github_state == "CLOSED":
+        raise LifecycleError(
+            f"PR #{prospective.get('pr_number')} was CLOSED without merge. "
+            f"Reopen it or open a new PR with /sdd:ship {feature}."
+        )
+    if github_state != "OPEN":
+        raise LifecycleError(f"Unsupported GitHub PR state '{github_state}'.")
+    commits = commit_oids(payload)
+    if head not in commits:
+        raise LifecycleError(
+            f"HEAD {head[:12]} is not in the Pull Request commits; "
+            f"the user must `git push origin {head_branch}` before "
+            f"recertifying."
+        )
+    new_data = dict(data)
+    new_data["implementation_sha"] = head  # parent SHA, never the commit's own
+    old_anchor = data.get("implementation_sha", "")
+    lifecycle = lifecycle_commit(
+        root,
+        feature,
+        "PR_OPEN->PR_OPEN",
+        new_data,
+        body_lines=[f"SDD-Prior-Implementation-SHA: {old_anchor}"],
+        runner=runner,
+    )
+    classify_lifecycle_commit(root, lifecycle, feature, runner)
+    return f"PR_OPEN re-anchored at {head[:12]}."
+
+
 def record_pr(
     root: Path,
     feature: str,
@@ -1919,6 +2059,11 @@ def build_parser() -> argparse.ArgumentParser:
     ready = subparsers.add_parser("mark-ready")
     ready.add_argument("feature")
     ready.add_argument("--base", required=True)
+    recertify = subparsers.add_parser(
+        "mark-recertified",
+        help="re-anchor implementation_sha on the same open PR after a fix",
+    )
+    recertify.add_argument("feature")
     record = subparsers.add_parser("record-pr")
     record.add_argument("feature")
     record.add_argument("--url", required=True)
@@ -1969,6 +2114,8 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_local_verified(root, args.feature)
         elif args.command == "mark-ready":
             message = mark_ready(root, args.feature, args.base)
+        elif args.command == "mark-recertified":
+            message = mark_recertified(root, args.feature)
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
         elif args.command == "sync-base":

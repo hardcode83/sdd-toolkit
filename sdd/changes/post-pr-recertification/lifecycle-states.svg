@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="20" y="22" font-size="14" font-weight="700" fill="#0f172a">SDD lifecycle states</text>
+  <text x="20" y="38" font-size="11" fill="#6b7280">post-pr-recertification adds the highlighted self-loop on PR_OPEN.</text>
+
+  <!-- BLOCKED lateral note -->
+  <g transform="translate(20, 54)">
+    <rect width="170" height="36" rx="4" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+    <text x="85" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">BLOCKED.md (lateral)</text>
+    <text x="85" y="30" text-anchor="middle" font-size="10" fill="#92400e">may sit alongside any non-terminal state</text>
+  </g>
+
+  <!-- State boxes (left to right) -->
+  <g>
+    <rect x="20"  y="180" width="86" height="40" rx="6" fill="#ffffff" stroke="#374151" stroke-width="1.4"/>
+    <text x="63"  y="205" text-anchor="middle" fill="#0f172a">ACTIVE</text>
+
+    <rect x="130" y="180" width="118" height="40" rx="6" fill="#ffffff" stroke="#374151" stroke-width="1.4"/>
+    <text x="189" y="205" text-anchor="middle" fill="#0f172a">LOCAL_VERIFIED</text>
+
+    <rect x="272" y="180" width="118" height="40" rx="6" fill="#ffffff" stroke="#374151" stroke-width="1.4"/>
+    <text x="331" y="205" text-anchor="middle" fill="#0f172a">READY_FOR_PR</text>
+
+    <!-- PR_OPEN highlighted (the new self-loop lives here) -->
+    <rect x="414" y="180" width="96" height="40" rx="6" fill="#fff7ed" stroke="#c2410c" stroke-width="2.4"/>
+    <text x="462" y="205" text-anchor="middle" fill="#0f172a" font-weight="700">PR_OPEN</text>
+
+    <rect x="534" y="180" width="78" height="40" rx="6" fill="#ffffff" stroke="#374151" stroke-width="1.4"/>
+    <text x="573" y="205" text-anchor="middle" fill="#0f172a">MERGED</text>
+
+    <rect x="636" y="180" width="68" height="40" rx="6" fill="#ffffff" stroke="#374151" stroke-width="1.4"/>
+    <text x="670" y="205" text-anchor="middle" fill="#0f172a">ARCHIVED</text>
+  </g>
+
+  <!-- CANCELLED lateral terminal (below ACTIVE) -->
+  <g>
+    <rect x="20" y="260" width="86" height="34" rx="6" fill="#ffffff" stroke="#9ca3af" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text x="63" y="282" text-anchor="middle" fill="#6b7280">CANCELLED</text>
+  </g>
+
+  <!-- Forward transitions (solid) -->
+  <g fill="none" stroke="#374151" stroke-width="1.4">
+    <path d="M106 200 L 130 200" marker-end="url(#arrow)"/>
+    <path d="M248 200 L 272 200" marker-end="url(#arrow)"/>
+    <path d="M390 200 L 414 200" marker-end="url(#arrow)"/>
+    <path d="M612 200 L 636 200" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Edge labels (above) -->
+  <g text-anchor="middle" fill="#374151">
+    <text x="118" y="194" font-size="10">mark-local-verified</text>
+    <text x="260" y="194" font-size="10">mark-ready</text>
+    <text x="402" y="194" font-size="10">record-pr</text>
+    <text x="624" y="194" font-size="10">finalize-archive</text>
+  </g>
+
+  <!-- GitHub MERGED (PR_OPEN -> MERGED, dashed) -->
+  <g fill="none" stroke="#6b7280" stroke-width="1.4" stroke-dasharray="5 3">
+    <path d="M510 200 L 534 200" marker-end="url(#arrow-dashed)"/>
+  </g>
+  <text x="522" y="194" text-anchor="middle" font-size="10" fill="#6b7280">GitHub</text>
+
+  <!-- Legacy READY_FOR_PR -> MERGED (curved over PR_OPEN) -->
+  <g fill="none" stroke="#374151" stroke-width="1.4">
+    <path d="M331 220 Q 331 245 462 245 Q 573 245 573 220" marker-end="url(#arrow)"/>
+  </g>
+  <text x="462" y="261" text-anchor="middle" font-size="10" fill="#374151">record-pr (legacy pre-recorded MERGED)</text>
+
+  <!-- NEW self-loop PR_OPEN -> PR_OPEN (highlighted) -->
+  <g fill="none" stroke="#c2410c" stroke-width="2.6">
+    <path d="M462 180
+             C 462 120, 530 110, 530 150
+             L 530 165
+             C 530 175, 510 175, 480 180" marker-end="url(#arrow-orange)"/>
+  </g>
+  <g text-anchor="middle" fill="#c2410c">
+    <text x="496" y="118" font-size="12" font-weight="700">recertify (mark-recertified)</text>
+    <text x="496" y="132" font-size="10">PR_OPEN &#8594; PR_OPEN (self-loop, new)</text>
+  </g>
+
+  <!-- CANCELLED lateral edges (dashed, faint) -->
+  <g fill="none" stroke="#9ca3af" stroke-width="1.1" stroke-dasharray="4 3">
+    <path d="M63 220 L 63 260" marker-end="url(#arrow-dashed)"/>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(20, 320)">
+    <rect width="680" height="30" rx="4" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+    <line x1="14" y1="15" x2="38" y2="15" stroke="#374151" stroke-width="1.4"/>
+    <text x="46" y="19" font-size="11" fill="#334155">lifecycle command</text>
+
+    <line x1="170" y1="15" x2="194" y2="15" stroke="#6b7280" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <text x="202" y="19" font-size="11" fill="#334155">GitHub-reported (PR_OPEN &#8594; MERGED)</text>
+
+    <line x1="430" y1="15" x2="454" y2="15" stroke="#c2410c" stroke-width="2.6"/>
+    <text x="462" y="19" font-size="11" font-weight="600" fill="#c2410c">new in post-pr-recertification</text>
+  </g>
+</svg>

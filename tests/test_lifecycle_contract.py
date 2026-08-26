@@ -222,6 +222,91 @@ class LifecycleSkillContractTests(unittest.TestCase):
             self.assertIn(state, status)
         self.assertIn("BLOCKED.md", status)
 
+    # ----- post-pr-recertification: skills reflect the recertification flow -----
+
+    def test_review_skill_branches_at_pr_open_for_recertify(self) -> None:
+        """C1 — review skill detects PR_OPEN and calls mark-recertified, and the
+        PR_OPEN bullet does NOT carry the ACTIVE/LOCAL_VERIFIED milestones."""
+        review = self.read_skill("review")
+        # The new branch must be present somewhere.
+        self.assertIn("PR_OPEN", review)
+        self.assertIn("mark-recertified", review)
+        self.assertIn("recertification", review.lower())
+        # The push precondition is documented (user pushes before recertifying).
+        self.assertIn("git push", review)
+        # Scope to the PR_OPEN bullet body only (not the prose that follows
+        # it). The bullet ends at "resulting suffix is lifecycle-only."; the
+        # next paragraph "Determine the target base..." starts a new topic.
+        pr_open_bullet_start = review.index("- `PR_OPEN`")
+        bullet_close = "resulting suffix is lifecycle-only."
+        pr_open_bullet_end = review.index(bullet_close, pr_open_bullet_start) + len(bullet_close)
+        pr_open_block = review[pr_open_bullet_start:pr_open_bullet_end]
+        self.assertIn("mark-recertified", pr_open_block)
+        # The recertification path replaces mark-local-verified + mark-ready
+        # for the PR_OPEN state — if either leaks back into this bullet, the
+        # supported flow is broken. We check the bash command line (the
+        # argument to sdd_lifecycle.py), not the prose that follows.
+        bash_lines = [
+            line for line in pr_open_block.splitlines() if "sdd_lifecycle.py" in line
+        ]
+        self.assertTrue(bash_lines, "PR_OPEN bullet must contain at least one sdd_lifecycle.py call")
+        for line in bash_lines:
+            self.assertNotIn("mark-local-verified", line)
+            self.assertNotIn("mark-ready", line)
+        # Push precondition is documented inside the PR_OPEN path context.
+        self.assertIn("push", pr_open_block.lower())
+
+    def test_ship_skill_refuses_pr_open_with_unanchored_head(self) -> None:
+        """C2 — ship skill refuses PR_OPEN + HEAD != implementation_sha and
+        redirects to /sdd:review, scoped to the PR_OPEN bullet."""
+        ship = self.read_skill("ship")
+        # Scope to the PR_OPEN bullet in the state-branch list (the next
+        # `- \`...\`` bullet is ACTIVE/LOCAL_VERIFIED, which is the natural
+        # boundary).
+        pr_open_start = ship.index("- `PR_OPEN`")
+        active_idx = ship.find("\n   - `ACTIVE`", pr_open_start)
+        self.assertGreater(active_idx, pr_open_start, "ACTIVE/LOCAL_VERIFIED bullet must follow PR_OPEN")
+        pr_open_block = ship[pr_open_start:active_idx]
+        # The redirect and the unanchored-check live inside this bullet.
+        self.assertIn("recertif", pr_open_block.lower())
+        self.assertIn("/sdd:review", pr_open_block)
+        self.assertIn("HEAD", pr_open_block)
+        self.assertIn("implementation_sha", pr_open_block)
+        # The bullet explicitly forbids step 3, record-pr, and push so ship
+        # does not certify or accidentally re-publish.
+        self.assertIn("do NOT run step 3", pr_open_block)
+        self.assertIn("do NOT", pr_open_block)
+        self.assertIn("record-pr", pr_open_block)
+        self.assertIn("push", pr_open_block.lower())
+
+    def test_auto_skill_resumes_pr_open_with_recertify_path(self) -> None:
+        """C3 — auto skill delegates PR_OPEN + unanchored commits to /sdd:review
+        within the "Resuming a mid-flight feature" section, and never invokes
+        mark-recertified itself."""
+        auto = self.read_skill("auto")
+        # Scope to the resuming section so the assertions bind to the place
+        # where the recertification contract is documented, not a stray
+        # mention elsewhere.
+        resuming_start = auto.index("## Resuming a mid-flight feature")
+        resuming_end = auto.index("## Handoff:", resuming_start)
+        resuming = auto[resuming_start:resuming_end]
+        # The resuming section explicitly branches PR_OPEN on HEAD vs anchor.
+        self.assertIn("HEAD == implementation_sha", resuming)
+        self.assertIn("HEAD != implementation_sha", resuming)
+        self.assertIn("mark-recertified", resuming)
+        self.assertIn("/sdd:review", resuming)
+        # Auto must not invoke mark-recertified itself: it must never appear as
+        # the argument of a sdd_lifecycle.py command in the auto skill. The
+        # recertification path is delegated to /sdd:review in a fresh session.
+        self.assertFalse(
+            any(
+                "sdd_lifecycle.py" in line and "mark-recertified" in line
+                for line in resuming.splitlines()
+            ),
+            "auto must not invoke mark-recertified; the recertification path "
+            "is delegated to /sdd:review in a fresh session.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

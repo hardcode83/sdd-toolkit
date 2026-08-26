@@ -105,28 +105,60 @@ reason. Then:
    `implementation_sha`** — re-run the lifecycle validation so the merge gate
    certifies the reviewed anchor and every later commit is an authorized
    STATE-only lifecycle commit. A later code/spec/evidence/metrics commit is
-   drift and must be reviewed again; lifecycle metadata is not functional drift.
+   drift and must be reviewed again; lifecycle metadata is not functional
+   drift. When the change is already at `PR_OPEN`, the supported path is
+   `/sdd:review <feature>` itself: step 5 below branches on `state == PR_OPEN`
+   and calls `mark-recertified`, which re-anchors `implementation_sha` to the
+   new reviewed HEAD on the same open PR. The user must `git push origin
+   <head_branch>` (never `--force`) before invoking review in this case, so
+   `mark-recertified` can verify the new HEAD is in the PR's `commits[]`.
 5. Conclude with a verdict: locally verified or list what's missing. If the
-   verdict passes, persist the two explicit lifecycle milestones:
+   verdict passes, persist the lifecycle milestones. **Branch on `state`** —
+   the change may already be at `PR_OPEN`, in which case the milestones below
+   would be a no-op or an error:
 
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
-   ```
+   - `ACTIVE` or `LOCAL_VERIFIED` → the standard two-milestone sequence:
+
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
+     ```
+
+   - `PR_OPEN` → recertification: launch the panel over the range
+     `implementation_sha..HEAD` (the new fix, not the whole branch) and, on
+     PASS, call:
+
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-recertified <feature>
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
+     ```
+
+     `mark-recertified` re-anchors `implementation_sha` to the parent SHA of
+     the new lifecycle commit (the reviewed HEAD), preserves every PR
+     identity field, refuses when the PR is `MERGED` or `CLOSED`, refuses
+     when `HEAD` is not in the PR's `commits[]` (i.e. the user has not
+     pushed), and never invokes `git push`. Validate-ship confirms the
+     resulting suffix is lifecycle-only.
 
    Determine the target base from the current workflow/remote; if it is
    ambiguous, ask rather than guessing — **except under `/sdd:auto`**, which
    passes its recorded BASE explicitly and must never be interrupted with this
    question. The resulting `STATE.md` has
-   `state: READY_FOR_PR`, `local_review: APPROVED`, repository, branches, and
-   the reviewed implementation SHA. This is not remote review, merge, spec
-   fusion, roadmap completion, or archive.
+   `state: READY_FOR_PR` (or remains `PR_OPEN` after recertification),
+   `local_review: APPROVED`, repository, branches, and the reviewed
+   implementation SHA. This is not remote review, merge, spec fusion,
+   roadmap completion, or archive.
 
    `mark-local-verified` persists `ACTIVE -> LOCAL_VERIFIED` as the first
    STATE-only lifecycle commit when the change's ACTIVE STATE is already in the
    implementation anchor. `mark-ready` then persists
    `LOCAL_VERIFIED -> READY_FOR_PR`; both transitions leave a clean worktree.
+   `mark-recertified` (the recertification branch) persists the self-loop
+   `PR_OPEN -> PR_OPEN` — the canonical state stays `PR_OPEN`, but the
+   recorded `implementation_sha` advances to the reviewed HEAD on the same
+   open PR; this is the supported path when a defect is found after the PR
+   is opened.
 
 6. **Metrics.** Run both unconditionally (each no-ops when tracking is off; NEVER
    skip them based on your own assessment of whether metrics are enabled):

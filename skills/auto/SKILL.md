@@ -245,7 +245,14 @@ Then, for the feature at hand:
 - `tasks.md` with unchecked tasks → continue at run.
 - All tasks checked, no lifecycle metadata → continue at review.
 - `state: READY_FOR_PR` → run the ship skill (push, PR, `record-pr`); do not re-review.
-- `state: PR_OPEN` → report the PR and wait for remote review/merge.
+- `state: PR_OPEN` with `HEAD == implementation_sha` (no unanchored commits) →
+  report the PR and wait for remote review/merge.
+- `state: PR_OPEN` with `HEAD != implementation_sha` (a functional fix landed
+  on the open PR without recertification) → delegate to `/sdd:review
+  <feature>` in a fresh delegated session; the review skill detects
+  `PR_OPEN`, runs the panel over `implementation_sha..HEAD`, and calls
+  `mark-recertified` on PASS. Auto itself does not invoke
+  `mark-recertified` — auto never certifies.
 - `state: MERGED` → point to `/sdd:archive <feature>`; auto does not archive.
 
 Documents already written by the user's manual phases are treated as approved input — never regenerate them. If the change lives on an existing `sdd/<feature>` branch, switch to it instead of branching anew. This enables the hybrid the gates make expensive: the human drives the thinking phases, auto finishes the mechanical ones.

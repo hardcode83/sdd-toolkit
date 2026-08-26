@@ -22,6 +22,7 @@ from sdd_lifecycle import (  # noqa: E402
     finalize_archive,
     mark_local_verified,
     mark_ready,
+    mark_recertified,
     publish_archive,
     read_state,
     record_pr,
@@ -1538,6 +1539,554 @@ class RoadmapTickTests(unittest.TestCase):
     def test_no_roadmap_at_all_is_reported_as_absent(self) -> None:
         self.assertEqual(
             "absent", update_roadmap(self.root, "example", "changes/archive/x/")
+        )
+
+
+class LifecycleRecertifyTests(unittest.TestCase):
+    """Tests for the `mark-recertified` flow (post-pr-recertification).
+
+    Section 1 covers the classifier-only paths (T6, N8). Section 2 covers
+    the command itself (T1–T5, N1–N6, N9–N16). Sections 3 and 4 are tested
+    via `tests/test_lifecycle_contract.py` (C1–C3) and the CI verification
+    command.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.change = self.root / "sdd" / "changes" / FEATURE
+        self.change.mkdir(parents=True)
+        (self.change / "proposal.md").write_text(
+            "# Proposal\n", encoding="utf-8"
+        )
+        (self.change / "tasks.md").write_text(
+            "# Tasks\n\n- [x] 1.1 Done [R1]\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "specs").mkdir()
+        (self.root / "sdd" / "specs" / "example.md").write_text(
+            "# Example\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n- [ ] example → changes/example/\n", encoding="utf-8"
+        )
+        write_state(self.change, initial_state())
+        self.git("init", "-b", "sdd/example")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "SDD Test")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+        self.fixture_sha = self.git("rev-parse", "HEAD").stdout.strip()
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def ready_pr_open(self) -> None:
+        """Bring the change to `state=PR_OPEN` with old_anchor recorded.
+
+        Bypasses `record_pr` (which would need a gh fixture) by writing the
+        STATE-only lifecycle commit directly — the classifier is what we want
+        to exercise here, not the gh integration.
+        """
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        # mark_ready already wrote READY_FOR_PR->PR_OPEN? No — it stops at
+        # READY_FOR_PR. Build the PR_OPEN lifecycle commit by hand to mirror
+        # what `record_pr` does in spirit, without invoking gh.
+        state = read_state(self.change)
+        old_anchor = state["implementation_sha"]
+        self.old_anchor = old_anchor
+        new_state = dict(state)
+        new_state["state"] = "PR_OPEN"
+        new_state["pr_state"] = "OPEN"
+        new_state["pr_url"] = PR_URL
+        new_state["pr_number"] = "17"
+        new_state["repository"] = "example/project"
+        new_state["head_branch"] = "sdd/example"
+        new_state["base_branch"] = "main"
+        write_state(self.change, new_state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example READY_FOR_PR->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        self.pr_open_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(old_anchor, read_state(self.change)["implementation_sha"])
+
+    def _add_fix_commit(self) -> str:
+        """Add a functional fix commit; return its SHA (the parent of any
+        subsequent recertify commit)."""
+        (self.root / "fix.txt").write_text("fix from review\n", encoding="utf-8")
+        self.git("add", "fix.txt")
+        self.git("commit", "-m", "fix from review")
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def _commit_recertify(self, anchor_in_state: str) -> str:
+        """Write the recertify STATE-only commit with the given implementation_sha;
+        return the recertify commit's SHA."""
+        state = read_state(self.change)
+        state["implementation_sha"] = anchor_in_state
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+            "-m",
+            f"SDD-Prior-Implementation-SHA: {self.old_anchor}",
+        )
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def test_classify_lifecycle_commit_accepts_recertify_transition(self) -> None:
+        """T6 — self-loop PR_OPEN->PR_OPEN with child.implementation_sha == parent."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        recertify_commit = self._commit_recertify(anchor_in_state=new_anchor)
+        feature, transition = classify_lifecycle_commit(
+            self.root, recertify_commit, FEATURE
+        )
+        self.assertEqual(FEATURE, feature)
+        self.assertEqual("PR_OPEN->PR_OPEN", transition)
+
+    def test_recertify_refuses_recertify_subject_with_wrong_anchor(self) -> None:
+        """N8 — self-loop with child.implementation_sha != parent is rejected."""
+        self.ready_pr_open()
+        self._add_fix_commit()  # the parent SHA, which we will NOT record
+        recertify_commit = self._commit_recertify(anchor_in_state="0" * 40)
+        with self.assertRaisesRegex(
+            LifecycleError, "Recertification must record the reviewed HEAD"
+        ):
+            classify_lifecycle_commit(self.root, recertify_commit, FEATURE)
+
+    # ---------- Section 2: command-level tests ----------
+
+    def _pr_payload(
+        self,
+        state: str,
+        *,
+        commits: list[str] | None = None,
+        merged_at: str | None = None,
+        merge_sha: str | None = None,
+        url: str = PR_URL,
+        head: str = "sdd/example",
+        base: str = "main",
+    ) -> dict[str, object]:
+        return {
+            "number": 17,
+            "url": url,
+            "state": state,
+            "mergedAt": merged_at,
+            "mergeCommit": {"oid": merge_sha} if merge_sha else None,
+            "baseRefName": base,
+            "headRefName": head,
+            "headRefOid": self.old_anchor,
+            "commits": [{"oid": oid} for oid in (commits or [self.old_anchor])],
+        }
+
+    @staticmethod
+    def _gh_runner(payload: dict[str, object]):
+        def run(
+            args: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[str]:
+            if args[0] == "git":
+                return subprocess.run(args, **kwargs)  # type: ignore[arg-type]
+            if args[:3] != ["gh", "pr", "view"]:
+                raise AssertionError(f"Unexpected external command: {args}")
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+        return run
+
+    def _recertify(self, payload: dict[str, object]) -> str:
+        """Run mark_recertified with the given gh payload."""
+        return mark_recertified(self.root, FEATURE, runner=self._gh_runner(payload))
+
+    # --- T1: happy path ---
+
+    def test_recertify_re_anchors_and_passes_validate_ship(self) -> None:
+        """T1 — mark-recertified re-anchors and validate_ship_suffix passes."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        payload = self._pr_payload(
+            "OPEN", commits=[self.old_anchor, new_anchor]
+        )
+        message = self._recertify(payload)
+        self.assertIn("PR_OPEN re-anchored at", message)
+        self.assertIn(new_anchor[:12], message)
+        state = read_state(self.change)
+        self.assertEqual("PR_OPEN", state["state"])
+        self.assertEqual(new_anchor, state["implementation_sha"])
+        # PR identity preserved
+        self.assertEqual(PR_URL, state["pr_url"])
+        self.assertEqual("17", state["pr_number"])
+        self.assertEqual("OPEN", state["pr_state"])
+        self.assertEqual("example/project", state["repository"])
+        self.assertEqual("sdd/example", state["head_branch"])
+        self.assertEqual("main", state["base_branch"])
+        # validate_ship_suffix passes
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(1, len(suffix))
+        # The single suffix commit is the recertify commit (PR_OPEN->PR_OPEN).
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(head, suffix[0])
+
+    def test_recertify_is_idempotent_when_head_matches_anchor(self) -> None:
+        """T2 — mark-recertified with HEAD == implementation_sha is a no-op."""
+        self.ready_pr_open()
+        # No fix commit; HEAD is the pr_open lifecycle commit, not the old_anchor.
+        # To test idempotency on the anchor specifically, write the anchor into
+        # STATE and align HEAD with it via a no-op re-write — but HEAD cannot
+        # equal implementation_sha unless someone rewinds. The cleanest path:
+        # write implementation_sha = current HEAD via state, then call.
+        head_sha = self.git("rev-parse", "HEAD").stdout.strip()
+        state = read_state(self.change)
+        state["implementation_sha"] = head_sha
+        write_state(self.change, state)
+        # No lifecycle commit; the file differs from the rendered state, so
+        # ensure_clean_or_only_expected_state would refuse — but STATE.md is
+        # the only allowed path, so the helper accepts unstaged changes.
+        message = self._recertify(self._pr_payload("OPEN"))
+        self.assertEqual("Recertification is current; nothing to do.", message)
+
+    def test_recertify_is_no_op_after_successful_recertify(self) -> None:
+        """R4.3 (spirit) — re-invoking mark-recertified after a successful
+        recertify, with no new functional fix, returns the graceful no-op
+        instead of the misleading 'HEAD not in PR commits' error. The
+        recertify commit is local-only (`mark_recertified` never pushes), so
+        the gh HEAD-in-commits check would otherwise surface a confusing
+        push-first error."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor]))
+        # HEAD is now the local recertify commit. Re-invoke without a new fix.
+        # The gh payload still reports only the pushed commits, which do NOT
+        # include the local recertify commit — yet the no-op path must take
+        # precedence.
+        message = self._recertify(
+            self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor])
+        )
+        self.assertEqual("Recertification is current; nothing to do.", message)
+        # No additional commit was written.
+        log_output = self.git(
+            "log", "--format=%s", "HEAD"
+        ).stdout.strip()
+        self.assertEqual(
+            log_output.count("chore(sdd): lifecycle example PR_OPEN->PR_OPEN"),
+            1,
+            "no second recertify commit should be written on no-op re-invocation",
+        )
+
+    def test_recertify_preserves_pr_identity(self) -> None:
+        """T3 — pr_url/pr_number/pr_state/repository/head_branch/base_branch
+        are byte-identical before and after mark-recertified."""
+        self.ready_pr_open()
+        before = read_state(self.change)
+        new_anchor = self._add_fix_commit()
+        self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor]))
+        after = read_state(self.change)
+        for field in (
+            "pr_url", "pr_number", "pr_state", "repository",
+            "head_branch", "base_branch", "local_review",
+        ):
+            self.assertEqual(before[field], after[field], field)
+        # implementation_sha is the only field that changes.
+        self.assertEqual(self.old_anchor, before["implementation_sha"])
+        self.assertEqual(new_anchor, after["implementation_sha"])
+
+    def test_recertify_chained_two_cycles(self) -> None:
+        """T4 — two recertify cycles on the same PR keep PR identity and chain anchors."""
+        self.ready_pr_open()
+        # First cycle
+        f1 = self._add_fix_commit()
+        self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor, f1]))
+        c1 = self.git("rev-parse", "HEAD").stdout.strip()
+        s1 = read_state(self.change)
+        self.assertEqual(f1, s1["implementation_sha"])
+        # Second cycle
+        (self.root / "fix2.txt").write_text("second fix\n", encoding="utf-8")
+        self.git("add", "fix2.txt")
+        self.git("commit", "-m", "second fix")
+        f2 = self.git("rev-parse", "HEAD").stdout.strip()
+        # The PR commits list grows with each push; simulate the second push.
+        self._recertify(
+            self._pr_payload("OPEN", commits=[self.old_anchor, f1, f2])
+        )
+        c2 = self.git("rev-parse", "HEAD").stdout.strip()
+        s2 = read_state(self.change)
+        self.assertEqual(f2, s2["implementation_sha"])
+        # PR identity still intact.
+        self.assertEqual("17", s2["pr_number"])
+        self.assertEqual(PR_URL, s2["pr_url"])
+        # Both recertify commits are PR_OPEN->PR_OPEN subjects.
+        self.assertEqual(
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            self.git("show", "-s", "--format=%s", c1).stdout.strip(),
+        )
+        self.assertEqual(
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            self.git("show", "-s", "--format=%s", c2).stdout.strip(),
+        )
+        # validate_ship_suffix passes — suffix contains only the latest recertify
+        # commit (since implementation_sha has advanced to f2). Both lifecycle
+        # commits exist in history; the suffix is the post-anchor range.
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(1, len(suffix))
+        self.assertEqual(c2, suffix[0])
+
+    def test_validate_ship_suffix_accepts_recertify_commit(self) -> None:
+        """T5 — the recertify commit on top of a recertified HEAD passes validate_ship_suffix."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor]))
+        # validate_ship_suffix was already called inside T1; here we assert it
+        # explicitly produces the recertify commit as the single suffix entry.
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(1, len(suffix))
+        subject = self.git(
+            "show", "-s", "--format=%s", suffix[0]
+        ).stdout.strip()
+        self.assertEqual(
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN", subject
+        )
+
+    # --- N1, N2: PR states ---
+
+    def test_recertify_refuses_merged_pr(self) -> None:
+        """N1 — gh pr view state=MERGED → LifecycleError suggesting /sdd:archive."""
+        self.ready_pr_open()
+        self._add_fix_commit()
+        with self.assertRaisesRegex(LifecycleError, "MERGED"):
+            self._recertify(
+                self._pr_payload(
+                    "MERGED",
+                    merged_at="2026-08-24T12:00:00Z",
+                    merge_sha="a" * 40,
+                )
+            )
+
+    def test_recertify_refuses_closed_pr(self) -> None:
+        """N2 — gh pr view state=CLOSED without merge → LifecycleError suggesting reopen."""
+        self.ready_pr_open()
+        self._add_fix_commit()
+        with self.assertRaisesRegex(LifecycleError, "CLOSED"):
+            self._recertify(self._pr_payload("CLOSED"))
+
+    # --- N3, N4: working tree hygiene ---
+
+    def test_recertify_refuses_dirty_worktree(self) -> None:
+        """N3 — untracked path outside STATE.md → LifecycleError from helper."""
+        self.ready_pr_open()
+        (self.root / "code.py").write_text("print('unreviewed')\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            LifecycleError, "outside the lifecycle STATE.md allowlist"
+        ):
+            self._recertify(self._pr_payload("OPEN"))
+
+    def test_recertify_refuses_staged_state_change(self) -> None:
+        """N4 — STATE.md with staged (not committed) changes → helper refuses."""
+        self.ready_pr_open()
+        # Edit STATE.md with a real content change (not a no-op render) and
+        # stage it. ensure_clean_or_only_expected_state accepts STATE.md as
+        # the only allowed path, but rejects staged changes to it.
+        state = read_state(self.change)
+        state["local_review"] = "REJECTED"  # non-canonical, but a real edit
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        with self.assertRaisesRegex(
+            LifecycleError, "already has staged changes"
+        ):
+            self._recertify(self._pr_payload("OPEN"))
+
+    # --- N5: force-push / rebase destructive ---
+
+    def test_recertify_refuses_force_push_or_rebase(self) -> None:
+        """N5 — old anchor not an ancestor of HEAD → gh check fails first.
+        The strict check is in validate_pr_identity, which compares HEAD's
+        recertify candidate against the recorded old anchor via
+        implementation_sha ∈ commits[]; here we simulate by omitting the
+        old anchor from the PR commits list (as if GitHub lost it after a
+        force-push)."""
+        self.ready_pr_open()
+        # HEAD != old_anchor — push some unrelated commit that the PR doesn't know about
+        self._add_fix_commit()
+        # Simulate that the PR no longer carries the old anchor (post-rebase)
+        new_anchor = self.git("rev-parse", "HEAD").stdout.strip()
+        with self.assertRaisesRegex(
+            LifecycleError, "implementation SHA is not present"
+        ):
+            self._recertify(self._pr_payload("OPEN", commits=[new_anchor]))
+
+    # --- N6: PR identity mismatch ---
+
+    def test_recertify_refuses_different_pr(self) -> None:
+        """N6 — baseRefName/headRefName mismatch → LifecycleError from validate_pr_identity."""
+        self.ready_pr_open()
+        self._add_fix_commit()
+        with self.assertRaisesRegex(LifecycleError, "baseRefName mismatch"):
+            self._recertify(self._pr_payload("OPEN", base="develop"))
+
+    # --- N7: manual STATE.md edit + lifecycle-shaped subject ---
+
+    def test_recertify_refuses_manual_state_md_edit_with_code_commit(self) -> None:
+        """N7 — a hand-crafted commit with subject `PR_OPEN->PR_OPEN` whose
+        STATE.md edit changed `implementation_sha` to a stale value is caught
+        by `classify_lifecycle_commit` (R3.2: child.implementation_sha must
+        equal parent). This proves the integrity guard fires even when a
+        user tries to bypass `mark_recertified`."""
+        self.ready_pr_open()
+        # Manually edit STATE.md: change implementation_sha to a value that
+        # is NOT the parent SHA, then commit with the lifecycle-shaped
+        # subject. This mimics a hostile or careless user.
+        state = read_state(self.change)
+        state["implementation_sha"] = "f" * 40  # arbitrary, not the parent
+        write_state(self.change, state)
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git(
+            "commit",
+            "-m",
+            "chore(sdd): lifecycle example PR_OPEN->PR_OPEN",
+            "-m",
+            "SDD-Lifecycle-Feature: example",
+        )
+        manual_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        # The classifier rejects with the recertification-specific message,
+        # not with a generic "unauthorized subject" — both are valid per D13.
+        with self.assertRaisesRegex(
+            LifecycleError, "Recertification must record the reviewed HEAD"
+        ):
+            classify_lifecycle_commit(self.root, manual_commit, FEATURE)
+
+    # --- N9: state != PR_OPEN (paramétrica) ---
+
+    def test_recertify_refuses_non_pr_open_state(self) -> None:
+        """N9 — every non-PR_OPEN state is refused with a state-naming message."""
+        for forbidden in ("ACTIVE", "LOCAL_VERIFIED", "READY_FOR_PR",
+                          "MERGED", "ARCHIVED", "CANCELLED"):
+            with self.subTest(state=forbidden):
+                self.setUp()
+                self.ready_pr_open()
+                # Write STATE.md directly into the forbidden state. We do this
+                # by mutating read_state and write_state without committing a
+                # lifecycle commit (state == "ACTIVE" etc. without a matching
+                # lifecycle commit is OK for the test).
+                st = read_state(self.change)
+                st["state"] = forbidden
+                if forbidden == "ACTIVE":
+                    st["local_review"] = "PENDING"
+                write_state(self.change, st)
+                # Working tree shows STATE.md as modified; ensure_clean only
+                # accepts STATE.md as the one allowed path.
+                with self.assertRaisesRegex(LifecycleError, "found '" + forbidden + "'"):
+                    self._recertify(self._pr_payload("OPEN"))
+
+    # --- N10: BLOCKED.md ---
+
+    def test_recertify_refuses_blocked(self) -> None:
+        """N10 — BLOCKED.md non-empty → helper refuses via ensure_local_gates.
+        Commit BLOCKED.md first so the working-tree hygiene check does not
+        pre-empt the BLOCKED check; the canonical gate catches it."""
+        self.ready_pr_open()
+        (self.change / "BLOCKED.md").write_text(
+            "# Blocked\n\nNeeds decision.\n", encoding="utf-8"
+        )
+        self.git("add", "sdd/changes/example/BLOCKED.md")
+        self.git("commit", "-m", "add BLOCKED entry")
+        with self.assertRaisesRegex(LifecycleError, "unresolved work"):
+            self._recertify(self._pr_payload("OPEN"))
+
+    # --- N11: incomplete tasks ---
+
+    def test_recertify_refuses_incomplete_tasks(self) -> None:
+        """N11 — task unchecked → helper refuses via ensure_local_gates.
+        Commit the new tasks.md first so the working-tree hygiene check does
+        not pre-empt the tasks check."""
+        self.ready_pr_open()
+        (self.change / "tasks.md").write_text(
+            "# Tasks\n\n- [ ] 1.1 Pending [R1]\n", encoding="utf-8"
+        )
+        self.git("add", "sdd/changes/example/tasks.md")
+        self.git("commit", "-m", "reopen task")
+        with self.assertRaisesRegex(LifecycleError, "incomplete task"):
+            self._recertify(self._pr_payload("OPEN"))
+
+    # --- N12: local_review not APPROVED ---
+
+    def test_recertify_refuses_local_review_not_approved(self) -> None:
+        """N12 — local_review != APPROVED → mark_recertified refuses."""
+        self.ready_pr_open()
+        st = read_state(self.change)
+        st["local_review"] = "PENDING"
+        write_state(self.change, st)
+        with self.assertRaisesRegex(
+            LifecycleError, "Local review is not approved"
+        ):
+            self._recertify(self._pr_payload("OPEN"))
+
+    # --- N13: wrong branch ---
+
+    def test_recertify_refuses_wrong_branch(self) -> None:
+        """N13 — branch guard refuses when HEAD is on another branch."""
+        self.ready_pr_open()
+        self.git("checkout", "-b", "wrong-branch")
+        with self.assertRaisesRegex(LifecycleError, "must run on 'sdd/example'"):
+            self._recertify(self._pr_payload("OPEN"))
+        self.git("checkout", "sdd/example")
+
+    # --- N14: HEAD not in PR commits ---
+
+    def test_recertify_refuses_head_not_in_pr_commits(self) -> None:
+        """N14 — user has not pushed the fix → HEAD not in PR commits."""
+        self.ready_pr_open()
+        self._add_fix_commit()
+        # Simulate: PR still only knows the old anchor (no push).
+        with self.assertRaisesRegex(LifecycleError, "is not in the Pull Request commits"):
+            self._recertify(self._pr_payload("OPEN", commits=[self.old_anchor]))
+
+    # --- N15: old anchor not in PR commits ---
+
+    def test_recertify_refuses_old_anchor_not_in_pr_commits(self) -> None:
+        """N15 — PR was rebaseado y el old anchor ya no está en commits[]."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        # Simulate PR with only the new commit (old anchor lost).
+        with self.assertRaisesRegex(LifecycleError, "implementation SHA is not present"):
+            self._recertify(self._pr_payload("OPEN", commits=[new_anchor]))
+
+    # --- N16: no git push ---
+
+    def test_recertify_does_not_invoke_git_push(self) -> None:
+        """N16 — mark-recertified never invokes `git push` (D7)."""
+        self.ready_pr_open()
+        new_anchor = self._add_fix_commit()
+        commands: list[list[str]] = []
+        base_runner = self._gh_runner(
+            self._pr_payload("OPEN", commits=[self.old_anchor, new_anchor])
+        )
+
+        def recording(args: list[str], **kwargs: object):
+            commands.append(args)
+            return base_runner(args, **kwargs)
+
+        mark_recertified(self.root, FEATURE, runner=recording)
+        self.assertFalse(
+            any(args[:2] == ["git", "push"] for args in commands),
+            f"mark_recertified must not invoke git push, got: {commands}",
         )
 
 
