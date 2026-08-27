@@ -35,6 +35,19 @@ sandbox, or worktree binding cannot be enforced, return unavailable results.
 Do not use `.codex/agents`, `~/.codex/agents`, copied prompts, symlinks, or
 project Codex configuration.
 
+The executable lifecycle boundary is `execute_lifecycle_panel()` (with the
+thin `run_panel()`, `review_panel()`, and `auto_panel()` entry points). Each
+entry point builds the plan, invokes the selected adapter, re-evaluates the
+returned results through the shared gate, and returns a non-passing result on
+any malformed adapter output. Lifecycle skills must call this boundary before
+section PASS annotation or certification; this module itself never writes
+`STATE.md`.
+
+For shell lifecycle entry points, `scripts/reviewer_panel.py` is the same
+closed-world gate: pass the exact phase scope and collected transport JSON;
+continue to annotation/certification only on exit 0. A non-zero exit is a
+visible fail-closed result.
+
 ## Result gate
 
 Use `normalize_reviewer_result()` and `evaluate_panel_gate()` before annotating

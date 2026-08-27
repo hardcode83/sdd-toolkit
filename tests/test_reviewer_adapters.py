@@ -62,6 +62,12 @@ class ReviewerAdapterTests(unittest.TestCase):
         self.assertEqual(len(fake.requests), 1)
         self.assertEqual(len(fake.requests[0]), len(self.plan))
 
+    def test_minimax_uses_the_same_claude_boundary(self):
+        fake = FakeClaude(self.payloads())
+        result = self.rp.dispatch_minimax_panel(self.plan, fake, "x", self.refs())
+        self.assertTrue(result.passed)
+        self.assertEqual(len(fake.requests), 1)
+
     def test_codex_spawns_waits_collects_and_binds_runtime_identity(self):
         fake = FakeCodex(self.payloads())
         result = self.rp.dispatch_codex_panel(self.plan, fake, "x", ROOT, self.refs())
@@ -80,6 +86,17 @@ class ReviewerAdapterTests(unittest.TestCase):
         payloads[0] = dict(payloads[0], reviewer_id="spoof")
         fake = FakeCodex(payloads)
         self.assertFalse(self.rp.dispatch_codex_panel(self.plan, fake, "x", ROOT, self.refs()).passed)
+
+    def test_codex_capability_or_wait_failure_is_unavailable(self):
+        class NoSandbox(FakeCodex):
+            def capabilities(self):
+                return {"parallel_spawn", "wait", "collection"}
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, NoSandbox(self.payloads()), "x", ROOT, self.refs()).passed)
+
+        class WaitFailure(FakeCodex):
+            def wait(self, handle):
+                raise RuntimeError("wait failed")
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, WaitFailure(self.payloads()), "x", ROOT, self.refs()).passed)
 
 
 if __name__ == "__main__":

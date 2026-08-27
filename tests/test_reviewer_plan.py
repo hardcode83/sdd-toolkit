@@ -51,6 +51,40 @@ class ReviewerPlanTests(unittest.TestCase):
         missing = self.rp.ReviewerDefinition("sdd-review-unknown", "project", "x", "body", "read-only")
         self.assertEqual(self.rp.evaluate_applicability(missing, "run", scope)[0], self.rp.Applicability.UNKNOWN)
 
+    def test_no_match_is_the_only_skippable_decision(self):
+        definition = self.rp.ReviewerDefinition("sdd-review-docs", "project", "docs", "body", "read-only", (), ("run",), ("docs/**",))
+        scope = {"files": ["src/a.py"]}
+        decision, _ = self.rp.evaluate_applicability(definition, "run", scope)
+        self.assertEqual(decision, self.rp.Applicability.NO_MATCH)
+        item = self.rp.ReviewerPlan(definition.reviewer_id, definition.source, definition.lens, definition,
+                                    decision, "excluded", "skipped", "run:x", scope)
+        self.assertFalse(item.required)
+
+    def test_match_and_unknown_project_reviewers_are_planned(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            (directory / "sdd-review-match.md").write_text("---\nname: sdd-review-match\nphases: run\napplies_to: src/**\n---\nbody", encoding="utf-8")
+            (directory / "sdd-review-unknown.md").write_text("---\nname: sdd-review-unknown\n---\nbody", encoding="utf-8")
+            plan = self.rp.build_reviewer_plan(root, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
+            project = {item.reviewer_id: item for item in plan[3:]}
+            self.assertEqual(project["sdd-review-match"].dispatch_status, "planned")
+            self.assertEqual(project["sdd-review-unknown"].dispatch_status, "planned")
+
+    def test_duplicate_and_unresolved_reviewers_make_gate_fail_without_suppressing_core(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            body = "---\nname: sdd-review-dup\nphases: run\napplies_to: src/**\n---\nbody"
+            (directory / "sdd-review-dup.md").write_text(body, encoding="utf-8")
+            (directory / "sdd-review-dup-copy.md").write_text(body.replace("sdd-review-dup", "sdd-review-dup"), encoding="utf-8")
+            (directory / "sdd-review-bad.md").write_text("not frontmatter", encoding="utf-8")
+            plan = self.rp.build_reviewer_plan(root, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
+            self.assertEqual([item.reviewer_id for item in plan[:3]], list(self.rp.MANDATORY_CORE))
+            self.assertFalse(self.rp.evaluate_panel_gate(plan, []).passed)
+
     def test_legacy_project_reviewer_body_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -73,6 +107,37 @@ class ReviewerPlanTests(unittest.TestCase):
         item = self.rp.ReviewerPlan("sdd-review-x", "project", "x", definition, self.rp.Applicability.MATCH, "match", "planned", "run:x", {"files": ["src/a.py"]})
         prompt = self.rp.build_reviewer_prompt(item, "x", {"requirements": "R1", "design": "D1", "steering": "read-only", "scope": "src/a.py"})
         self.assertIn("BEGIN UNTRUSTED PROJECT REVIEWER BODY", prompt)
+
+    def test_project_reviewer_matrix_and_fail_safe_normalization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            def write(name, header, body="body"):
+                (directory / name).write_text(f"---\n{header}\n---\n{body}\n", encoding="utf-8")
+            write("sdd-review-match.md", "name: sdd-review-match\nphases: run\napplies_to: src/**")
+            write("sdd-review-missing.md", "name: sdd-review-missing")
+            write("sdd-review-ambiguous.md", "name: sdd-review-ambiguous\nphases: run\nphases: review")
+            write("sdd-review-unsafe.md", "name: wrong-name")
+            match = self.rp.discover_project_reviewers(root)
+            by_id = {item.reviewer_id: item for item in match}
+            scope = {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]}
+            self.assertEqual(self.rp.evaluate_applicability(by_id["sdd-review-match"], "run", scope)[0], self.rp.Applicability.MATCH)
+            self.assertEqual(self.rp.evaluate_applicability(by_id["sdd-review-missing"], "run", scope)[0], self.rp.Applicability.UNKNOWN)
+            self.assertEqual(by_id["sdd-review-ambiguous"].lens, "unavailable")
+            self.assertEqual(by_id["sdd-review-unsafe"].lens, "unavailable")
+
+    def test_symlink_reviewer_is_unavailable_and_does_not_suppress_core(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            target = root / "outside.md"
+            target.write_text("---\nname: sdd-review-link\n---\nbody", encoding="utf-8")
+            (directory / "sdd-review-link.md").symlink_to(target)
+            plan = self.rp.build_reviewer_plan(root, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
+            self.assertEqual([item.reviewer_id for item in plan[:3]], list(self.rp.MANDATORY_CORE))
+            self.assertTrue(any(item.lens == "unavailable" for item in plan))
 
 
 if __name__ == "__main__":

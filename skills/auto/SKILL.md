@@ -21,6 +21,11 @@ logical plan and collected results; the receiving run/review path reconstructs
 and validates the `PanelResult` before accepting production sections or any
 certification command. Auto itself never calls `mark-recertified`.
 
+The executable auto call is `auto_panel(...)`; delegated handoffs carry its
+plan/results and are re-gated by the receiving run/review path.
+The shell-facing boundary is `scripts/reviewer_panel.py --phase auto`; auto
+must stop on a non-zero gate exit and never call `mark-recertified` itself.
+
 Arguments: `N` (number of roadmap entries to process; default 1) or a
 specific feature name. Only roadmap entries are eligible — auto NEVER
 invents scope.

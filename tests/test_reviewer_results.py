@@ -48,6 +48,39 @@ class ReviewerResultTests(unittest.TestCase):
         results[0].evidence = ["sdd/changes/other/secret.md"]
         self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
 
+    def test_failure_matrix_never_passes(self):
+        cases = (
+            ("malformed", None),
+            ("wrong scope", {"scope_id": "wrong"}),
+            ("wrong identity", {"reviewer_id": "spoof"}),
+            ("bad findings", {"findings": "not-list"}),
+            ("incomplete", {"status": "incomplete"}),
+            ("missing evidence", {"evidence": []}),
+            ("out of scope", {"evidence": ["src/other.py"]}),
+        )
+        for name, changes in cases:
+            with self.subTest(name=name):
+                payload = None if changes is None else self.payload(**changes)
+                with self.assertRaises((TypeError, ValueError)):
+                    self.rp.normalize_reviewer_result(payload, self.item)
+
+    def test_gate_rejects_malformed_typed_results_and_extra_identity(self):
+        plan = self.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
+        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"])
+                   for item in plan]
+        results[0].evidence = [None]
+        self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
+        results[0].evidence = ["src/a.py"]
+        results.append(self.rp.ReviewerResult("unexpected", "run:x", "PASS", [], ["src/a.py"]))
+        self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
+
+    def test_unavailable_failure_classes_are_distinct(self):
+        spawn = self.rp.synthesize_unavailable_result(self.item, "spawn failure")
+        transport = self.rp.synthesize_unavailable_result(self.item, "malformed transport result")
+        self.assertEqual(spawn.status, "unavailable")
+        self.assertEqual(transport.status, "unavailable")
+        self.assertNotEqual(spawn.reason, transport.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

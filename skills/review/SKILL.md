@@ -19,6 +19,11 @@ dispatch the selected plan through the runtime adapter, and require
 `evaluate_panel_gate()`/`PanelResult.passed` immediately before any
 `mark-local-verified`, `mark-ready`, or `mark-recertified` command.
 
+The executable feature-review call is `review_panel(...)`; certification is
+reachable only after its returned `PanelResult.passed` capability is true.
+The shell-facing boundary is `scripts/reviewer_panel.py --phase review`; a
+non-zero gate exit prevents all certification commands.
+
 Two modes:
 
 - `<feature>` — **change review**: verify the implementation of `sdd/changes/<feature>/` against its proposal.

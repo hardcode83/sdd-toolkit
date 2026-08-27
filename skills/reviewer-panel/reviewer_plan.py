@@ -147,6 +147,8 @@ def evaluate_applicability(definition: ReviewerDefinition, phase: str, scope: Ma
         return Applicability.UNKNOWN, "missing phases or applies_to metadata"
     if any(not isinstance(value, str) or not value for value in definition.phases + definition.applies_to):
         return Applicability.UNKNOWN, "ambiguous applicability metadata"
+    if any(value not in VALID_PHASES for value in definition.phases):
+        return Applicability.UNKNOWN, "unsupported applicability phase"
     if phase not in definition.phases:
         return Applicability.NO_MATCH, "phase definitively excluded"
     paths = scope.get("files")
@@ -187,17 +189,22 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
                               (str(path.relative_to(root)),), tuple(csv("phases")), tuple(csv("applies_to")), str(path))
 
 
+def normalize_project_reviewer(path: Path, root: Path) -> ReviewerDefinition:
+    """Normalize one legacy reviewer without allowing it to suppress others."""
+    try:
+        return _parse_project(path, root)
+    except (OSError, UnicodeError, ValueError):
+        return ReviewerDefinition(path.stem, "project", "unavailable", "", "",
+                                  (str(path),), (), (), str(path))
+
+
 def discover_project_reviewers(root: Path) -> tuple[ReviewerDefinition, ...]:
     result: list[ReviewerDefinition] = []
     directory = root / ".claude" / "agents"
     if not directory.is_dir():
         return ()
     for path in sorted(directory.glob("sdd-review-*.md")):
-        try:
-            result.append(_parse_project(path, root))
-        except (OSError, UnicodeError, ValueError) as exc:
-            result.append(ReviewerDefinition(path.stem, "project", "unavailable",
-                "", "", (str(path),), (), (), str(path)))
+        result.append(normalize_project_reviewer(path, root))
     return tuple(result)
 
 
@@ -285,6 +292,8 @@ def evaluate_panel_gate(plan: Iterable[ReviewerPlan], results: Iterable[Reviewer
         errors.append("duplicate collected reviewer result")
     if any(p.source == "core" and p.dispatch_status == "skipped" for p in items):
         errors.append("mandatory core reviewer cannot be skipped")
+    if any(p.dispatch_status == "skipped" and p.applicability != Applicability.NO_MATCH for p in items):
+        errors.append("only definitive NO MATCH reviewers may be skipped")
     for result in collected:
         item = required.get(result.reviewer_id)
         if item is None or result.scope_id != item.scope_id:
@@ -292,6 +301,15 @@ def evaluate_panel_gate(plan: Iterable[ReviewerPlan], results: Iterable[Reviewer
         elif result.status != "complete" or result.collection_status != "collected" or result.verdict != "PASS":
             errors.append(f"reviewer did not pass: {result.reviewer_id}")
         elif result.verdict == "PASS":
+            if not isinstance(result.findings, list) or not isinstance(result.evidence, list):
+                errors.append(f"reviewer result fields are malformed: {result.reviewer_id}")
+                continue
+            if any(not isinstance(e, str) or not e for e in result.evidence):
+                errors.append(f"reviewer evidence entries are malformed: {result.reviewer_id}")
+                continue
+            if any(not isinstance(f, (str, Mapping)) or not f for f in result.findings):
+                errors.append(f"reviewer finding entries are malformed: {result.reviewer_id}")
+                continue
             allowed = {str(path) for path in item.scope.get("files", ())}
             allowed.update(str(path) for path in item.scope.get("referents", ()))
             if not result.evidence or any(e not in allowed for e in result.evidence):
@@ -325,6 +343,12 @@ def dispatch_claude_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature: 
         except (TypeError, ValueError) as exc:
             results.append(synthesize_unavailable_result(item, str(exc)))
     return evaluate_panel_gate(items, results)
+
+
+def dispatch_minimax_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature: str,
+                           referents: Mapping[str, str] | None = None) -> PanelResult:
+    """Compatibility name: MiniMax-through-Claude has no separate route."""
+    return dispatch_claude_panel(plan, launcher, feature, referents)
 
 
 def dispatch_codex_panel(plan: Iterable[ReviewerPlan], runtime: Any, feature: str,
@@ -380,3 +404,39 @@ def dispatch_codex_panel(plan: Iterable[ReviewerPlan], runtime: Any, feature: st
     except Exception as exc:
         return PanelResult(items, [synthesize_unavailable_result(item, f"native Codex unavailable: {exc}") for item in items], "FAIL", [str(exc)])
     return evaluate_panel_gate(items, payloads)
+
+
+def execute_lifecycle_panel(phase: str, root: Path, feature: str,
+                            scope: Mapping[str, Any], adapter: Any, *,
+                            solo: bool = False, **adapter_kwargs: Any) -> PanelResult:
+    """Executable lifecycle boundary shared by run, review, and auto.
+
+    Lifecycle skills call this boundary before section annotation or
+    certification. The adapter is already selected by the runtime; this
+    function owns planning and the final closed-world gate, without persisting
+    state or introducing a provider abstraction.
+    """
+    if phase not in VALID_PHASES:
+        return PanelResult([], [], "FAIL", ["unsupported lifecycle phase"])
+    plan = build_reviewer_plan(root, phase, scope, solo=solo)
+    if solo:
+        return PanelResult(plan, [], "FAIL", ["solo bypass cannot produce panel PASS"])
+    try:
+        panel = adapter(plan, feature=feature, **adapter_kwargs)
+    except Exception as exc:
+        return PanelResult(plan, [], "FAIL", [f"panel adapter failed: {exc}"])
+    if not isinstance(panel, PanelResult):
+        return PanelResult(plan, [], "FAIL", ["panel adapter returned malformed panel"])
+    return evaluate_panel_gate(plan, panel.results)
+
+
+def run_panel(root: Path, feature: str, scope: Mapping[str, Any], adapter: Any, **kwargs: Any) -> PanelResult:
+    return execute_lifecycle_panel("run", root, feature, scope, adapter, **kwargs)
+
+
+def review_panel(root: Path, feature: str, scope: Mapping[str, Any], adapter: Any, **kwargs: Any) -> PanelResult:
+    return execute_lifecycle_panel("review", root, feature, scope, adapter, **kwargs)
+
+
+def auto_panel(root: Path, feature: str, scope: Mapping[str, Any], adapter: Any, **kwargs: Any) -> PanelResult:
+    return execute_lifecycle_panel("auto", root, feature, scope, adapter, **kwargs)

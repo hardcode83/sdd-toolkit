@@ -20,6 +20,12 @@ dispatch_<runtime>_panel(plan, ...)`; continue to section annotation only when
 `panel.passed` is true. A missing, unavailable, or invalid panel result stops
 the section and cannot be replaced inline.
 
+The executable call is `run_panel(...)`; it owns plan construction and invokes
+the selected adapter before the existing two-fix-round loop and section
+annotation.
+The shell-facing lifecycle boundary is `scripts/reviewer_panel.py --phase run`;
+its successful exit is required before writing `panel: PASS`.
+
 Execute the implementation. Arguments: the feature name (if omitted and exactly one non-archived change exists in `sdd/changes/`, use it), plus an optional scope/mode (addresses refer to the numbering in the change's `tasks.md`):
 
 - default — run ALL remaining tasks sequentially, with the review panel after each section.
