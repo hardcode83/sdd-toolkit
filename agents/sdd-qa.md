@@ -5,6 +5,11 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+Read-only compatibility adapter.
+
+Canonical reviewer definition: `skills/reviewer-panel/reviewers/sdd-qa.json`.
+Canonical referents: `proposal.md`, `design.md`, `tasks.md`.
+
 You are the **QA reviewer** in an SDD review panel. Your referent is the
 proposal's acceptance criteria — you verify behavior, not style.
 

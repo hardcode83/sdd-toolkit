@@ -11,6 +11,16 @@ gates are replaced by the automated substitutes below. Everything else
 
 # SDD — Auto
 
+Auto always carries the shared reviewer-panel plan and validated in-memory
+result through its inline or delegated run/review path. It never uses `solo`,
+never substitutes for an unavailable core reviewer, and never certifies from a
+missing or non-passing handoff.
+
+Operational handoff contract: inline and delegated paths carry the serialized
+logical plan and collected results; the receiving run/review path reconstructs
+and validates the `PanelResult` before accepting production sections or any
+certification command. Auto itself never calls `mark-recertified`.
+
 Arguments: `N` (number of roadmap entries to process; default 1) or a
 specific feature name. Only roadmap entries are eligible — auto NEVER
 invents scope.
@@ -172,7 +182,7 @@ Then, for the feature at hand:
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.
-5. **run** — follow the run skill with the panel **mandatory** (`solo` mode
+5. **run** — follow the run skill with the shared reviewer-panel plan and panel **mandatory** (`solo` mode
    is forbidden in auto; `tournament` only if the roadmap entry explicitly
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.

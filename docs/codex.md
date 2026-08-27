@@ -33,6 +33,16 @@ both the skills' file reads and the hook. Re-run it after every `codex plugin`
 update so the path tracks the new version. It is idempotent and refuses to
 clobber a pre-existing `[shell_environment_policy]` table.
 
+The installed `skills/reviewer-panel/` resource is self-contained: it contains
+the canonical core registry, shared planner/result gate, and native Codex
+dispatch instructions. Native Codex panels spawn architect, security, and QA
+reviewers in one parallel batch, bind handles to expected identities, wait and
+collect exactly one in-scope structured result per reviewer, and fail closed
+on unavailable or unverifiable results. No `~/.codex/agents`, copied prompts,
+symlinks, or project-local Codex configuration is needed. Existing
+`.claude/agents/sdd-review-*.md` files remain additive project reviewers for
+both runtimes, and MiniMax continues through the Claude route.
+
 Verified: with the block in place, `printenv CLAUDE_PLUGIN_ROOT` inside a Codex
 shell returns the installed root, `cat "${CLAUDE_PLUGIN_ROOT}/rules.md"`
 succeeds, and no PreToolUse hook error appears on Bash tool calls. Without it,
@@ -75,8 +85,8 @@ Claude Code.
 | `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven internal adapter tests (Python `unittest` in the toolkit checkout), and checked tasks only after verification. The Claude review panel was deliberately skipped. This does not prescribe a test runner to consumer projects. |
 | `archive` merge-gated path | Unverified | The former pre-merge basic path is obsolete. Shared skills now require `STATE.md` plus objective `gh` merge evidence before specs, roadmap, and archive writes. |
 | Roadmap graph (`scripts/sdd_roadmap.py`) | Expected to work, unverified | Python 3 stdlib and read-only, like `sdd-doctor.py`, so nothing Claude-specific is involved: `status`'s frontier/waves/critical-path views and the `SDD018`-`SDD023` checks are one subprocess call. Not exercised under Codex. |
-| `review`, `auto`, `diagram` | Unverified | Outside this experiment. |
-| Claude reviewer panel | Unsupported | Claude agent types and project `.claude/agents/` reviewers were not adapted. |
+| `review`, `auto`, `diagram` | `review` and `auto` supported through the shared fail-closed panel; `diagram` unchanged | Native Codex panel uses installed reviewer-panel resources. |
+| Claude reviewer panel | Supported | Existing Claude agent paths remain compatibility surfaces; the shared logical plan validates core parity and legacy project reviewers. |
 | Worktree isolation | Partially supported | `scripts/sdd_session.py` is Python 3 stdlib and works unchanged, so `check` / `policy` / `claim` / `resolve` / `orphans` all answer correctly. What is missing is the `EnterWorktree` tool: nothing can switch the session's working directory, so isolation is **manual** — `git worktree add .claude/worktrees/sdd+<feature> -b sdd/<feature>`, then run the phase from that directory and `claim` it from there so later phases can `resolve` it. Shared rule 10's branch guard in `run` still applies and still protects the merge evidence. |
 | `isolation: always` | Partially supported, as a handoff | The policy is read correctly (`sdd_session.py --root . policy`), and it must never be silently ignored. Since the session cannot enter the worktree, a phase that has to isolate **creates it, binds it (`claim <feature> --worktree <path>`) and stops**, telling the user to re-run the phase from that directory; under `/sdd:auto` that is a `BLOCKED.md` entry with the resume command. Continuing in the main clone would defeat the policy the project declared (ADR 0002 D5). |
 | Tournament mode | Unsupported | Claude Agent calls, model roles, and isolated-worktree tournament orchestration were not adapted. |
@@ -99,11 +109,11 @@ Claude Code.
   behavior for `CLAUDE.md`, `.claude/settings.json`, Claude reviewers, MCP/LSP
   suggestions, telemetry, and RTK. The validated Codex path explicitly declined
   all those extras.
-- Use `$run <feature> solo` for the validated path. Default `run` expects the
-  Claude architect/security/QA panel. Silent substitution with a different
-  review policy would change the methodology and is not part of this adapter.
-- Merge-gated archive interoperability has not yet been exercised end-to-end
-  under Codex; use Claude Code for this lifecycle until that validation exists.
+- Default `$run`, `$review`, and `$auto` use the shared architect/security/QA
+  panel. `$run <feature> solo` remains the explicit bypass and cannot record a
+  panel PASS. A missing or invalid reviewer result fails closed.
+- Merge-gated archive interoperability remains governed by the existing
+  lifecycle contract; archive still requires objective merged-PR evidence.
 - The local marketplace installation commands are documented from the Codex
   CLI contract, but global installation was intentionally not performed during
   the experiment.
@@ -155,8 +165,6 @@ remain readable by Claude Code.
 
 ## Readiness verdict
 
-The adapter is usable for controlled daily work with `status`, `new`, `design`,
-`tasks`, `history`, core-only `init`, and sequential `run ... solo`. It is not
-yet a full daily-use replacement for the Claude Code workflow when merge-gated
-archive, reviewer panels, tournament mode, telemetry, hooks, automatic mode,
-or init extras are required.
+The adapter is usable for controlled daily work with the shared reviewer panel
+through `run`, `review`, and `auto`; merge-gated archive, tournament mode,
+telemetry, hooks, and init extras retain their documented boundaries.

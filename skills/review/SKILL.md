@@ -8,6 +8,17 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Review
 
+The feature-scale panel uses the shared logical plan and result gate in
+`skills/reviewer-panel/`; runtime selection must not change reviewer coverage.
+For Codex, native child handles are bound to expected reviewer IDs and every
+child is waited for and collected under the read-only worktree boundary before
+the existing certification sequence can run.
+
+Operational gate: feature review must call `build_reviewer_plan()` once,
+dispatch the selected plan through the runtime adapter, and require
+`evaluate_panel_gate()`/`PanelResult.passed` immediately before any
+`mark-local-verified`, `mark-ready`, or `mark-recertified` command.
+
 Two modes:
 
 - `<feature>` — **change review**: verify the implementation of `sdd/changes/<feature>/` against its proposal.
@@ -84,7 +95,7 @@ reason. Then:
    - Always at feature scale regardless of annotations: the R# completeness matrix (met/partially/unmet with `file:line` — qa) and cumulative scope creep.
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).
 3. **Synthesize**: merge the three reports, dedupe, and drop any finding without a referent (R#, D#, or quoted steering rule). Present per requirement: **met / partially met / unmet** with `file:line` of implementation and test (from the QA report), then the surviving findings most severe first, then scope creep.
-4. If a panel agent type isn't available, do its dimension yourself inline (degraded but complete).
+4. Route the selected logical plan through the shared reviewer-panel boundary. An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
 4b. **When the verdict is FAIL, the fixes are not part of this phase — and they are
    not free either.** Review is report-only (see below), so fixing means leaving
    review and coming back. Two rules make that terminate, mirroring the fix loop

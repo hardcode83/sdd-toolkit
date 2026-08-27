@@ -8,6 +8,18 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Run
 
+For every non-`solo` panel, first build the shared logical plan from
+`skills/reviewer-panel/reviewer_plan.py`, then dispatch it through the runtime
+boundary described in `skills/reviewer-panel/SKILL.md`. The default Codex path
+uses native subagents; Claude and MiniMax use the compatibility boundary. A
+section may receive `panel: PASS` only after the closed-world result gate
+passes.
+
+Operational gate: `plan = build_reviewer_plan(...)`; `panel =
+dispatch_<runtime>_panel(plan, ...)`; continue to section annotation only when
+`panel.passed` is true. A missing, unavailable, or invalid panel result stops
+the section and cannot be replaced inline.
+
 Execute the implementation. Arguments: the feature name (if omitted and exactly one non-archived change exists in `sdd/changes/`, use it), plus an optional scope/mode (addresses refer to the numbering in the change's `tasks.md`):
 
 - default — run ALL remaining tasks sequentially, with the review panel after each section.
@@ -56,7 +68,7 @@ Execute the implementation. Arguments: the feature name (if omitted and exactly 
    - **Referent filter**: discard any finding that doesn't cite its referent (R#, design decision D#, or a quoted steering rule) — the agents are instructed this way, enforce it when synthesizing.
    - Fix the accepted findings, then re-run **only the reviewer(s) whose findings you fixed**, scoped to the fix. Maximum 2 fix rounds per section; if findings persist after that, stop and present them to the user.
    - A `DESIGN-CONFLICT` from the architect is not a code fix — it goes through the deviation rule (step 4).
-   - If a reviewer agent type isn't available, say so and continue with the rest — a degraded panel beats a blocked run.
+   - If a reviewer cannot be resolved, spawned, waited on, or collected, record an explicit unavailable result. The shared reviewer-panel gate fails closed; do not substitute an inline reviewer for a missing mandatory or applicable reviewer.
    - **Persist the verdict**: when the section ends in PASS, annotate its heading in `tasks.md` with an HTML comment — `## 2. <título> <!-- panel: PASS 2026-07-17 -->` (invisible in rendered markdown). This is what lets `/sdd:review` be incremental instead of re-auditing everything.
 4. **On deviation:** if implementation reveals the design or a requirement is wrong, STOP. Explain the conflict, agree the fix with the user, update `proposal.md`/`design.md`/`tasks.md` to match reality, then continue. Never silently diverge from the spec — the documents must stay true.
 5. **On blockers** (failing environment, missing credentials, ambiguous requirement): stop and ask rather than guessing around it. Whatever remains unresolved when the turn ends — including a panel that couldn't run or complete (usage limits, unavailable agents) — goes to `BLOCKED.md` per shared rule 5, with the exact resume command (an interrupted section panel is best resumed as `/sdd:review <feature>`, which covers everything at feature scale).
