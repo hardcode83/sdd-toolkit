@@ -12,7 +12,8 @@ class FakeClaude:
 
     def launch_batch(self, requests):
         self.requests.append(requests)
-        return [{"invocation_id": f"agent-{i}", "reviewer_id": payload["reviewer_id"], "payload": payload}
+        return [{"invocation_id": f"agent-{i}", "planned_reviewer_id": payload["reviewer_id"],
+                 "reviewer_id": payload["reviewer_id"], "payload": payload}
                 for i, payload in enumerate(self.payloads)]
 
 
@@ -55,7 +56,8 @@ class ReviewerAdapterTests(unittest.TestCase):
         class DuplicateHandle(FakeClaude):
             def launch_batch(self, requests):
                 self.requests.append(requests)
-                return [{"invocation_id": "same", "reviewer_id": payload["reviewer_id"], "payload": payload}
+                return [{"invocation_id": "same", "planned_reviewer_id": payload["reviewer_id"],
+                         "reviewer_id": payload["reviewer_id"], "payload": payload}
                         for payload in self.payloads]
         self.assertFalse(self.rp.dispatch_claude_panel(self.plan, DuplicateHandle(self.payloads()), "x", self.refs()).passed)
 

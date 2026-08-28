@@ -334,7 +334,8 @@ def dispatch_claude_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature: 
     """Dispatch through a supplied Claude launcher in one parallel batch.
 
     The launcher must return invocation envelopes in any order:
-    ``{"invocation_id": ..., "reviewer_id": <trusted>, "payload": ...}``.
+    ``{"invocation_id": ..., "planned_reviewer_id": <trusted>,
+    "reviewer_id": <self-declared>, "payload": ...}``.
     Positional responses are rejected; the reviewer ID in the envelope is the
     harness association and the payload's self-declared ID is still validated.
     """
@@ -350,7 +351,7 @@ def dispatch_claude_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature: 
     associations: dict[str, Mapping[str, Any]] = {}
     invocation_ids: set[str] = set()
     for entry in payloads:
-        identity = entry.get("reviewer_id")
+        identity = entry.get("planned_reviewer_id")
         if (not isinstance(identity, str) or not identity or identity in associations
                 or not entry.get("invocation_id") or entry.get("invocation_id") in invocation_ids
                 or "payload" not in entry):
