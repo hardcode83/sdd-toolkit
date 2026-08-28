@@ -11,6 +11,21 @@ gates are replaced by the automated substitutes below. Everything else
 
 # SDD — Auto
 
+Auto always carries the shared reviewer-panel plan and validated in-memory
+result through its inline or delegated run/review path. It never uses `solo`,
+never substitutes for an unavailable core reviewer, and never certifies from a
+missing or non-passing handoff.
+
+Operational handoff contract: inline and delegated paths carry the serialized
+logical plan and collected results; the receiving run/review path reconstructs
+and validates the `PanelResult` before accepting production sections or any
+certification command. Auto itself never calls `mark-recertified`.
+
+The executable auto call is `auto_panel(...)`; delegated handoffs carry its
+plan/results and are re-gated by the receiving run/review path.
+The shell-facing boundary is `scripts/reviewer_panel.py --phase auto`; auto
+must stop on a non-zero gate exit and never call `mark-recertified` itself.
+
 Arguments: `N` (number of roadmap entries to process; default 1) or a
 specific feature name. Only roadmap entries are eligible — auto NEVER
 invents scope.
@@ -37,7 +52,7 @@ invents scope.
    an entry that does not exist) aborts the run: auto must not pick an order out
    of a graph that is known to be wrong.
 3. `sdd/steering/` has at least `architecture.md` or `security.md` or
-   `testing.md`. With no steering, the panel (the only reviewer in auto) has
+   `testing.md`. With no steering, the full mandatory reviewer panel in auto has
    weak referents: **do not ask for confirmation** — the user pre-authorized
    this run. Proceed and state the weakness prominently in the final report,
    as the first thing to fix before the next run.
@@ -172,7 +187,7 @@ Then, for the feature at hand:
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.
-5. **run** — follow the run skill with the panel **mandatory** (`solo` mode
+5. **run** — follow the run skill with the shared reviewer-panel plan and panel **mandatory** (`solo` mode
    is forbidden in auto; `tournament` only if the roadmap entry explicitly
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.

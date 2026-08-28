@@ -13,6 +13,7 @@ from validate_toolkit import (  # noqa: E402
     validate_codex_manifests,
     validate_manifests,
     validate_project_boundary,
+    validate_reviewer_panel,
     validate_skills,
 )
 
@@ -26,6 +27,9 @@ class ToolkitStructureTests(unittest.TestCase):
 
     def test_plugin_and_consumer_assets_have_an_explicit_boundary(self) -> None:
         self.assertEqual([], validate_project_boundary())
+
+    def test_claude_adapters_match_canonical_registry(self) -> None:
+        self.assertEqual([], validate_reviewer_panel())
 
     def test_codex_adapter_version_must_track_the_plugin_it_adapts(self) -> None:
         """The adapter exposes these skills, so it cannot announce another release."""

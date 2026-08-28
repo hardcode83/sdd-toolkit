@@ -151,6 +151,48 @@ def validate_codex_manifests(root: Path, plugin_version: object) -> list[str]:
     return errors
 
 
+def validate_reviewer_panel(root: Path = ROOT) -> list[str]:
+    """Validate the single registry and its two runtime representations."""
+    errors: list[str] = []
+    registry = root / "skills" / "reviewer-panel" / "reviewers"
+    module = root / "skills" / "reviewer-panel" / "reviewer_plan.py"
+    skill = root / "skills" / "reviewer-panel" / "SKILL.md"
+    if not module.is_file() or not skill.is_file():
+        return ["skills/reviewer-panel: registry adapter resources are incomplete"]
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sdd_reviewer_plan", module)
+        if spec is None or spec.loader is None:
+            raise ValueError("cannot load reviewer_plan.py")
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = loaded
+        spec.loader.exec_module(loaded)
+        definitions = loaded.load_registry(registry)
+    except Exception as error:  # validator reports a deterministic contract error
+        return [f"skills/reviewer-panel: invalid registry: {error}"]
+    expected = {definition.reviewer_id for definition in definitions}
+    runtime_ids = sorted(path.stem for path in (root / "agents").glob("sdd-*.md"))
+    if set(runtime_ids) != expected:
+        errors.append("agents: Claude reviewer representations do not match the registry exactly")
+    for reviewer_id in expected:
+        path = root / "agents" / f"{reviewer_id}.md"
+        if not path.is_file():
+            errors.append(f"agents/{reviewer_id}.md: missing Claude compatibility adapter")
+            continue
+        content = path.read_text(encoding="utf-8")
+        definition = next(d for d in definitions if d.reviewer_id == reviewer_id)
+        lens_marker = definition.lens.lower()
+        criteria_marker = f"Canonical criteria: {definition.criteria}"
+        if (f"name: {reviewer_id}" not in content or "Read-only" not in content
+                or lens_marker not in content.lower()
+                or criteria_marker not in content
+                or not all(reference.split("/")[-1] in content for reference in definition.referents[:3])):
+            errors.append(f"agents/{reviewer_id}.md: identity/read-only contract drift")
+    if not (root / "skills" / "reviewer-panel" / "reviewers").is_dir():
+        errors.append("skills/reviewer-panel/reviewers: packaged registry is missing")
+    return errors
+
+
 def parse_frontmatter(
     path: Path, root: Path, errors: list[str]
 ) -> dict[str, str]:
@@ -407,6 +449,7 @@ VALIDATORS = {
     "manifests": validate_manifests,
     "skills": validate_skills,
     "fixtures": fixture_contract_errors,
+    "reviewer-panel": validate_reviewer_panel,
 }
 
 

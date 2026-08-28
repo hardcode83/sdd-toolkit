@@ -1,0 +1,10 @@
+{
+  "id": "sdd-security",
+  "source": "core",
+  "lens": "security",
+  "criteria": "Check objective security risks, trust boundaries, and the enforced read-only reviewer contract.",
+  "read_only": "Read-only: inspect files and history; never edit, commit, or run lifecycle state-changing commands.",
+  "referents": ["proposal.md", "design.md", "tasks.md", "sdd/steering/security.md"],
+  "phases": ["run", "review", "auto"],
+  "applies_to": ["**/*"]
+}

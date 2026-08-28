@@ -1,0 +1,10 @@
+{
+  "id": "sdd-qa",
+  "source": "core",
+  "lens": "qa",
+  "criteria": "Verify every applicable acceptance criterion and its tests, including failure and boundary cases.",
+  "read_only": "Read-only: inspect files and history; never edit, commit, or run lifecycle state-changing commands.",
+  "referents": ["proposal.md", "design.md", "tasks.md", "sdd/steering/testing.md"],
+  "phases": ["run", "review", "auto"],
+  "applies_to": ["**/*"]
+}

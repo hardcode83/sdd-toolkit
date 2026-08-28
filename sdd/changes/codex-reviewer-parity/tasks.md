@@ -1,0 +1,94 @@
+# Tasks: codex-reviewer-parity
+
+Implementation is dependency-ordered. The reviewer plan and result contracts
+remain in memory; only the existing lifecycle commands may write certification
+state. No task introduces telemetry, cost-routing, a provider framework, a new
+lifecycle state, or work for `sdd-toolkit-0330-lifecycle-integrity`.
+
+## Formal design correction — 2026-08-28
+
+The original direct-executable Codex spawn assumption is invalid: plugin
+Python and shell cannot call the top-level native `spawn_agent`/`wait_agent`
+tools. The remaining tasks therefore use the corrected boundary:
+
+```text
+Skill instructions -> top-level Codex harness native subagents
+                   -> deterministic planner/result validator
+                   -> mechanical lifecycle certification gate
+```
+
+The harness owns spawn, parallelism, trusted handle binding, wait and raw
+collection. The plugin owns plan generation and deterministic validation. No
+model or harness assertion may authorize certification; only validated
+`PanelResult` evidence can do so. Tasks 6.1–6.3, 7.1–9.2 and 11.3 are
+harness-handoff/certification-boundary tasks, not direct Python API tasks.
+App Server is explicitly out of scope.
+
+## 1. Canonical reviewer registry
+
+- [x] 1.1 Add the packaged canonical `ReviewerDefinition` resources under `skills/reviewer-panel/reviewers/`, with exactly one definition for `sdd-architect`, `sdd-security`, and `sdd-qa`, including stable identity, lens, criteria, read-only contract, referent inputs, and optional `phases`/`applies_to` metadata; runtime files reference these definitions and contain no independently maintained methodology copy — files: `skills/reviewer-panel/reviewers/` — verify each definition is present once and has all required fields [R1, R2, R4] (D1)
+- [x] 1.2 Implement the registry loader in `skills/reviewer-panel/reviewer_plan.py` and its fixed mandatory-core invariant, rejecting missing, duplicate, renamed, malformed, or unsafe core definitions before a panel can be planned — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_plan.py` — verify invalid registries produce an explicit non-passing error and a valid registry exposes exactly the three required core IDs [R1, R2, R5, R6] (D1, D6)
+- [x] 1.3 Define the in-memory `ReviewerDefinition`, `ReviewerPlan`, `ReviewerResult`, and `PanelResult` shapes in `skills/reviewer-panel/reviewer_plan.py`, including source, lens, applicability, dispatch/collection status, scope, findings, evidence, and derived gate decision without persistence fields — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_plan.py` — verify serialized test values contain the required fields and no normalizer writes `STATE.md` or adds a lifecycle schema [R2, R5] (D4, D6)
+
+## 2. Shared plan construction and scope
+
+- [x] 2.1 Build `build_reviewer_plan()` in `skills/reviewer-panel/reviewer_plan.py`; it starts with all mandatory core reviewers, adds normalized project reviewers, assigns unique stable IDs and exact review scope, and returns the same plan input for Claude and Codex — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_plan.py` — verify equivalent run, review, and auto inputs produce identical ordered logical plans before runtime calls [R1, R2, R6] (D4, D9)
+- [x] 2.2 Preserve the existing `solo` distinction in planning: default run plans the panel, while `solo` produces no reviewer invocations and cannot produce `panel: PASS` — files: `skills/run/SKILL.md`, shared planner, tests under `tests/` — verify captured default and solo plans have the required reviewer/no-reviewer behavior and the solo path has no pass capability [R1, R5, R6] (D7, D9)
+- [x] 2.3 Implement `build_reviewer_prompt()` in `skills/reviewer-panel/reviewer_plan.py`, binding prompts/plans to the feature, requirements, design decisions, applicable steering referents, and requested run/review scope — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_plan.py` — verify every generated invocation request carries the exact scope and required referent set, with no scope widening [R1, R2, R5] (D3, D4, D6)
+
+## 3. Project reviewer discovery and applicability
+
+- [x] 3.1 Implement `discover_project_reviewers()` in `skills/reviewer-panel/reviewer_plan.py` for repository-local regular files matching `.claude/agents/sdd-review-*.md`; preserve the full Markdown body as the project reviewer’s canonical criteria/context, parse `name` and documented metadata, and wrap it with the canonical identity/read-only contract for Codex without copying it into the plugin — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_plan.py`, `tests/fixtures/project-reviewers/` — verify legacy filename/name-compatible reviewers appear in both provider plans and retain their body criteria [R1, R2, R3, R4, R6] (D1, D2, D8, D9)
+- [x] 3.2 Implement `evaluate_applicability()` in `skills/reviewer-panel/reviewer_plan.py` using the existing `phases`/`applies_to` glob contract; explicitly support the lifecycle phase names `run`, `review`, and `auto` in the shared contract, classify definitive exclusion as `NO MATCH`, valid inclusion as `MATCH`, and missing, ambiguous, malformed, unsupported, or unevaluable metadata as `UNKNOWN` — files: `skills/reviewer-panel/reviewer_plan.py`, `references/steering.md`, `tests/test_reviewer_plan.py`, `tests/fixtures/project-reviewers/` — verify MATCH and UNKNOWN are runnable, only definitive NO MATCH is skippable, and every decision/reason is retained in the plan [R1, R4, R6] (D4, D5, D9)
+- [x] 3.3 Add fail-safe handling in `normalize_project_reviewer()` for malformed definitions, duplicate IDs, unsafe paths/symlinks, unresolved files, filename/name mismatch, unsupported frontmatter, or out-of-boundary files; these become unavailable non-passing items and cannot suppress core or other project reviewers — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/fixtures/project-reviewers/`, `tests/test_reviewer_plan.py` — verify each invalid fixture retains unaffected reviewers and makes panel acceptance impossible [R1, R4, R5, R6] (D4, D5, D6)
+
+## 4. Structured result collection and gate
+
+- [x] 4.1 Implement `normalize_reviewer_result()` in `skills/reviewer-panel/reviewer_plan.py` for exactly one complete result per planned reviewer that runs, requiring non-empty `reviewer_id`, matching `scope_id`, `PASS`/`FAIL` verdict, list-valued findings/evidence, and complete status; require a finding for FAIL and verifiable in-scope evidence for PASS — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_results.py` — verify valid PASS/FAIL payloads are accepted only with identity, scope, field types, finding, and evidence requirements satisfied [R2, R5, R6] (D6)
+- [x] 4.2 Implement `synthesize_unavailable_result()` for spawn failure, missing response, timeout, interruption, malformed/incomplete response, duplicate/unknown/spoofed identity, identity mismatch, missing evidence, and out-of-scope results; each failed plan item receives one explicit unavailable/non-passing result — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_results.py`, `tests/fixtures/reviewer-results/` — verify every failure class yields a non-passing `PanelResult` and never yields approval evidence or lifecycle advancement [R1, R4, R5, R6] (D6)
+- [x] 4.3 Implement `evaluate_panel_gate()` in `skills/reviewer-panel/reviewer_plan.py`: PASS requires the core invariant, zero unavailable/non-passing required items, one valid PASS for every mandatory/applicable run item, and only definitive-NO-MATCH skipped items — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_results.py` — verify missing, extra, duplicate, unavailable, or non-passing results cannot satisfy the gate and a complete all-PASS set can [R1, R5, R6] (D1, D6)
+
+## 5. Claude compatibility adapter
+
+- [x] 5.1 Align or mechanically generate/validate `agents/sdd-architect.md`, `agents/sdd-security.md`, and `agents/sdd-qa.md` as Claude-shaped adapters of the canonical registry while preserving their paths, names, read-only behavior, and MiniMax-through-Claude compatibility — files: the three `agents/sdd-*.md` files, `scripts/validate_toolkit.py`, `tests/test_reviewer_adapters.py` — verify each registry role has exactly one matching Claude representation and semantic drift, missing, duplicate, or renamed representations fail validation [R1, R2, R3, R6] (D2, D8, D9)
+- [x] 5.2 Implement the single `dispatch_claude_panel()` boundary in `skills/reviewer-panel/SKILL.md` (using `reviewer_plan.py`) and route `run`, `review`, and `auto` to it; preserve parallel launch, wait/collection, additive legacy project reviewers, and the existing read-only reviewer contract — files: `skills/reviewer-panel/SKILL.md`, `skills/run/SKILL.md`, `skills/review/SKILL.md`, `skills/auto/SKILL.md`, `tests/test_reviewer_adapters.py` — verify a fake Claude launcher receives exactly the selected plan in one parallel batch, a captured MiniMax-through-Claude route uses the same boundary, and unavailable or invalid output blocks PASS [R1, R2, R4, R5, R6] (D2, D4, D6, D7, D9)
+
+## 6. Native Codex adapter
+
+- [x] 6.1 Rework the Codex panel boundary in `skills/reviewer-panel/SKILL.md` as a top-level harness handoff: generate native subagent instructions from `reviewer_plan.py`, with one read-only child bound to the current feature worktree per selected reviewer — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify the harness receives identity, lens, scope, referents, sandbox/read-only boundary, and worktree binding without requiring `~/.codex/agents` or project Codex configuration [R2, R3, R5] (D1, corrected D3, D8)
+- [x] 6.2 Define and test the top-level harness handoff for one parallel native spawn batch, trusted handle-to-plan-item binding, wait on every handle, and exactly-one-per-plan structured collection — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify captured harness results prove parallel spawn, all waits, exact result cardinality, rejection of extras/misrouting, and preserved reviewer IDs [R1, R3, R5, R6] (corrected D3, D4, D6, D9)
+- [x] 6.3 Enforce native child permissions: read-only filesystem, feature-worktree root restriction, no lifecycle commands, no network/external mutation unless explicitly allowed, and pre/post mutation checks; fail visibly before certification when any capability is unavailable — files: `skills/reviewer-panel/SKILL.md`, `tests/test_codex_adapter.py`, `tests/fixtures/reviewer-results/` — verify attempted writes outside the worktree or to lifecycle state are blocked, capability failure is unavailable/non-passing, and the opt-in smoke path observes no repository mutation [R3, R5, R6] (D3, D6, D9)
+
+## 7. `/sdd:run` integration
+
+- [x] 7.1 Update the run flow to plan once and execute the selected panel in parallel after each completed production-code section unless `solo`, waiting and validating before accepting the section — files: `skills/run/SKILL.md`, shared dispatch call site, tests under `tests/` — verify default run records `panel: PASS` only after a validated panel result and retains the existing two-fix-round limit [R1, R3, R5, R6] (D4, D6, D7, D9)
+- [x] 7.2 Make unavailable core or applicable project reviewers block run-section acceptance and prevent inline substitution, while keeping `solo` an explicit bypass with no panel PASS — files: `skills/run/SKILL.md`, run contract tests/fixtures under `tests/` — verify failure cases do not annotate a passing section and solo invokes no reviewer [R1, R4, R5, R6] (D5, D6, D7)
+
+## 8. `/sdd:review` and certification gate integration
+
+- [x] 8.1 Apply the shared plan/result gate to feature-scale review, including incremental section annotations, cumulative R# coverage, cross-section interactions, and the exact change/drift scope rules — files: `skills/review/SKILL.md`, shared dispatch call site, tests under `tests/` — verify captured review plans cover both incremental and cumulative requirements without omitting selected reviewers [R1, R2, R5, R6] (D4, D6, D7, D9)
+- [x] 8.2 Keep the existing `ACTIVE`/`LOCAL_VERIFIED` certification sequence (`mark-local-verified`, `mark-ready --base`, `validate-ship`) behind the validated in-memory PASS capability only — files: `skills/review/SKILL.md`, review/lifecycle contract tests under `tests/` — verify a non-passing panel cannot invoke certification and a passing panel preserves the existing commands and schema-1 state semantics [R5, R6] (D6, D7)
+- [x] 8.3 Preserve `PR_OPEN` review of exactly `implementation_sha..HEAD`, pushed-HEAD/branch guards, `mark-recertified`, and `validate-ship`, with no push performed by review — files: `skills/review/SKILL.md`, `sdd/specs/ship-and-review-contract.md` (cross-reference only), tests under `tests/` — verify anchored PASS follows the existing recertification sequence and failure leaves lifecycle state/evidence unchanged [R5, R6] (D6, D7)
+
+## 9. `/sdd:auto` integration
+
+- [x] 9.1 Require the shared panel plan and result gate in default auto's inline and delegated run/review pipelines, with no solo substitute and the handoff carrying plan/result data — files: `skills/auto/SKILL.md`, shared dispatch/handoff implementation, tests under `tests/` — verify auto executes core plus applicable project reviewers and rejects missing/non-passing handoff results [R1, R3, R4, R5, R6] (D4, D6, D7, D9)
+- [x] 9.2 Preserve auto's change/drift scope, anchored `PR_OPEN` delegation to `/sdd:review`, prohibition on auto calling `mark-recertified`, and stop-before-archive behavior — files: `skills/auto/SKILL.md`, auto contract tests under `tests/` — verify each state/path dispatches the shared plan and does not introduce a separate lifecycle or certification flow [R5, R6] (D7)
+
+## 10. Packaging and maintained documentation
+
+- [x] 10.1 Package `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, and `skills/reviewer-panel/reviewers/` through the existing Codex `skills: "./skills/"` surface; update `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` together only if manifest changes are required, and keep versions aligned — files: `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `skills/reviewer-panel/`, `scripts/validate_toolkit.py` — verify a clean installed plugin tree contains every required adapter/registry resource and both manifests remain valid and aligned [R2, R3, R6] (D1, D8)
+- [x] 10.2 Extend packaging/boundary checks to prove the installed Codex adapter is self-contained, does not depend on consumer `.claude/agents` copies, `~/.codex/agents`, or manual `~/.codex/config.toml` edits, and does not package consumer project reviewers or toolkit tests into projects — files: `scripts/validate_toolkit.py`, `tests/test_toolkit_validation.py`, `tests/fixtures/` — verify positive package-tree, stale/mixed-version, unexpected-resource-root, and forbidden-dependency cases deterministically [R3, R6] (D3, D8, D9)
+- [x] 10.3 Document Codex native reviewer support, installation/resource behavior, Claude and MiniMax compatibility, legacy project-reviewer compatibility, and the shared fail-closed panel contract — files: `docs/codex.md` — verify documentation no longer describes supported reviewer panels as unsupported and names the required compatibility guarantees [R1, R3, R4, R5] (D2, D3, D5, D8)
+
+## 11. Verification and traceability
+
+- [x] 11.1 Add mechanically derived parity tests that load the registry and compare Claude/Codex logical sets and captured requests for default/solo run, review change/drift, and each applicable auto state — files: `tests/` — verify expected IDs are derived from registry definitions rather than duplicated in test code, with exact parallel-batch, wait, and no-extra assertions [R1, R2, R6] (D4, D9)
+- [x] 11.2 Complete explicit fixtures and assertions for core-role non-skipping, MATCH/UNKNOWN/NO MATCH, legacy reviewers, malformed/duplicate/unsafe definitions, valid PASS/FAIL, all collection failures, out-of-scope results, read-only failure behavior, and lifecycle non-advancement — files: `tests/fixtures/`, `tests/` — verify every R1–R6 acceptance boundary has a trigger and objective expected outcome [R1, R3, R4, R5, R6] (D1, D5, D6, D9)
+- [x] 11.3 Add the opt-in native Codex smoke test for parallel spawn, wait, role identity, result collection, sandbox/worktree binding, and unchanged repository state; skip it unless explicitly enabled/configured and never require paid model execution in CI — files: `tests/` — verify the disabled path is deterministic and the enabled path checks all native capabilities [R3, R6] (D3, D9)
+- [x] 11.4 Run the repository-owned validation commands after implementation and report their results: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`; `python3 scripts/validate_toolkit.py all`; `python3 scripts/validate_toolkit.py manifests`; `python3 scripts/validate_toolkit.py skills`; `python3 scripts/validate_toolkit.py boundary`; `python3 scripts/validate_toolkit.py fixtures` — files: implementation/test changes only; no generated lifecycle or metrics artifacts — verify all required commands pass, or identify the exact failing command and cause before claiming completion [R1, R2, R3, R4, R5, R6] (D8, D9)
+
+## 12. Provider-parity corrections
+
+- [x] 12.1 Wrap legacy project reviewer bodies beneath the toolkit-owned reviewer policy for both Claude and Codex; project content may contribute only its lens/domain rules and cannot redefine identity, scope, tools, lifecycle behavior, network behavior, or result/evidence requirements — files: `skills/reviewer-panel/reviewer_plan.py`, `skills/reviewer-panel/SKILL.md`, `skills/run/SKILL.md`, `skills/review/SKILL.md`, `skills/auto/SKILL.md`, `tests/` — verify body/frontmatter authority attempts remain untrusted while legacy reviewers remain additive and compatible [R1, R2, R3, R4, R5, R6] (D2, D3, D4)
+- [x] 12.2 Replace Claude positional result association with trusted Agent invocation association where available; accept reordered associated responses, and fail closed for missing association, duplicate, unexpected, self-spoofed, or partial results while preserving Codex native handle association — files: `skills/reviewer-panel/reviewer_plan.py`, `tests/test_reviewer_adapters.py`, `tests/test_reviewer_parity.py` — verify provider-neutral identity mapping never relies on response order [R1, R2, R5, R6] (D3, D4, D6, D9)

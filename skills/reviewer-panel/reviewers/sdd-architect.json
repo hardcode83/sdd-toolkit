@@ -1,0 +1,10 @@
+{
+  "id": "sdd-architect",
+  "source": "core",
+  "lens": "architecture",
+  "criteria": "Verify the implementation against the approved design and architecture steering.",
+  "read_only": "Read-only: inspect files and history; never edit, commit, or run lifecycle state-changing commands.",
+  "referents": ["proposal.md", "design.md", "tasks.md", "sdd/steering/architecture.md"],
+  "phases": ["run", "review", "auto"],
+  "applies_to": ["**/*"]
+}
