@@ -15,32 +15,6 @@ class FakeClaude:
         return self.payloads
 
 
-class FakeCodex:
-    def __init__(self, payloads, mutate=False):
-        self.payloads, self.mutate = payloads, mutate
-        self.requests, self.waited, self.collected = [], [], []
-
-    def snapshot(self, worktree):
-        return "mutated" if self.mutate and self.collected else "clean"
-
-    def worktree_root(self):
-        return ROOT
-
-    def capabilities(self):
-        return {"parallel_spawn", "wait", "collection", "read_only", "worktree_binding", "no_lifecycle_commands", "no_network"}
-
-    def spawn_batch(self, requests):
-        self.requests.append(requests)
-        return [(f"h{i}", request["reviewer_id"]) for i, request in enumerate(requests)]
-
-    def wait(self, handle):
-        self.waited.append(handle)
-
-    def collect(self, handle):
-        self.collected.append(handle)
-        return self.payloads[int(handle[1:])]
-
-
 class ReviewerAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -68,35 +42,46 @@ class ReviewerAdapterTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(len(fake.requests), 1)
 
-    def test_codex_spawns_waits_collects_and_binds_runtime_identity(self):
-        fake = FakeCodex(self.payloads())
-        result = self.rp.dispatch_codex_panel(self.plan, fake, "x", ROOT, self.refs())
+    def codex_handoff(self, payloads=None):
+        handoff = self.rp.build_codex_handoff(self.plan, "x", ROOT, self.refs())
+        payloads = payloads or self.payloads()
+        handoff["bindings"] = {f"h{i}": item.reviewer_id for i, item in enumerate(self.plan)}
+        handoff["waited"] = list(handoff["bindings"])
+        handoff["results"] = [{"handle": f"h{i}", "payload": payload} for i, payload in enumerate(payloads)]
+        return handoff
+
+    def test_codex_handoff_is_prepared_without_runtime_spawn(self):
+        handoff = self.rp.build_codex_handoff(self.plan, "x", ROOT, self.refs())
+        self.assertTrue(handoff["parallel"])
+        self.assertEqual(handoff["expected"], [item.reviewer_id for item in self.plan])
+        self.assertNotIn("spawn_batch", self.rp.build_codex_handoff.__code__.co_names)
+
+    def test_codex_handoff_validates_trusted_bindings_and_collection(self):
+        result = self.rp.dispatch_codex_panel(self.plan, self.codex_handoff(), "x", ROOT, self.refs(), baseline="clean", final_snapshot="clean")
         self.assertTrue(result.passed)
-        self.assertEqual(len(fake.requests), 1)
-        self.assertEqual(len(fake.waited), len(self.plan))
-        self.assertEqual(len(fake.collected), len(self.plan))
-        self.assertTrue(all(request["sandbox"] == "read-only" for request in fake.requests[0]))
+        self.assertTrue(all(request["sandbox"] == "read-only" for request in self.rp.build_codex_handoff(self.plan, "x", ROOT, self.refs())["requests"]))
 
     def test_codex_mutation_fails_closed(self):
-        fake = FakeCodex(self.payloads(), mutate=True)
-        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, fake, "x", ROOT, self.refs()).passed)
+        handoff = self.codex_handoff()
+        self.assertFalse(self.rp.validate_codex_handoff(self.plan, handoff, worktree=ROOT, baseline="a", final_snapshot="b").passed)
 
     def test_codex_self_report_cannot_route_a_result(self):
         payloads = self.payloads()
         payloads[0] = dict(payloads[0], reviewer_id="spoof")
-        fake = FakeCodex(payloads)
-        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, fake, "x", ROOT, self.refs()).passed)
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, self.codex_handoff(payloads), "x", ROOT, self.refs(), baseline="clean", final_snapshot="clean").passed)
 
-    def test_codex_capability_or_wait_failure_is_unavailable(self):
-        class NoSandbox(FakeCodex):
-            def capabilities(self):
-                return {"parallel_spawn", "wait", "collection"}
-        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, NoSandbox(self.payloads()), "x", ROOT, self.refs()).passed)
+    def test_codex_incomplete_collection_is_unavailable(self):
+        handoff = self.codex_handoff()
+        handoff["results"] = handoff["results"][:-1]
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, handoff, "x", ROOT, self.refs(), baseline="clean", final_snapshot="clean").passed)
 
-        class WaitFailure(FakeCodex):
-            def wait(self, handle):
-                raise RuntimeError("wait failed")
-        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, WaitFailure(self.payloads()), "x", ROOT, self.refs()).passed)
+    def test_codex_requires_all_waits_and_rejects_extra_handles(self):
+        handoff = self.codex_handoff()
+        handoff["waited"] = handoff["waited"][:-1]
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, handoff, "x", ROOT, self.refs(), baseline="clean", final_snapshot="clean").passed)
+        handoff = self.codex_handoff()
+        handoff["results"].append({"handle": "unexpected", "payload": self.payloads()[0]})
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, handoff, "x", ROOT, self.refs()).passed)
 
 
 if __name__ == "__main__":

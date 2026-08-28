@@ -182,7 +182,9 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
         raise ValueError("filename/name mismatch")
     def csv(key: str) -> list[str]:
         value = values.get(key, "")
-        return [part.strip() for part in value.split(",") if part.strip()]
+        if value.startswith("[") and value.endswith("]"):
+            value = value[1:-1]
+        return [part.strip().strip("'\"") for part in value.split(",") if part.strip()]
     return ReviewerDefinition(name, "project", name.removeprefix("sdd-review-") or "project",
                               match.group("body").strip(),
                               "Read-only: inspect only; never edit, commit, or run lifecycle commands.",
@@ -351,59 +353,103 @@ def dispatch_minimax_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature:
     return dispatch_claude_panel(plan, launcher, feature, referents)
 
 
-def dispatch_codex_panel(plan: Iterable[ReviewerPlan], runtime: Any, feature: str,
-                         worktree: Path, referents: Mapping[str, str] | None = None) -> PanelResult:
-    """Run a native Codex panel through an injected spawn/wait/collect surface.
-
-    ``runtime.spawn_batch`` must accept all requests at once and return
-    ``(handle, runtime_identity)`` pairs. The runtime identity is trusted and
-    is used to bind a handle; a child payload's self-reported ID is checked
-    against it rather than trusted for routing.
-    """
+def build_codex_handoff(plan: Iterable[ReviewerPlan], feature: str, worktree: Path,
+                        referents: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Prepare requests for the top-level Codex harness; never spawn children."""
     items = [item for item in plan if item.dispatch_status != "skipped"]
     if not worktree.is_dir():
-        return PanelResult(items, [synthesize_unavailable_result(item, "invalid feature worktree") for item in items], "FAIL", ["invalid feature worktree"])
-    try:
-        if Path(runtime.worktree_root()).resolve() != worktree.resolve():
-            raise RuntimeError("native runtime is not bound to the feature worktree")
-        capabilities = runtime.capabilities()
-        required_capabilities = {"parallel_spawn", "wait", "collection", "read_only", "worktree_binding", "no_lifecycle_commands", "no_network"}
-        if not required_capabilities.issubset(capabilities):
-            raise RuntimeError("native runtime cannot attest to required read-only capabilities")
-    except Exception as exc:
-        return PanelResult(items, [synthesize_unavailable_result(item, str(exc)) for item in items], "FAIL", [str(exc)])
-    baseline = runtime.snapshot(worktree)
-    requests = [{"reviewer_id": item.reviewer_id,
-                 "prompt": build_reviewer_prompt(item, feature, referents),
-                 "scope_id": item.scope_id, "worktree": str(worktree),
-                 "sandbox": "read-only", "allow_network": False,
-                 "allow_lifecycle_commands": False} for item in items]
-    try:
-        handles = list(runtime.spawn_batch(requests))
-        if len(handles) != len(items):
-            raise RuntimeError("native spawn cardinality mismatch")
-        bindings: dict[Any, ReviewerPlan] = {}
-        for handle, identity in handles:
-            item = next((candidate for candidate in items if candidate.reviewer_id == identity), None)
-            if item is None or handle in bindings:
-                raise RuntimeError("native handle identity mismatch")
-            bindings[handle] = item
-        payloads: list[ReviewerResult] = []
-        for handle, item in bindings.items():
-            runtime.wait(handle)
-            payload = runtime.collect(handle)
-            if not isinstance(payload, Mapping) or payload.get("reviewer_id") != item.reviewer_id:
-                payloads.append(synthesize_unavailable_result(item, "native trusted identity mismatch"))
-                continue
-            try:
-                payloads.append(normalize_reviewer_result(payload, item))
-            except (TypeError, ValueError) as exc:
-                payloads.append(synthesize_unavailable_result(item, str(exc)))
-        if runtime.snapshot(worktree) != baseline:
-            raise RuntimeError("reviewer mutated the feature worktree")
-    except Exception as exc:
-        return PanelResult(items, [synthesize_unavailable_result(item, f"native Codex unavailable: {exc}") for item in items], "FAIL", [str(exc)])
-    return evaluate_panel_gate(items, payloads)
+        raise ValueError("invalid feature worktree")
+    return {
+        "contract": "codex-native-panel-v1",
+        "parallel": True,
+        "expected": [item.reviewer_id for item in items],
+        "requests": [{"reviewer_id": item.reviewer_id,
+                      "prompt": build_reviewer_prompt(item, feature, referents),
+                      "scope_id": item.scope_id, "worktree": str(worktree.resolve()),
+                      "sandbox": "read-only", "allow_network": False,
+                      "allow_lifecycle_commands": False} for item in items],
+        "worktree": str(worktree.resolve()),
+        "required_capabilities": ["parallel_spawn", "wait", "collection", "read_only",
+                                   "worktree_binding", "no_lifecycle_commands", "no_network"],
+    }
+
+
+def validate_codex_handoff(plan: Iterable[ReviewerPlan], handoff: Mapping[str, Any], *,
+                           worktree: Path, baseline: Any = None,
+                           final_snapshot: Any = None) -> PanelResult:
+    """Validate raw results and trusted bindings returned by the top-level harness."""
+    items = [item for item in plan if item.dispatch_status != "skipped"]
+    errors: list[str] = []
+    if not isinstance(handoff, Mapping) or handoff.get("contract") != "codex-native-panel-v1":
+        return PanelResult(items, [], "FAIL", ["malformed Codex harness handoff"])
+    if Path(str(handoff.get("worktree", ""))).resolve() != worktree.resolve():
+        errors.append("Codex harness is not bound to the feature worktree")
+    if handoff.get("parallel") is not True or handoff.get("expected") != [item.reviewer_id for item in items]:
+        errors.append("Codex harness expected plan or parallel-batch contract mismatch")
+    if set(handoff.get("required_capabilities", ())) != {"parallel_spawn", "wait", "collection", "read_only", "worktree_binding", "no_lifecycle_commands", "no_network"}:
+        errors.append("Codex harness capability contract is incomplete")
+    expected_ids = [item.reviewer_id for item in items]
+    requests = handoff.get("requests")
+    if not isinstance(requests, list) or len(requests) != len(items):
+        errors.append("Codex harness request collection is incomplete")
+    else:
+        for request, item in zip(requests, items):
+            if (not isinstance(request, Mapping) or request.get("reviewer_id") != item.reviewer_id
+                    or request.get("scope_id") != item.scope_id
+                    or request.get("worktree") != str(worktree.resolve())
+                    or request.get("sandbox") != "read-only"
+                    or request.get("allow_network") is not False
+                    or request.get("allow_lifecycle_commands") is not False):
+                errors.append(f"Codex request contract mismatch: {item.reviewer_id}")
+    bindings, raw = handoff.get("bindings"), handoff.get("results")
+    if not isinstance(bindings, Mapping) or not isinstance(raw, list):
+        return PanelResult(items, [synthesize_unavailable_result(i, "incomplete Codex collection") for i in items], "FAIL", errors + ["Codex harness collection is incomplete"])
+    if baseline is None or final_snapshot is None:
+        errors.append("Codex harness did not provide mandatory pre/post worktree snapshots")
+    elif baseline != final_snapshot:
+        errors.append("reviewer mutated the feature worktree")
+    handles = set(bindings)
+    if set(handoff.get("waited", ())) != handles:
+        errors.append("Codex harness did not wait for every trusted handle")
+    if set(bindings.values()) != set(item.reviewer_id for item in items) or len(bindings) != len(items):
+        errors.append("Codex trusted handle bindings are not one-to-one")
+    if len(raw) != len(items) or any(not isinstance(entry, Mapping) or entry.get("handle") not in handles for entry in raw):
+        errors.append("Codex result collection has unexpected or duplicate handles")
+    results: list[ReviewerResult] = []
+    for item in items:
+        handles = [h for h, identity in bindings.items() if identity == item.reviewer_id]
+        payloads = [entry.get("payload") for entry in raw if isinstance(entry, Mapping) and entry.get("handle") in handles]
+        if len(handles) != 1 or len(payloads) != 1:
+            results.append(synthesize_unavailable_result(item, "missing, duplicate, or misrouted native result"))
+            continue
+        try:
+            results.append(normalize_reviewer_result(payloads[0], item))
+        except (TypeError, ValueError) as exc:
+            results.append(synthesize_unavailable_result(item, str(exc)))
+    return PanelResult(items, results, "FAIL", errors) if errors else evaluate_panel_gate(items, results)
+
+
+def certification_capability(panel: PanelResult) -> object:
+    """Create the only in-memory capability accepted by certification callers."""
+    if not isinstance(panel, PanelResult):
+        raise PermissionError("lifecycle certification requires a validated PASS panel")
+    validated = evaluate_panel_gate(panel.plan, panel.results)
+    if not validated.passed:
+        raise PermissionError("lifecycle certification requires a validated PASS panel")
+    return object()
+
+
+def dispatch_codex_panel(plan: Iterable[ReviewerPlan], handoff: Mapping[str, Any], feature: str,
+                         worktree: Path, referents: Mapping[str, str] | None = None,
+                         *, baseline: Any = None, final_snapshot: Any = None) -> PanelResult:
+    """Compatibility name for validating a harness-collected handoff."""
+    if not isinstance(handoff, Mapping):
+        return PanelResult(list(plan), [], "FAIL", ["malformed Codex harness handoff"])
+    expected = build_codex_handoff(plan, feature, worktree, referents)
+    if any(handoff.get(key) != expected[key] for key in ("contract", "parallel", "expected", "requests", "worktree", "required_capabilities")):
+        return PanelResult(list(plan), [], "FAIL", ["Codex handoff contract mismatch"])
+    return validate_codex_handoff(plan, handoff, worktree=worktree,
+                                  baseline=baseline, final_snapshot=final_snapshot)
 
 
 def execute_lifecycle_panel(phase: str, root: Path, feature: str,

@@ -182,8 +182,10 @@ def validate_reviewer_panel(root: Path = ROOT) -> list[str]:
         content = path.read_text(encoding="utf-8")
         definition = next(d for d in definitions if d.reviewer_id == reviewer_id)
         lens_marker = definition.lens.lower()
+        criteria_marker = f"Canonical criteria: {definition.criteria}"
         if (f"name: {reviewer_id}" not in content or "Read-only" not in content
                 or lens_marker not in content.lower()
+                or criteria_marker not in content
                 or not all(reference.split("/")[-1] in content for reference in definition.referents[:3])):
             errors.append(f"agents/{reviewer_id}.md: identity/read-only contract drift")
     if not (root / "skills" / "reviewer-panel" / "reviewers").is_dir():

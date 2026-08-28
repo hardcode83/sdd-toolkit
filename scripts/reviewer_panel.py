@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feature", required=True)
     parser.add_argument("--scope", required=True, help="JSON scope object")
     parser.add_argument("--results", required=True, help="JSON list of normalized transport results")
+    parser.add_argument("--codex-handoff", help="JSON top-level Codex harness handoff")
+    parser.add_argument("--worktree", type=Path, help="feature worktree for a Codex handoff")
     parser.add_argument("--solo", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -38,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         plan = reviewer_plan.build_reviewer_plan(args.root, args.phase, scope, solo=args.solo)
         if args.solo:
             panel = reviewer_plan.PanelResult(plan, [], "FAIL", ["solo bypass cannot produce panel PASS"])
+        elif args.codex_handoff:
+            if not args.worktree:
+                raise ValueError("--worktree is required with --codex-handoff")
+            handoff = json.loads(args.codex_handoff)
+            panel = reviewer_plan.dispatch_codex_panel(plan, handoff, args.feature, args.worktree)
         else:
             required_items = [p for p in plan if p.required]
             if len(raw_results) != len(required_items):

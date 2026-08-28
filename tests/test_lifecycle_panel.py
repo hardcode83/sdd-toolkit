@@ -34,6 +34,12 @@ class LifecyclePanelTests(unittest.TestCase):
             return self.rp.PanelResult(plan, [], "PASS", [])
         self.assertFalse(self.rp.auto_panel(ROOT, "x", self.scope("auto"), bypass).passed)
 
+    def test_certification_capability_requires_validated_panel(self):
+        panel = self.rp.run_panel(ROOT, "x", self.scope("run"), self.adapter)
+        self.assertIsNotNone(self.rp.certification_capability(panel))
+        with self.assertRaises(PermissionError):
+            self.rp.certification_capability(self.rp.PanelResult(panel.plan, [], "PASS", []))
+
 
 if __name__ == "__main__":
     unittest.main()

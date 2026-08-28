@@ -24,14 +24,14 @@ wait for every response, and normalize exactly one result per planned item.
 MiniMax-through-Claude uses this same boundary. An unavailable or malformed
 response is synthesized as an explicit unavailable result and cannot pass.
 
-`dispatch_codex_panel()` is the native boundary. In one parallel batch, spawn
-one native Codex subagent per planned item with the current feature worktree,
-read-only filesystem, no lifecycle commands, no repository mutation, and no
-network/external side effects. Bind each returned native handle to the planned
-reviewer identity; self-reported identity never overrides that binding. Wait
-on every handle, collect exactly one structured response, and check the
-worktree before and after collection. If spawn, parallelism, wait, collection,
-sandbox, or worktree binding cannot be enforced, return unavailable results.
+`build_codex_handoff()` is the native boundary. It emits one request per
+planned item and the exact capability contract for the top-level Codex
+harness. The harness must spawn all requests in one parallel batch, bind each
+returned handle to its planned reviewer identity, wait on every handle, and
+return exactly one raw structured response per handle. The plugin then calls
+`validate_codex_handoff()`; it never owns native spawning, waiting, or
+collection. Self-reported identity never overrides the trusted binding, and
+capability or worktree mutation failures are unavailable results.
 Do not use `.codex/agents`, `~/.codex/agents`, copied prompts, symlinks, or
 project Codex configuration.
 
