@@ -12,7 +12,8 @@ class FakeClaude:
 
     def launch_batch(self, requests):
         self.requests.append(requests)
-        return self.payloads
+        return [{"invocation_id": f"agent-{i}", "reviewer_id": payload["reviewer_id"], "payload": payload}
+                for i, payload in enumerate(self.payloads)]
 
 
 class ReviewerAdapterTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class ReviewerAdapterTests(unittest.TestCase):
         self.plan = self.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
 
     def payloads(self):
-        return [{"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"} for item in self.plan]
+        return [{"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens, "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"} for item in self.plan]
 
     def refs(self):
         return {"requirements": "R1", "design": "D1", "steering": "read-only", "scope": "src/a.py"}
@@ -35,6 +36,20 @@ class ReviewerAdapterTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(len(fake.requests), 1)
         self.assertEqual(len(fake.requests[0]), len(self.plan))
+
+    def test_claude_accepts_reordered_trusted_invocation_results(self):
+        fake = FakeClaude(list(reversed(self.payloads())))
+        self.assertTrue(self.rp.dispatch_claude_panel(self.plan, fake, "x", self.refs()).passed)
+
+    def test_claude_rejects_positional_or_duplicate_identity(self):
+        class Positional(FakeClaude):
+            def launch_batch(self, requests):
+                self.requests.append(requests)
+                return self.payloads
+        self.assertFalse(self.rp.dispatch_claude_panel(self.plan, Positional(self.payloads()), "x", self.refs()).passed)
+        duplicate = self.payloads()
+        duplicate[-1] = dict(duplicate[-1], reviewer_id=duplicate[0]["reviewer_id"])
+        self.assertFalse(self.rp.dispatch_claude_panel(self.plan, FakeClaude(duplicate), "x", self.refs()).passed)
 
     def test_minimax_uses_the_same_claude_boundary(self):
         fake = FakeClaude(self.payloads())

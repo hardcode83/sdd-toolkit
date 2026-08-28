@@ -30,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", required=True, help="JSON list of normalized transport results")
     parser.add_argument("--codex-handoff", help="JSON top-level Codex harness handoff")
     parser.add_argument("--worktree", type=Path, help="feature worktree for a Codex handoff")
+    parser.add_argument("--referents", default="{}", help="JSON referent mapping for a Codex handoff")
+    parser.add_argument("--baseline", help="optional harness pre-collection snapshot")
+    parser.add_argument("--final-snapshot", help="optional harness post-collection snapshot")
     parser.add_argument("--solo", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -44,14 +47,29 @@ def main(argv: list[str] | None = None) -> int:
             if not args.worktree:
                 raise ValueError("--worktree is required with --codex-handoff")
             handoff = json.loads(args.codex_handoff)
-            panel = reviewer_plan.dispatch_codex_panel(plan, handoff, args.feature, args.worktree)
+            panel = reviewer_plan.dispatch_codex_panel(plan, handoff, args.feature, args.worktree,
+                                                       json.loads(args.referents),
+                                                       baseline=args.baseline,
+                                                       final_snapshot=args.final_snapshot)
         else:
             required_items = [p for p in plan if p.required]
             if len(raw_results) != len(required_items):
                 raise ValueError("result collection is incomplete or contains extra results")
             results = []
-            for item, payload in zip(required_items, raw_results):
-                results.append(reviewer_plan.normalize_reviewer_result(payload, item))
+            by_identity = {}
+            for envelope in raw_results:
+                if (not isinstance(envelope, dict) or not envelope.get("invocation_id")
+                        or not isinstance(envelope.get("reviewer_id"), str)
+                        or not isinstance(envelope.get("payload"), dict)):
+                    raise ValueError("result collection lacks trusted Claude invocation identity")
+                identity = envelope["reviewer_id"]
+                if identity in by_identity:
+                    raise ValueError("duplicate reviewer identity")
+                by_identity[identity] = envelope
+            if set(by_identity) != {item.reviewer_id for item in required_items}:
+                raise ValueError("result collection contains an unexpected or missing reviewer")
+            for item in required_items:
+                results.append(reviewer_plan.normalize_reviewer_result(by_identity[item.reviewer_id]["payload"], item))
             panel = reviewer_plan.evaluate_panel_gate(plan, results)
         print(json.dumps(panel.to_dict(), sort_keys=True))
         return 0 if panel.passed else 1

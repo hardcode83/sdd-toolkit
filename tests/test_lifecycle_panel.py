@@ -14,7 +14,7 @@ class LifecyclePanelTests(unittest.TestCase):
         return {"feature": "x", "scope_id": f"{phase}:x", "files": ["src/a.py"]}
 
     def adapter(self, plan, **kwargs):
-        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"]) for item in plan]
+        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"], lens=item.lens) for item in plan]
         return self.rp.PanelResult(plan, results, "PASS", [])
 
     def test_run_review_and_auto_use_one_executable_gate(self):

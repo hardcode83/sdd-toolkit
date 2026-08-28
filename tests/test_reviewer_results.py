@@ -13,7 +13,7 @@ class ReviewerResultTests(unittest.TestCase):
         cls.item = cls.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})[0]
 
     def payload(self, **changes):
-        payload = {"reviewer_id": self.item.reviewer_id, "scope_id": self.item.scope_id,
+        payload = {"reviewer_id": self.item.reviewer_id, "scope_id": self.item.scope_id, "lens": self.item.lens,
                    "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"}
         payload.update(changes)
         return payload
@@ -38,12 +38,12 @@ class ReviewerResultTests(unittest.TestCase):
 
     def test_complete_pass_set_passes(self):
         plan = self.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
-        results = [self.rp.normalize_reviewer_result({"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"}, item) for item in plan]
+        results = [self.rp.normalize_reviewer_result({"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens, "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"}, item) for item in plan]
         self.assertTrue(self.rp.evaluate_panel_gate(plan, results).passed)
 
     def test_gate_rejects_missing_core_and_out_of_scope_evidence(self):
         plan = self.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
-        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"]) for item in plan]
+        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"], lens=item.lens) for item in plan]
         self.assertFalse(self.rp.evaluate_panel_gate(plan[1:], results[1:]).passed)
         results[0].evidence = ["sdd/changes/other/secret.md"]
         self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
@@ -66,12 +66,12 @@ class ReviewerResultTests(unittest.TestCase):
 
     def test_gate_rejects_malformed_typed_results_and_extra_identity(self):
         plan = self.rp.build_reviewer_plan(ROOT, "run", {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]})
-        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"])
+        results = [self.rp.ReviewerResult(item.reviewer_id, item.scope_id, "PASS", [], ["src/a.py"], lens=item.lens)
                    for item in plan]
         results[0].evidence = [None]
         self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
         results[0].evidence = ["src/a.py"]
-        results.append(self.rp.ReviewerResult("unexpected", "run:x", "PASS", [], ["src/a.py"]))
+        results.append(self.rp.ReviewerResult("unexpected", "run:x", "PASS", [], ["src/a.py"], lens="qa"))
         self.assertFalse(self.rp.evaluate_panel_gate(plan, results).passed)
 
     def test_unavailable_failure_classes_are_distinct(self):
@@ -80,6 +80,12 @@ class ReviewerResultTests(unittest.TestCase):
         self.assertEqual(spawn.status, "unavailable")
         self.assertEqual(transport.status, "unavailable")
         self.assertNotEqual(spawn.reason, transport.reason)
+
+    def test_timeout_and_interruption_are_non_passing_collection_failures(self):
+        for reason in ("timeout", "interrupted"):
+            with self.subTest(reason=reason):
+                result = self.rp.synthesize_unavailable_result(self.item, reason)
+                self.assertFalse(self.rp.evaluate_panel_gate([self.item], [result]).passed)
 
 
 if __name__ == "__main__":

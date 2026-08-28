@@ -146,6 +146,25 @@ prompts, symlinks, or project Codex reviewer configuration.
 Rejected: use App Server or a nested Codex CLI as an orchestration service;
 normal plugin use through the top-level harness is the supported product path.
 
+#### Provider-parity security boundary
+
+This change guarantees correct fail-closed behavior through the supported SDD
+flow and equivalent Claude/Codex behavior. It does not make repository-local
+lifecycle commands tamper-proof against an actor with unrestricted shell and
+repository access. Claude does not provide cryptographic receipts, replay
+protection, runtime attestation, or direct-shell bypass protection; Codex is
+held to the same boundary. Those are future toolkit-wide hardening concerns,
+not R1–R6 acceptance criteria.
+
+The toolkit-owned reviewer wrapper controls logical identity, scope, read-only
+policy, allowed/prohibited behavior, result schema, and evidence expectations.
+Legacy project reviewer bodies are untrusted lens/domain instructions placed
+under that wrapper and cannot elevate authority within the supported harness
+instruction model. Claude and Codex use provider-appropriate invocation
+association: Claude Agent association where available, and native Codex handle
+association. Positional result order is never authoritative; ambiguous or
+unassociated results fail closed.
+
 ### D4 — Normalize the panel before runtime invocation
 
 **Chosen:** Introduce a logical planning step before any Claude or Codex
@@ -299,9 +318,12 @@ preserve read-only reviewer policy.
 The test plan includes an R1–R6 traceability table, named behavioral modules
 and fixtures, package-tree checks for every registry/adapter resource, default
 versus solo behavior, review change/drift scopes, and auto inline/delegated,
-project-reviewer, and `PR_OPEN` paths. The opt-in native Codex smoke test
-verifies actual spawn, parallelism, wait, identity, collection, sandbox, and
-unchanged worktree; paid model execution is never a CI requirement.
+project-reviewer, and `PR_OPEN` paths. Repository-owned Layer B tests define
+the native handoff fixture and run it through the real deterministic validator,
+including positive complete-panel and negative missing-reviewer cases. An
+opt-in Layer C command may exercise the installed top-level Codex harness; its
+captured, structured result is checked against the repository-owned smoke
+contract. The repository never attempts to spawn native children from Python.
 
 Add an opt-in native Codex smoke test that is skipped unless explicitly
 enabled/configured. It verifies parallel spawn, wait, role identity, result
@@ -338,11 +360,13 @@ that spec during the design phase.
 | R5 Structured fail-closed results and lifecycle parity | D6, D7 | Result failure matrix and lifecycle non-advancement/certification-gate tests |
 | R6 Mechanical parity and regression coverage | D8, D9 | Derived provider parity, packaging, compatibility, and opt-in native smoke tests |
 
-The test harness uses a fake Claude launcher and fake native Codex spawn
-surface for deterministic assertions. They record requests and return fixed
+The test harness uses a fake Claude launcher and a deterministic captured
+Codex handoff for Layer A/B assertions. They record requests and return fixed
 valid/invalid payloads; neither requires a paid model. The real native smoke
 test is opt-in and is the only test that depends on the installed Codex
-runtime.
+runtime. Its protocol is repository-owned: JSON output identifies the
+canonical expected roles and reports positive `PASS`, negative `FAIL`, trusted
+handle association, parallel launch, wait, and collection.
 
 ## Data & interfaces
 

@@ -20,7 +20,11 @@ class ReviewerPanelCliTests(unittest.TestCase):
 
     def results(self, phase="run"):
         plan = self.rp.build_reviewer_plan(ROOT, phase, self.scope(phase))
-        return [{"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"} for item in plan]
+        return [{"invocation_id": f"agent-{i}", "reviewer_id": item.reviewer_id,
+                 "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id,
+                             "lens": item.lens, "verdict": "PASS", "findings": [],
+                             "evidence": ["src/a.py"], "status": "complete"}}
+                for i, item in enumerate(plan)]
 
     def invoke(self, phase, results):
         return subprocess.run(self.command + ["--root", str(ROOT), "--phase", phase, "--feature", "x", "--scope", json.dumps(self.scope(phase)), "--results", json.dumps(results)], capture_output=True, text=True)
@@ -34,6 +38,11 @@ class ReviewerPanelCliTests(unittest.TestCase):
 
     def test_solo_cli_cannot_pass(self):
         result = subprocess.run(self.command + ["--root", str(ROOT), "--phase", "run", "--feature", "x", "--scope", json.dumps(self.scope()), "--results", "[]", "--solo"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+
+    def test_cli_rejects_unassociated_self_labeled_results(self):
+        raw = self.results()
+        result = self.invoke("run", [entry["payload"] for entry in raw])
         self.assertEqual(result.returncode, 1)
 
 

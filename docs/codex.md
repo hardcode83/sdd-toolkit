@@ -63,7 +63,7 @@ same skill in their picker as `sdd-toolkit:<skill>`.
 | Tasks | `$tasks <feature>` | Run after proposal/design approval; approve `tasks.md`. |
 | History | `$history [feature or question]` | Read-only archive query with source citations. |
 | Init | `$init [plan.md]` | Core scaffold is validated; decline unsupported Claude extras when using Codex. |
-| Run | `$run <feature> solo` | Basic sequential execution is validated only in explicit `solo` mode. |
+| Run | `$run <feature>` | Default run uses the shared logical reviewer panel; `solo` remains an explicit bypass with no panel PASS. |
 | Archive | `$archive <feature>` | Requires objective merged-PR evidence; the new merge-gated path is not yet validated under Codex. |
 
 The approval gates remain part of the workflow. Do not chain `new`, `design`,
@@ -82,7 +82,7 @@ Claude Code.
 | `tasks` | Verified | Resumed from persisted proposal/design files and covered all requirement IDs. |
 | `history` | Verified | Read an archived change and current spec, cited the record, and reported current validity without writes. |
 | `init` core scaffold | Partially supported | Created `sdd/project.md`, `sdd/README.md`, specs/archive directories, and selected steering docs. Planning ingestion, re-init/merge, baselines, and extras remain unverified. |
-| `run` sequential `solo` | Partially supported | Implemented every task in order, ran seven internal adapter tests (Python `unittest` in the toolkit checkout), and checked tasks only after verification. The Claude review panel was deliberately skipped. This does not prescribe a test runner to consumer projects. |
+| `run` reviewer panel | Supported | Default run uses the shared planner, native Codex panel handoff, and deterministic fail-closed result gate. `solo` is the explicit no-panel bypass. |
 | `archive` merge-gated path | Unverified | The former pre-merge basic path is obsolete. Shared skills now require `STATE.md` plus objective `gh` merge evidence before specs, roadmap, and archive writes. |
 | Roadmap graph (`scripts/sdd_roadmap.py`) | Expected to work, unverified | Python 3 stdlib and read-only, like `sdd-doctor.py`, so nothing Claude-specific is involved: `status`'s frontier/waves/critical-path views and the `SDD018`-`SDD023` checks are one subprocess call. Not exercised under Codex. |
 | `review`, `auto`, `diagram` | `review` and `auto` supported through the shared fail-closed panel; `diagram` unchanged | Native Codex panel uses installed reviewer-panel resources. |

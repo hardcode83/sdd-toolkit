@@ -52,7 +52,7 @@ invents scope.
    an entry that does not exist) aborts the run: auto must not pick an order out
    of a graph that is known to be wrong.
 3. `sdd/steering/` has at least `architecture.md` or `security.md` or
-   `testing.md`. With no steering, the panel (the only reviewer in auto) has
+   `testing.md`. With no steering, the full mandatory reviewer panel in auto has
    weak referents: **do not ask for confirmation** — the user pre-authorized
    this run. Proceed and state the weakness prominently in the final report,
    as the first thing to fix before the next run.

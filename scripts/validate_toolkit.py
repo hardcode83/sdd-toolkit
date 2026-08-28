@@ -172,8 +172,8 @@ def validate_reviewer_panel(root: Path = ROOT) -> list[str]:
         return [f"skills/reviewer-panel: invalid registry: {error}"]
     expected = {definition.reviewer_id for definition in definitions}
     runtime_ids = sorted(path.stem for path in (root / "agents").glob("sdd-*.md"))
-    if set(runtime_ids) & expected != expected:
-        errors.append("agents: Claude reviewer representations do not cover the registry exactly")
+    if set(runtime_ids) != expected:
+        errors.append("agents: Claude reviewer representations do not match the registry exactly")
     for reviewer_id in expected:
         path = root / "agents" / f"{reviewer_id}.md"
         if not path.is_file():
