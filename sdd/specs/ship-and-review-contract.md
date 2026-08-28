@@ -8,6 +8,10 @@ change while its PR is open. Without a shared contract, each could write to
 certification or publication it actually owns; the recertify flow this change
 adds is precisely the contract that prevents that.
 
+Reviewer selection and result acceptance are defined in
+`reviewer-parity.md`; this document remains the source of truth for the
+state-dependent certification and publication sequence.
+
 ## Requirements
 
 ### `/sdd:review` branches on `STATE.md.state`
