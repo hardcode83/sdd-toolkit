@@ -64,41 +64,87 @@ or divergent representations before a panel can pass.
 Rejected: remove or migrate project `.claude/agents` reviewers immediately —
 that breaks the documented additive project extension and violates R3/R4.
 
-### D3 — Codex uses direct native subagent dispatch
+### D3 — Codex uses harness-level native subagent orchestration (formal correction, 2026-08-28)
 
-**Chosen:** Extend the shared Codex-visible `skills/reviewer-panel/SKILL.md`
-with a direct
-native-subagent adapter. The adapter issues one native subagent spawn request
-per selected logical reviewer in one parallel batch, records the returned
-handles, waits on every handle, and collects exactly one structured response
-per planned reviewer before returning a panel result. The prompt is generated
-from the registry and includes the reviewer identity, feature, exact review
-scope, quoted requirements/design/steering referents and read-only boundary.
-The Codex plugin packages the registry and adapter instructions through the
-installed plugin tree; no repository or user-local Codex agent files are
-required.
+**Formal correction:** The executable plugin runtime does not receive the
+native `spawn_agent`/`wait_agent` tool surface. The supported Codex equivalent
+to Claude is therefore harness-level orchestration:
 
-The implementation surface is the Codex native subagent tool available to the
-running skill, not a shell command or custom-agent TOML file. The adapter must
-request read-only sandboxing and the current feature worktree for every child,
-and verify before and after collection that the worktree has no mutation. If
-the runtime cannot provide spawn, parallel batch, wait, collection, read-only
-sandbox, or worktree binding, it returns an unavailable panel result and the
-lifecycle gate cannot pass.
+```text
+deterministic planner -> expected ReviewerPlan
+                         |
+             Claude harness / Codex harness
+               Agent calls / native children
+                         |
+                 collected raw results
+                         v
+             deterministic validator -> PanelResult
+                         v
+              mechanical lifecycle gate
+```
 
-Direct native spawn is the smallest runtime bridge because the existing Codex
-manifest exposes `skills/` and Codex model names do not map from Claude
-frontmatter (`docs/codex.md`), while native subagents can receive the logical
-lens without creating another persistent agent definition. The adapter must
-refuse certification if native spawn, worktree scope, waiting, or collection
-cannot be enforced.
+The top-level harness, not plugin Python or shell, performs parallel native
+spawn, trusted handle-to-role association, wait, and raw collection. The
+harness has no certification authority. Plugin code produces the expected
+plan and validates the handoff; missing, malformed, unavailable, duplicate,
+or out-of-scope results fail closed. The lifecycle gate alone may consume a
+validated `PanelResult` before annotation or certification. App Server is not
+required, and no user-authored reviewer configuration or agent resource is
+introduced. The existing installer's managed `CLAUDE_PLUGIN_ROOT` bridge is
+an operational shell-environment setup, not reviewer configuration.
+
+Any earlier direct-executable-dispatch wording is superseded and
+non-normative; the runtime adapter boundary is the harness handoff defined
+here.
+
+#### Corrected handoff contract
+
+- **Planner output:** ordered expected role IDs, reviewer resource/prompt
+  inputs, exact scope and scope ID, applicability decision/reason, source, and
+  mandatory/required status.
+- **Harness responsibility:** spawn each expected runnable reviewer in one
+  native parallel batch, bind each handle to the expected role, wait for every
+  handle, and return raw results tagged with the trusted binding. The harness
+  must not authorize lifecycle transitions or replace missing results with
+  narrative PASS text.
+- **Validator input/output:** receive the expected plan and collected raw
+  results; normalize identity, scope, status, findings, evidence and
+  completeness; return the in-memory `PanelResult` with derived PASS/FAIL.
+- **Lifecycle gate:** require that validated PASS result from the same
+  invocation. Missing, invalid, unavailable or incomplete results prevent
+  section annotation and all certification commands.
+
+#### Runtime evidence
+
+On 2026-08-28, the installed 0.40.0 skill was exercised from the top-level
+Codex thread. A deterministic command produced the fixed plan containing
+`sdd-architect`, `sdd-security`, and `sdd-qa`. The top-level harness spawned
+all three native children in parallel, waited for and collected each assigned
+role, and each child remained read-only. Feeding the collected fixed-schema
+results to `scripts/reviewer_panel.py` returned exit 0/PASS; removing one
+result returned exit 1/FAIL. A plugin child attempting to spawn further native
+children was unavailable, confirming that plugin code cannot own the native
+tool surface. This experiment is evidence for the corrected boundary, not a
+certification of the implementation or lifecycle.
+
+**Corrected choice:** `skills/reviewer-panel/SKILL.md` exposes the planner
+output and the exact native handoff instructions to the top-level Codex
+harness. It does not call native tools from Python or shell. The harness
+performs the parallel child calls, trusted handle binding, waits and raw
+collection; the deterministic validator then returns the `PanelResult`.
+
+The installed plugin contains the registry, prompt resources and validator.
+The existing adapter installer may automatically write the managed
+`CLAUDE_PLUGIN_ROOT` shell-environment bridge in `~/.codex/config.toml`, but
+users do not author reviewer definitions, agent files, symlinks, or manual
+per-project Codex configuration. This operational bridge is not a reviewer
+execution API and does not grant certification authority.
 
 Rejected: install or require custom resources in `~/.codex/agents`, copied
-prompts, symlinks, or project Codex configuration — this contradicts R3 and
-would make installation state part of review correctness.
+prompts, symlinks, or project Codex reviewer configuration.
 
-Rejected: silently run one main Codex model call in place of the panel — it
-changes reviewer coverage and violates the required parallel selected set.
+Rejected: use App Server or a nested Codex CLI as an orchestration service;
+normal plugin use through the top-level harness is the supported product path.
 
 ### D4 — Normalize the panel before runtime invocation
 
@@ -205,6 +251,17 @@ or altering lifecycle transitions.
 Rejected: add a separate Codex-only auto or PR certification flow — it would
 create the second methodology the proposal excludes and could diverge from
 `ship-and-review-contract.md`.
+
+#### D7 runtime-boundary correction
+
+For all three lifecycle paths, the skill is the orchestration instruction to
+the current top-level harness. The harness performs the reviewer calls and
+returns the handoff; the deterministic validator is invoked with that handoff
+before any section annotation or certification command. `run` solo remains an
+explicit no-panel bypass. `review` certification and recertification retain
+their existing state/range rules but require validated PASS evidence from the
+same invocation. `auto` may delegate through the same harness contract but
+cannot invent reviewer completion or call recertification independently.
 
 ### D8 — Package and validate both runtime representations together
 

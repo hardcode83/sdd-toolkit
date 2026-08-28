@@ -5,6 +5,25 @@ remain in memory; only the existing lifecycle commands may write certification
 state. No task introduces telemetry, cost-routing, a provider framework, a new
 lifecycle state, or work for `sdd-toolkit-0330-lifecycle-integrity`.
 
+## Formal design correction — 2026-08-28
+
+The original direct-executable Codex spawn assumption is invalid: plugin
+Python and shell cannot call the top-level native `spawn_agent`/`wait_agent`
+tools. The remaining tasks therefore use the corrected boundary:
+
+```text
+Skill instructions -> top-level Codex harness native subagents
+                   -> deterministic planner/result validator
+                   -> mechanical lifecycle certification gate
+```
+
+The harness owns spawn, parallelism, trusted handle binding, wait and raw
+collection. The plugin owns plan generation and deterministic validation. No
+model or harness assertion may authorize certification; only validated
+`PanelResult` evidence can do so. Tasks 6.1–6.3, 7.1–9.2 and 11.3 are
+harness-handoff/certification-boundary tasks, not direct Python API tasks.
+App Server is explicitly out of scope.
+
 ## 1. Canonical reviewer registry
 
 - [x] 1.1 Add the packaged canonical `ReviewerDefinition` resources under `skills/reviewer-panel/reviewers/`, with exactly one definition for `sdd-architect`, `sdd-security`, and `sdd-qa`, including stable identity, lens, criteria, read-only contract, referent inputs, and optional `phases`/`applies_to` metadata; runtime files reference these definitions and contain no independently maintained methodology copy — files: `skills/reviewer-panel/reviewers/` — verify each definition is present once and has all required fields [R1, R2, R4] (D1)
@@ -36,8 +55,8 @@ lifecycle state, or work for `sdd-toolkit-0330-lifecycle-integrity`.
 
 ## 6. Native Codex adapter
 
-- [x] 6.1 Implement the single `dispatch_codex_panel()` boundary in `skills/reviewer-panel/SKILL.md`, generating native subagent requests from `reviewer_plan.py` and requesting one read-only child bound to the current feature worktree per selected reviewer — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify requests contain identity, lens, scope, referents, sandbox/read-only boundary, and worktree binding without requiring `~/.codex/agents` or project Codex configuration [R2, R3, R5] (D1, D3, D8)
-- [x] 6.2 Implement one parallel native spawn batch, handle-to-plan-item binding, wait on every handle, and exactly-one-per-plan structured collection with trusted runtime identity overriding self-reported identity — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify captured requests prove parallel spawn, all waits, exact result cardinality, rejection of extras/misrouting, and preserved reviewer IDs [R1, R3, R5, R6] (D3, D4, D6, D9)
+- [ ] 6.1 Rework the Codex panel boundary in `skills/reviewer-panel/SKILL.md` as a top-level harness handoff: generate native subagent instructions from `reviewer_plan.py`, with one read-only child bound to the current feature worktree per selected reviewer — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify the harness receives identity, lens, scope, referents, sandbox/read-only boundary, and worktree binding without requiring `~/.codex/agents` or project Codex configuration [R2, R3, R5] (D1, corrected D3, D8)
+- [ ] 6.2 Define and test the top-level harness handoff for one parallel native spawn batch, trusted handle-to-plan-item binding, wait on every handle, and exactly-one-per-plan structured collection — files: `skills/reviewer-panel/SKILL.md`, `skills/reviewer-panel/reviewer_plan.py`, `tests/test_codex_adapter.py` — verify captured harness results prove parallel spawn, all waits, exact result cardinality, rejection of extras/misrouting, and preserved reviewer IDs [R1, R3, R5, R6] (corrected D3, D4, D6, D9)
 - [ ] 6.3 Enforce native child permissions: read-only filesystem, feature-worktree root restriction, no lifecycle commands, no network/external mutation unless explicitly allowed, and pre/post mutation checks; fail visibly before certification when any capability is unavailable — files: `skills/reviewer-panel/SKILL.md`, `tests/test_codex_adapter.py`, `tests/fixtures/reviewer-results/` — verify attempted writes outside the worktree or to lifecycle state are blocked, capability failure is unavailable/non-passing, and the opt-in smoke path observes no repository mutation [R3, R5, R6] (D3, D6, D9)
 
 ## 7. `/sdd:run` integration
