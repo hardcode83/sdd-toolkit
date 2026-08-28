@@ -348,12 +348,15 @@ def dispatch_claude_panel(plan: Iterable[ReviewerPlan], launcher: Any, feature: 
         results = [synthesize_unavailable_result(item, "Claude invocation collection incomplete") for item in items]
         return PanelResult(items, results, "FAIL", ["Claude invocation collection incomplete"])
     associations: dict[str, Mapping[str, Any]] = {}
+    invocation_ids: set[str] = set()
     for entry in payloads:
         identity = entry.get("reviewer_id")
         if (not isinstance(identity, str) or not identity or identity in associations
-                or not entry.get("invocation_id") or "payload" not in entry):
+                or not entry.get("invocation_id") or entry.get("invocation_id") in invocation_ids
+                or "payload" not in entry):
             return PanelResult(items, [synthesize_unavailable_result(item, "Claude trusted invocation identity mismatch") for item in items], "FAIL", ["Claude trusted invocation identity mismatch"])
         associations[identity] = entry
+        invocation_ids.add(entry["invocation_id"])
     if len(associations) != len(items) or set(associations) != {item.reviewer_id for item in items}:
         return PanelResult(items, [synthesize_unavailable_result(item, "Claude trusted invocation identity mismatch") for item in items], "FAIL", ["Claude trusted invocation identity mismatch"])
     results: list[ReviewerResult] = []
@@ -376,7 +379,7 @@ def build_codex_handoff(plan: Iterable[ReviewerPlan], feature: str, worktree: Pa
                         referents: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Prepare requests for the top-level Codex harness; never spawn children."""
     items = [item for item in plan if item.dispatch_status != "skipped"]
-    if not worktree.is_dir():
+    if not worktree.is_dir() or not (worktree / ".git").exists():
         raise ValueError("invalid feature worktree")
     return {
         "contract": "codex-native-panel-v1",
@@ -401,6 +404,8 @@ def validate_codex_handoff(plan: Iterable[ReviewerPlan], handoff: Mapping[str, A
     errors: list[str] = []
     if not isinstance(handoff, Mapping) or handoff.get("contract") != "codex-native-panel-v1":
         return PanelResult(items, [], "FAIL", ["malformed Codex harness handoff"])
+    if baseline is None or final_snapshot is None:
+        errors.append("Codex harness mutation snapshots are unavailable")
     if Path(str(handoff.get("worktree", ""))).resolve() != worktree.resolve():
         errors.append("Codex harness is not bound to the feature worktree")
     if handoff.get("parallel") is not True or handoff.get("expected") != [item.reviewer_id for item in items]:

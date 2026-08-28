@@ -67,7 +67,8 @@ class ReviewerParityTests(unittest.TestCase):
                 handoff["waited"] = list(handoff["bindings"])
                 handoff["results"] = [{"handle": f"h{i}", "payload": payload}
                                        for i, payload in enumerate(fake.payloads)]
-                self.assertTrue(self.rp.dispatch_codex_panel(plan, handoff, "x", ROOT, refs).passed)
+                self.assertTrue(self.rp.dispatch_codex_panel(plan, handoff, "x", ROOT, refs,
+                                                             baseline="clean", final_snapshot="clean").passed)
 
 
 if __name__ == "__main__":

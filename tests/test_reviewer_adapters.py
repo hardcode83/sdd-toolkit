@@ -51,6 +51,14 @@ class ReviewerAdapterTests(unittest.TestCase):
         duplicate[-1] = dict(duplicate[-1], reviewer_id=duplicate[0]["reviewer_id"])
         self.assertFalse(self.rp.dispatch_claude_panel(self.plan, FakeClaude(duplicate), "x", self.refs()).passed)
 
+    def test_claude_rejects_duplicate_invocation_handles(self):
+        class DuplicateHandle(FakeClaude):
+            def launch_batch(self, requests):
+                self.requests.append(requests)
+                return [{"invocation_id": "same", "reviewer_id": payload["reviewer_id"], "payload": payload}
+                        for payload in self.payloads]
+        self.assertFalse(self.rp.dispatch_claude_panel(self.plan, DuplicateHandle(self.payloads()), "x", self.refs()).passed)
+
     def test_minimax_uses_the_same_claude_boundary(self):
         fake = FakeClaude(self.payloads())
         result = self.rp.dispatch_minimax_panel(self.plan, fake, "x", self.refs())
@@ -70,6 +78,16 @@ class ReviewerAdapterTests(unittest.TestCase):
         self.assertTrue(handoff["parallel"])
         self.assertEqual(handoff["expected"], [item.reviewer_id for item in self.plan])
         self.assertNotIn("spawn_batch", self.rp.build_codex_handoff.__code__.co_names)
+
+    def test_codex_rejects_non_worktree_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                self.rp.build_codex_handoff(self.plan, "x", Path(directory), self.refs())
+
+    def test_codex_requires_mutation_snapshots(self):
+        handoff = self.codex_handoff()
+        self.assertFalse(self.rp.dispatch_codex_panel(self.plan, handoff, "x", ROOT, self.refs()).passed)
 
     def test_codex_handoff_validates_trusted_bindings_and_collection(self):
         result = self.rp.dispatch_codex_panel(self.plan, self.codex_handoff(), "x", ROOT, self.refs(), baseline="clean", final_snapshot="clean")

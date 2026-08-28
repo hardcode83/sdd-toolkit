@@ -35,10 +35,12 @@ class NativeCodexSmokeTests(unittest.TestCase):
         """Layer B: deterministic contract evidence, not native execution."""
         plan, handoff, refs = self._handoff()
         self.assertEqual([item.reviewer_id for item in plan[:3]], list(self.rp.MANDATORY_CORE))
-        positive = self.rp.dispatch_codex_panel(plan, handoff, "smoke", ROOT, refs)
+        positive = self.rp.dispatch_codex_panel(plan, handoff, "smoke", ROOT, refs,
+                                                baseline="clean", final_snapshot="clean")
         self.assertTrue(positive.passed, positive.errors)
         handoff["results"] = handoff["results"][:-1]
-        negative = self.rp.dispatch_codex_panel(plan, handoff, "smoke", ROOT, refs)
+        negative = self.rp.dispatch_codex_panel(plan, handoff, "smoke", ROOT, refs,
+                                                baseline="clean", final_snapshot="clean")
         self.assertFalse(negative.passed)
 
     @unittest.skipUnless(os.environ.get("SDD_NATIVE_CODEX_SMOKE_CMD"), "opt-in native Codex smoke")
