@@ -5,6 +5,11 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+Compatibility: `description`, `model`, and `tools` are Claude agent
+frontmatter and remain valid for Claude/MiniMax-through-Claude. The shared
+planner also accepts optional `phases` and `applies_to` metadata; these fields
+are not required for legacy reviewers and are not Codex capability settings.
+
 <!-- Copy this file to your project as .claude/agents/sdd-review-<lens>.md
      (e.g. sdd-review-performance.md), replace every <placeholder>, and
      commit it — the whole team gets the reviewer. The panel discovers it

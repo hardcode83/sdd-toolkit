@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 MANDATORY_CORE = ("sdd-architect", "sdd-security", "sdd-qa")
 VALID_PHASES = {"run", "review", "auto"}
 FRONTMATTER = re.compile(r"\A---\n(?P<head>.*?)\n---\n(?P<body>.*)\Z", re.DOTALL)
+PROJECT_FRONTMATTER_FIELDS = {"name", "description", "model", "tools", "phases", "applies_to"}
 
 
 class Applicability(str, Enum):
@@ -176,11 +177,12 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
         if ":" not in line:
             raise ValueError("malformed frontmatter")
         key, value = line.split(":", 1)
-        if key.strip() in values or key.strip() not in {"name", "phases", "applies_to"}:
+        if key.strip() in values or key.strip() not in PROJECT_FRONTMATTER_FIELDS:
             raise ValueError("unsupported or duplicate frontmatter field")
         values[key.strip()] = value.strip()
     name = values.get("name", "")
-    if not name or not path.name.startswith("sdd-review-") or path.stem != name:
+    if (not name or not name.removeprefix("sdd-review-") or
+            not path.name.startswith("sdd-review-") or path.stem != name):
         raise ValueError("filename/name mismatch")
     def csv(key: str) -> list[str]:
         value = values.get(key, "")
@@ -188,7 +190,7 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
             value = value[1:-1]
         return [part.strip().strip("'\"") for part in value.split(",") if part.strip()]
     return ReviewerDefinition(name, "project", name.removeprefix("sdd-review-") or "project",
-                              match.group("body").strip(),
+                              match.group("body"),
                               "Read-only: inspect only; never edit, commit, or run lifecycle commands.",
                               (str(path.relative_to(root)),), tuple(csv("phases")), tuple(csv("applies_to")), str(path))
 

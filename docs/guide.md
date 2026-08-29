@@ -154,6 +154,11 @@ Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **es
 1. `sdd/steering/<lente>.md` — las reglas que hará cumplir (frontmatter `phases: [run]` o el que toque).
 2. `.claude/agents/sdd-review-<lente>.md` — copia el `templates/reviewer-template.md` del plugin y rellena los huecos (referente, checks concretos, modelo: haiku si es mecánico, opus si el criterio es el producto).
 
+El frontmatter legacy (`description`, `model`, `tools`) sigue siendo válido
+para Claude y MiniMax-through-Claude. `phases` y `applies_to` son metadata
+opcional del planner compartido; los reviewers existentes no necesitan
+migrarse para que Codex los descubra.
+
 El panel lo descubre por el nombre y lo lanza junto a los 3 core en `/sdd:run` y `/sdd:review`. Al estar versionado, todo el equipo lo recibe al clonar. Los core no se desactivan por proyecto (son el suelo de calidad; para secciones triviales está `solo`).
 
 No hace falta que se te ocurran a ti: `/sdd:init` (y sus re-ejecuciones) sugiere revisores para las lentes que detecta en tu plan/código sin cobertura core — solo cuando las reglas dan para un referente afilado, porque un revisor con referente vago no encontrará nada que el contrato no descarte.

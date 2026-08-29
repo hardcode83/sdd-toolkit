@@ -42,6 +42,10 @@ on unavailable or unverifiable results. No `~/.codex/agents`, copied prompts,
 symlinks, or project-local Codex configuration is needed. Existing
 `.claude/agents/sdd-review-*.md` files remain additive project reviewers for
 both runtimes, and MiniMax continues through the Claude route.
+Legacy Claude frontmatter (`description`, `model`, and `tools`) remains
+accepted; shared-planner metadata `phases` and `applies_to` is optional for
+those reviewers. Claude model/tool declarations are not Codex model selection
+or capability grants.
 
 Verified: with the block in place, `printenv CLAUDE_PLUGIN_ROOT` inside a Codex
 shell returns the installed root, `cat "${CLAUDE_PLUGIN_ROOT}/rules.md"`
