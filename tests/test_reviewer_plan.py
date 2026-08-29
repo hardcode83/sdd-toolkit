@@ -119,6 +119,16 @@ class ReviewerPlanTests(unittest.TestCase):
             write("sdd-review-missing.md", "name: sdd-review-missing")
             write("sdd-review-ambiguous.md", "name: sdd-review-ambiguous\nphases: run\nphases: review")
             write("sdd-review-unsafe.md", "name: wrong-name")
+            # The frontmatter Claude Code actually requires: `description` is
+            # mandatory for the agent to be discoverable, `model`/`tools` are
+            # common. None are consumed here, and refusing them made every
+            # launchable project reviewer `unavailable` — a fail-closed gate that
+            # no repository could pass. Surplus keys are ignored, not rejected.
+            write(
+                "sdd-review-claude.md",
+                "name: sdd-review-claude\ndescription: Project reviewer for the SDD panel.\n"
+                "model: sonnet\ntools: Read, Grep, Glob, Bash\nphases: run\napplies_to: src/**",
+            )
             match = self.rp.discover_project_reviewers(root)
             by_id = {item.reviewer_id: item for item in match}
             scope = {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]}
@@ -126,6 +136,13 @@ class ReviewerPlanTests(unittest.TestCase):
             self.assertEqual(self.rp.evaluate_applicability(by_id["sdd-review-missing"], "run", scope)[0], self.rp.Applicability.UNKNOWN)
             self.assertEqual(by_id["sdd-review-ambiguous"].lens, "unavailable")
             self.assertEqual(by_id["sdd-review-unsafe"].lens, "unavailable")
+            claude = by_id["sdd-review-claude"]
+            self.assertEqual(claude.lens, "claude")
+            self.assertEqual(self.rp.evaluate_applicability(claude, "run", scope)[0], self.rp.Applicability.MATCH)
+            # A duplicate is still a duplicate, even among ignored keys.
+            write("sdd-review-twice.md", "name: sdd-review-twice\ndescription: a\ndescription: b")
+            again = {item.reviewer_id: item for item in self.rp.discover_project_reviewers(root)}
+            self.assertEqual(again["sdd-review-twice"].lens, "unavailable")
 
     def test_symlink_reviewer_is_unavailable_and_does_not_suppress_core(self):
         with tempfile.TemporaryDirectory() as temp:
