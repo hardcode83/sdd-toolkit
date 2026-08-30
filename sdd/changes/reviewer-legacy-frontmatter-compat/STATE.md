@@ -1,10 +1,10 @@
 ---
 schema: 1
-state: LOCAL_VERIFIED
+state: READY_FOR_PR
 local_review: APPROVED
-repository:
-base_branch:
-head_branch:
+repository: hardcode83/sdd-toolkit
+base_branch: main
+head_branch: sdd/reviewer-legacy-frontmatter-compat
 implementation_sha: f4c200e3aef2c0f24431f1fc10231038aeb84261
 pr_number:
 pr_url:
