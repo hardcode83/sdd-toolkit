@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
 from tests.test_reviewer_plan import load_module, ROOT
@@ -66,6 +67,45 @@ class ReviewerAdapterTests(unittest.TestCase):
         result = self.rp.dispatch_minimax_panel(self.plan, fake, "x", self.refs())
         self.assertTrue(result.passed)
         self.assertEqual(len(fake.requests), 1)
+
+    def test_claude_legacy_file_is_preserved_without_changing_dispatch_skills(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / ".claude" / "agents" / "sdd-review-performance.md"
+            agent.parent.mkdir(parents=True)
+            source = "---\nname: sdd-review-performance\ndescription: Legacy\nmodel: sonnet\ntools: Read\n---\nCheck performance.\n"
+            agent.write_text(source, encoding="utf-8")
+            scope = {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]}
+            plan = self.rp.build_reviewer_plan(root, "run", scope)
+            fake = FakeClaude([dict(payload, evidence=["src/a.py"]) for payload in [
+                {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
+                 "verdict": "PASS", "findings": [], "evidence": ["src/a.py"], "status": "complete"}
+                for item in plan]])
+            self.assertTrue(self.rp.dispatch_claude_panel(plan, fake, "x", self.refs()).passed)
+            self.assertEqual(agent.read_text(encoding="utf-8"), source)
+            project_request = next(request for request in fake.requests[0] if "sdd-review-performance" in request)
+            self.assertIn("Check performance.", project_request)
+            self.assertNotIn("model: sonnet", project_request)
+            self.assertNotIn("tools: Read", project_request)
+
+    def test_codex_legacy_handoff_keeps_body_and_scope_without_claude_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / ".claude" / "agents" / "sdd-review-performance.md"
+            agent.parent.mkdir(parents=True)
+            agent.write_text(
+                "---\nname: sdd-review-performance\ndescription: Legacy\nmodel: sonnet\ntools: Read\n---\nCheck performance.\n",
+                encoding="utf-8",
+            )
+            scope = {"feature": "x", "scope_id": "run:x", "files": ["src/a.py"]}
+            plan = self.rp.build_reviewer_plan(root, "run", scope)
+            handoff = self.rp.build_codex_handoff(plan, "x", ROOT, self.refs())
+            request = next(item for item in handoff["requests"] if item["reviewer_id"] == "sdd-review-performance")
+            self.assertIn("Check performance.", request["prompt"])
+            self.assertEqual(request["scope_id"], "run:x")
+            self.assertEqual(request["sandbox"], "read-only")
+            self.assertNotIn("model: sonnet", request["prompt"])
+            self.assertNotIn("tools: Read", request["prompt"])
 
     def codex_handoff(self, payloads=None):
         handoff = self.rp.build_codex_handoff(self.plan, "x", ROOT, self.refs())
