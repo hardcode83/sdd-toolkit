@@ -171,6 +171,7 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
     if not match:
         raise ValueError("missing frontmatter")
     values: dict[str, str] = {}
+    seen: set[str] = set()
     for line in match.group("head").splitlines():
         if not line.strip():
             continue
