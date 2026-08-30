@@ -185,6 +185,18 @@ class LifecycleTests(unittest.TestCase):
         archive = self.root / "sdd/changes/archive/2026-07-28-example"
         self.assertEqual("ARCHIVED", read_state(archive)["state"])
 
+    def test_lifecycle_commit_state_has_no_trailing_whitespace(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+
+        state_file = self.change / "STATE.md"
+        lines = state_file.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(lines)
+        self.assertTrue(all(line == line.rstrip() for line in lines))
+        committed = self.git(
+            "show", "HEAD:sdd/changes/example/STATE.md"
+        ).stdout.splitlines()
+        self.assertTrue(all(line == line.rstrip() for line in committed))
+
     def test_start_is_idempotent(self) -> None:
         self.assertEqual(
             "Lifecycle already initialized at state ACTIVE.",

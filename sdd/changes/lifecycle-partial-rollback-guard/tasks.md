@@ -30,6 +30,6 @@ parcial nunca puede certificarse; y `validate_ship_suffix()` y
 ## 4. Verification
 
 - [x] 4.1 Ejecutar la regresión lifecycle focalizada: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tests.test_sdd_lifecycle.LifecycleTests.test_mark_ready_commits_state_only_with_stable_anchor tests.test_sdd_lifecycle.LifecycleTests.test_complete_permitted_transition_sequence` [R3, R4]
-- [x] 4.2 Ejecutar la suite completa: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v` [R1, R2, R3, R4] <!-- 410 PASS, 1 skipped -->
+- [x] 4.2 Ejecutar la suite completa: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v` [R1, R2, R3, R4] <!-- 411 PASS, 1 skipped -->
 - [x] 4.3 Ejecutar las validaciones de contratos del toolkit: `python3 scripts/validate_toolkit.py all` [R1, R2, R3, R4]
 - [x] 4.4 Ejecutar las validaciones específicas: `python3 scripts/validate_toolkit.py manifests`, `python3 scripts/validate_toolkit.py skills`, `python3 scripts/validate_toolkit.py boundary` y `python3 scripts/validate_toolkit.py fixtures` [R1, R2, R3, R4]

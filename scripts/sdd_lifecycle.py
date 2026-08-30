@@ -375,7 +375,10 @@ def render_state(data: dict[str, str]) -> str:
     normalized = {field: data.get(field, "") for field in STATE_FIELDS}
     normalized["schema"] = normalized["schema"] or "1"
     lines = ["---"]
-    lines.extend(f"{field}: {normalized[field]}" for field in STATE_FIELDS)
+    lines.extend(
+        f"{field}: {normalized[field]}" if normalized[field] else f"{field}:"
+        for field in STATE_FIELDS
+    )
     lines.extend(
         [
             "---",
