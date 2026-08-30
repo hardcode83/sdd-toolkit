@@ -22,10 +22,18 @@ reviewer coverage, scope, identity, and the fail-closed certification boundary.
 
 - Core reviewer identity, lens, read-only contract, criteria, and referents are
   defined once in the packaged reviewer registry.
+- Repository-local project reviewers accept the documented union of Claude
+  legacy fields (`name`, `description`, `model`, `tools`) and planner metadata
+  (`phases`, `applies_to`), including legacy-only, new-only, and mixed forms.
+- Claude `model` and `tools` remain provider-specific declarations; Codex uses
+  the reviewer body, identity, scope, and toolkit-owned read-only contract
+  without treating them as Codex capabilities.
 - Project reviewer applicability reuses the existing `phases` and `applies_to`
   matching semantics for `run`, `review`, and `auto`.
 - `MATCH` and `UNKNOWN` project reviewers run; only definitive `NO MATCH` may
   be skipped, with the decision and reason retained in the plan.
+- Malformed or unevaluable applicability metadata remains `UNKNOWN` and
+  runnable rather than becoming a definitive skip.
 - Core reviewers are unconditional wherever the lifecycle requires a panel.
 
 ### R3 — Runtime adapter parity
