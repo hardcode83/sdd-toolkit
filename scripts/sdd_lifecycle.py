@@ -208,6 +208,57 @@ def commit_state_text(
     return run_command(["git", "show", f"{commit}:{path}"], root, runner).stdout
 
 
+def ensure_parent_state_matches(
+    root: Path,
+    change: Path,
+    expected_before: str,
+    runner: Runner = subprocess.run,
+) -> None:
+    """Require the working STATE and HEAD's STATE to share a transition source."""
+    expected_path = lifecycle_path(root, change.name, runner)
+    local = read_state(change)
+    if not local:
+        raise LifecycleError(f"{expected_path} is missing a readable local STATE.md.")
+    local_state = local.get("state", "")
+    try:
+        parent = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+        parent_text = commit_state_text(root, parent, expected_path, runner)
+        parent_state = state_from_text(parent_text, f"{parent}:{expected_path}")
+        parent_state_name = parent_state.get("state", "")
+    except Exception as error:
+        raise LifecycleError(
+            "Lifecycle state continuity mismatch before transition: "
+            f"expected {expected_before}, local STATE.md={local_state or '(missing)'}, "
+            "parent Git STATE.md=invalid or missing; refusing to continue. "
+            f"Details: {error}"
+        ) from error
+    mismatches = [
+        field
+        for field in STATE_FIELDS
+        if local.get(field, "") != parent_state.get(field, "")
+    ]
+    if local_state != expected_before or parent_state_name != expected_before or mismatches:
+        detail = (
+            ", differing fields: " + ", ".join(mismatches)
+            if mismatches
+            else ""
+        )
+        raise LifecycleError(
+            "Lifecycle state continuity mismatch before transition: "
+            f"expected {expected_before}, local STATE.md={local_state or '(missing)'}, "
+            f"parent Git STATE.md={parent_state_name or '(missing)'}{detail}; "
+            "refusing to continue."
+        )
+
+
+def restore_state_bytes(path: Path, original_exists: bool, original_bytes: bytes) -> None:
+    """Restore the pre-commit STATE bytes without changing user-owned paths."""
+    if original_exists:
+        path.write_bytes(original_bytes)
+    elif path.exists():
+        path.unlink()
+
+
 def lifecycle_commit(
     root: Path,
     feature: str,
@@ -229,12 +280,23 @@ def lifecycle_commit(
     """
     expected_path = lifecycle_path(root, feature, runner)
     ensure_clean_or_only_expected_state(root, expected_path, runner)
+    try:
+        expected_before, _ = transition.split("->", 1)
+    except ValueError as error:
+        raise LifecycleError(f"Invalid lifecycle transition '{transition}'.") from error
+    change = active_change(root, feature)
+    ensure_parent_state_matches(root, change, expected_before, runner)
     path = repo_root(root, runner) / expected_path
+    current_state = read_state(change)
+    if not current_state or (change / "STATE.md").read_text(encoding="utf-8") != render_state(current_state):
+        raise LifecycleError(
+            "STATE.md has pre-existing edits; refusing to overwrite lifecycle metadata."
+        )
     original_exists = path.exists()
     original_bytes = path.read_bytes() if original_exists else b""
     parent = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
-    write_state(path.parent, data)
     try:
+        write_state(path.parent, data)
         run_command(["git", "add", "--", expected_path], root, runner)
         subject = f"chore(sdd): lifecycle {feature} {transition}"
         commit_args: list[str] = [
@@ -262,12 +324,21 @@ def lifecycle_commit(
             raise LifecycleError(
                 f"git commit failed: {detail or 'unknown error'}"
             )
-    except Exception:
-        run_command(["git", "restore", "--staged", "--", expected_path], root, runner)
-        if original_exists:
-            path.write_bytes(original_bytes)
-        elif path.exists():
-            path.unlink()
+    except Exception as commit_error:
+        rollback_errors: list[str] = []
+        try:
+            run_command(["git", "restore", "--staged", "--", expected_path], root, runner)
+        except Exception as error:
+            rollback_errors.append(f"staging restoration failed: {error}")
+        try:
+            restore_state_bytes(path, original_exists, original_bytes)
+        except Exception as error:
+            rollback_errors.append(f"STATE.md byte restoration failed: {error}")
+        if rollback_errors:
+            raise LifecycleError(
+                "Lifecycle commit failed and rollback is incomplete: "
+                + "; ".join(rollback_errors)
+            ) from commit_error
         raise
     child = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
     if child == parent:
@@ -304,7 +375,10 @@ def render_state(data: dict[str, str]) -> str:
     normalized = {field: data.get(field, "") for field in STATE_FIELDS}
     normalized["schema"] = normalized["schema"] or "1"
     lines = ["---"]
-    lines.extend(f"{field}: {normalized[field]}" for field in STATE_FIELDS)
+    lines.extend(
+        f"{field}: {normalized[field]}" if normalized[field] else f"{field}:"
+        for field in STATE_FIELDS
+    )
     lines.extend(
         [
             "---",
@@ -1455,7 +1529,9 @@ def start_change(root: Path, feature: str) -> str:
     return "ACTIVE recorded."
 
 
-def mark_local_verified(root: Path, feature: str) -> str:
+def mark_local_verified(
+    root: Path, feature: str, runner: Runner = subprocess.run
+) -> str:
     change = active_change(root, feature)
     ensure_local_gates(change)
     data = read_state(change) or initial_state()
@@ -1464,6 +1540,7 @@ def mark_local_verified(root: Path, feature: str) -> str:
         current in {"READY_FOR_PR", "PR_OPEN", "MERGED"}
         and data.get("local_review") == "APPROVED"
     ):
+        ensure_parent_state_matches(root, change, current, runner)
         return f"Local verification already recorded; lifecycle is {current}."
     if current not in {"ACTIVE", "LOCAL_VERIFIED"}:
         raise LifecycleError(
@@ -1472,12 +1549,13 @@ def mark_local_verified(root: Path, feature: str) -> str:
     data["state"] = "LOCAL_VERIFIED"
     data["local_review"] = "APPROVED"
     if current == "LOCAL_VERIFIED":
+        ensure_parent_state_matches(root, change, current, runner)
         return "LOCAL_VERIFIED already recorded."
     data["implementation_sha"] = run_command(
-        ["git", "rev-parse", "HEAD"], root
+        ["git", "rev-parse", "HEAD"], root, runner
     ).stdout.strip()
-    lifecycle = lifecycle_commit(root, feature, "ACTIVE->LOCAL_VERIFIED", data)
-    classify_lifecycle_commit(root, lifecycle, feature)
+    lifecycle = lifecycle_commit(root, feature, "ACTIVE->LOCAL_VERIFIED", data, runner)
+    classify_lifecycle_commit(root, lifecycle, feature, runner)
     return "LOCAL_VERIFIED recorded."
 
 
@@ -1501,6 +1579,7 @@ def mark_ready(
         raise LifecycleError(f"Cannot mark READY_FOR_PR from lifecycle state '{current}'.")
     expected_path = lifecycle_path(root, feature, runner)
     ensure_clean_or_only_expected_state(root, expected_path, runner)
+    ensure_parent_state_matches(root, change, "LOCAL_VERIFIED", runner)
     if (change / "STATE.md").read_text(encoding="utf-8") != render_state(data):
         raise LifecycleError(
             "STATE.md has pre-existing edits; refusing to overwrite lifecycle metadata."
