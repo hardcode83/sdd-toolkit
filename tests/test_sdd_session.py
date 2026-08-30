@@ -1076,21 +1076,35 @@ class DecommissionTests(RetirementFixture):
         shutil.rmtree(self.linked)
         self.assertEqual([], sdd_session.all_orphans(self.root))
 
-    @unittest.skipUnless(sys.platform == "darwin", "the ACL is a macOS/Docker Desktop fact")
     def test_a_deny_delete_acl_is_stripped_instead_of_being_printed(self) -> None:
-        """The real blocker, reproduced: an empty directory that is yours, with
-        `rwx`, that neither chmod -R nor sudo can remove — Docker Desktop sets it
-        on volume mountpoints and it outlives the volume."""
+        """A delete failure is recovered by stripping the deny-delete ACL."""
         tree = self.root / "acl-fixture"
         mountpoint = tree / "node_modules"
         mountpoint.mkdir(parents=True)
-        subprocess.run(
-            ["chmod", "+a", f"user:{os.getlogin()} deny delete", str(mountpoint)],
-            check=True, capture_output=True,
-        )
-        with self.assertRaises(OSError):
-            shutil.rmtree(tree)
-        gone, note = sdd_session.remove_directory(tree)
+        original_rmtree = shutil.rmtree
+        calls = 0
+
+        def rmtree(path):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls <= 2:
+                raise OSError("deny delete ACL")
+            return original_rmtree(path)
+
+        def runner(args, **kwargs):  # type: ignore[no-untyped-def]
+            self.assertEqual(["chmod", "-R", "-N", str(tree)], args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        with mock.patch.object(
+            sdd_session.sys, "platform", "darwin"
+        ), mock.patch.object(
+            sdd_session.shutil,
+            "rmtree",
+            side_effect=rmtree,
+        ) as rmtree:
+            with self.assertRaises(OSError):
+                rmtree(tree)
+            gone, note = sdd_session.remove_directory(tree, runner=runner)
         self.assertTrue(gone, note)
         self.assertIn("ACL", note)
 
