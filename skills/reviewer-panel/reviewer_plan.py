@@ -187,6 +187,8 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
         raise ValueError("filename/name mismatch")
     def csv(key: str) -> list[str]:
         value = values.get(key, "")
+        if value.startswith("[") != value.endswith("]"):
+            return [""]
         if value.startswith("[") and value.endswith("]"):
             value = value[1:-1]
         return [part.strip().strip("'\"") for part in value.split(",") if part.strip()]

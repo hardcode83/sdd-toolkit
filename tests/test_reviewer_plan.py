@@ -136,6 +136,22 @@ class ReviewerPlanTests(unittest.TestCase):
             self.assertEqual(project.dispatch_status, "planned")
             self.assertEqual([item.reviewer_id for item in plan[:3]], list(self.rp.MANDATORY_CORE))
 
+    def test_malformed_applicability_remains_unknown_and_runnable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            (directory / "sdd-review-malformed.md").write_text(
+                "---\nname: sdd-review-malformed\nphases: run\napplies_to: [src/**\n---\nbody",
+                encoding="utf-8",
+            )
+            plan = self.rp.build_reviewer_plan(
+                root, "run", {"feature": "x", "scope_id": "run:x", "files": ["docs/a.md"]}
+            )
+            project = next(item for item in plan if item.reviewer_id == "sdd-review-malformed")
+            self.assertEqual(project.applicability, self.rp.Applicability.UNKNOWN)
+            self.assertEqual(project.dispatch_status, "planned")
+
     def test_prompt_binds_scope_and_identity(self):
         item = self.rp.build_reviewer_plan(ROOT, "review", {"feature": "x", "scope_id": "implementation..HEAD", "files": ["src/a.py"]})[0]
         prompt = self.rp.build_reviewer_prompt(item, "x", {"requirements": "R1 requirement", "design": "D1 decision", "steering": "read-only", "scope": "src/a.py"})
