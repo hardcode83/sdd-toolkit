@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -261,6 +262,67 @@ class LifecycleTests(unittest.TestCase):
             mark_ready(self.root, FEATURE, "main")
         self.assertEqual(before, state_file.read_bytes())
 
+    def test_mark_local_verified_rejects_unstaged_state_edit_without_overwrite(self) -> None:
+        state_file = self.change / "STATE.md"
+        original = state_file.read_bytes()
+        state_file.write_bytes(original + b"manual edit\n")
+        before = state_file.read_bytes()
+
+        with self.assertRaisesRegex(LifecycleError, "pre-existing edits"):
+            mark_local_verified(self.root, FEATURE)
+
+        self.assertEqual(before, state_file.read_bytes())
+        self.assertEqual("ACTIVE", read_state(self.change)["state"])
+        self.assertEqual("fixture", self.git("show", "-s", "--format=%s", "HEAD").stdout.strip())
+
+    def test_mark_ready_rejects_unmaterialized_local_verified_state(self) -> None:
+        state = read_state(self.change)
+        state["state"] = "LOCAL_VERIFIED"
+        state["local_review"] = "APPROVED"
+        state["implementation_sha"] = self.implementation_sha
+        write_state(self.change, state)
+        head_before = self.git("rev-parse", "HEAD").stdout.strip()
+
+        with self.assertRaisesRegex(LifecycleError, "continuity mismatch.*expected LOCAL_VERIFIED"):
+            mark_ready(self.root, FEATURE, "main")
+
+        self.assertEqual(head_before, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            ["fixture"], self.git("log", "--format=%s", "-2").stdout.splitlines()
+        )
+
+    def test_mark_local_verified_rejects_unmaterialized_idempotent_state(self) -> None:
+        state = read_state(self.change)
+        state["state"] = "LOCAL_VERIFIED"
+        state["local_review"] = "APPROVED"
+        state["implementation_sha"] = self.implementation_sha
+        write_state(self.change, state)
+
+        with self.assertRaisesRegex(
+            LifecycleError, "continuity mismatch.*expected LOCAL_VERIFIED"
+        ):
+            mark_local_verified(self.root, FEATURE)
+
+        self.assertEqual("LOCAL_VERIFIED", read_state(self.change)["state"])
+        self.assertEqual("fixture", self.git("show", "-s", "--format=%s", "HEAD").stdout.strip())
+
+    def test_mark_ready_rejects_manual_implementation_anchor_edit(self) -> None:
+        mark_local_verified(self.root, FEATURE)
+        state_file = self.change / "STATE.md"
+        state = read_state(self.change)
+        state["implementation_sha"] = "f" * 40
+        write_state(self.change, state)
+
+        with self.assertRaisesRegex(
+            LifecycleError, "continuity mismatch.*implementation_sha"
+        ):
+            mark_ready(self.root, FEATURE, "main")
+
+        self.assertEqual("LOCAL_VERIFIED", read_state(self.change)["state"])
+        self.assertEqual("f" * 40, read_state(self.change)["implementation_sha"])
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+        self.assertTrue(state_file.is_file())
+
     def test_mark_ready_commit_failure_rolls_back_helper_staging(self) -> None:
         mark_local_verified(self.root, FEATURE)
         state_file = self.change / "STATE.md"
@@ -275,6 +337,84 @@ class LifecycleTests(unittest.TestCase):
             mark_ready(self.root, FEATURE, "main", runner=failing_runner)
         self.assertEqual(before, state_file.read_bytes())
         self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+
+    def _exercise_incomplete_rollback(
+        self, *, fail_staging_restore: bool, fail_bytes_restore: bool
+    ) -> None:
+        state_file = self.change / "STATE.md"
+        original_bytes = state_file.read_bytes()
+        head_before = self.git("rev-parse", "HEAD").stdout.strip()
+        lifecycle_commits_before = self.git(
+            "log", "--format=%s", "-10"
+        ).stdout.splitlines()
+        rollback_attempts: list[str] = []
+
+        def runner(args: list[str], **kwargs: object):
+            if args[:2] == ["git", "commit"]:
+                return subprocess.CompletedProcess(
+                    args, 1, "", "synthetic commit failure"
+                )
+            if args[:4] == ["git", "restore", "--staged", "--"]:
+                rollback_attempts.append("staging")
+                if fail_staging_restore:
+                    return subprocess.CompletedProcess(
+                        args, 1, "", "synthetic staging rollback failure"
+                    )
+            return subprocess.run(args, **kwargs)  # type: ignore[arg-type]
+
+        original_restore_state_bytes = sdd_lifecycle.restore_state_bytes
+
+        def restore_state_bytes(path: Path, exists: bool, data: bytes) -> None:
+            if path.resolve() == state_file.resolve():
+                rollback_attempts.append("bytes")
+                if fail_bytes_restore:
+                    raise OSError("synthetic STATE.md byte rollback failure")
+            original_restore_state_bytes(path, exists, data)
+
+        with mock.patch.object(
+            sdd_lifecycle, "restore_state_bytes", restore_state_bytes
+        ):
+            with self.assertRaisesRegex(
+                LifecycleError,
+                "rollback is incomplete|synthetic commit failure",
+            ) as raised:
+                mark_local_verified(self.root, FEATURE, runner=runner)
+
+        self.assertEqual(head_before, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            lifecycle_commits_before,
+            self.git("log", "--format=%s", "-10").stdout.splitlines(),
+        )
+        if fail_staging_restore:
+            self.assertIn("staging", rollback_attempts)
+        if fail_bytes_restore:
+            self.assertIn("bytes", rollback_attempts)
+        if fail_staging_restore and fail_bytes_restore:
+            self.assertIn("staging restoration failed", str(raised.exception))
+            self.assertIn("STATE.md byte restoration failed", str(raised.exception))
+        elif fail_bytes_restore:
+            self.assertIn("STATE.md byte restoration failed", str(raised.exception))
+        else:
+            self.assertEqual(original_bytes, state_file.read_bytes())
+
+        with self.assertRaises(LifecycleError):
+            mark_ready(self.root, FEATURE, "main")
+        self.assertEqual(head_before, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_commit_failure_and_staging_rollback_failure_are_terminal(self) -> None:
+        self._exercise_incomplete_rollback(
+            fail_staging_restore=True, fail_bytes_restore=False
+        )
+
+    def test_commit_failure_and_state_bytes_rollback_failure_are_terminal(self) -> None:
+        self._exercise_incomplete_rollback(
+            fail_staging_restore=False, fail_bytes_restore=True
+        )
+
+    def test_commit_failure_reports_both_rollback_failures_and_attempts_both(self) -> None:
+        self._exercise_incomplete_rollback(
+            fail_staging_restore=True, fail_bytes_restore=True
+        )
 
     def test_record_pr_commits_state_without_invoking_push(self) -> None:
         self.ready()
