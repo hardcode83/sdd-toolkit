@@ -142,7 +142,7 @@ class ReviewerPlanTests(unittest.TestCase):
             directory = root / ".claude" / "agents"
             directory.mkdir(parents=True)
             (directory / "sdd-review-malformed.md").write_text(
-                "---\nname: sdd-review-malformed\nphases: run\napplies_to: [src/**\n---\nbody",
+                "---\nname: sdd-review-malformed\nphases: run\napplies_to: src/[\n---\nbody",
                 encoding="utf-8",
             )
             plan = self.rp.build_reviewer_plan(

@@ -191,7 +191,27 @@ def _parse_project(path: Path, root: Path) -> ReviewerDefinition:
             return [""]
         if value.startswith("[") and value.endswith("]"):
             value = value[1:-1]
-        return [part.strip().strip("'\"") for part in value.split(",") if part.strip()]
+        parts = [part.strip().strip("'\"") for part in value.split(",") if part.strip()]
+        if key == "applies_to":
+            for pattern in parts:
+                bracket_open = False
+                escaped = False
+                for character in pattern:
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == "[":
+                        if bracket_open:
+                            return [""]
+                        bracket_open = True
+                    elif character == "]":
+                        if not bracket_open:
+                            return [""]
+                        bracket_open = False
+                if bracket_open:
+                    return [""]
+        return parts
     return ReviewerDefinition(name, "project", name.removeprefix("sdd-review-") or "project",
                               match.group("body"),
                               "Read-only: inspect only; never edit, commit, or run lifecycle commands.",
