@@ -39,21 +39,44 @@ gap is useful; a reviewer still exploring at turn 200 is not reviewing.
 - Scope creep: code implementing behavior no requirement asks for.
 - Wrong-layer logic, dependencies in the forbidden direction, coupling that a steering rule prohibits.
 
-## Output contract (your final message)
+## Output contract (your final message is JSON, nothing else)
 
-A findings list, most severe first. Each finding MUST have:
+Your whole final message is one JSON object — the result envelope the panel
+gate (`skills/reviewer-panel/reviewer_plan.py`) validates. No prose before or
+after it: the orchestrator reads findings from the JSON and never reads
+reviewer prose, which is what keeps its context flat.
 
-- `file:line`
-- **referent**: the specific D#, R#, or quoted steering rule it violates — a
-  finding with no referent must NOT be reported; general preferences and
-  style opinions are out of scope.
-- one sentence: what the code does vs what the referent requires.
-- a one-line fix direction (no code).
+```json
+{
+  "reviewer_id": "sdd-architect",
+  "scope_id": "<exactly as given in the prompt>",
+  "lens": "architecture",
+  "verdict": "PASS | FAIL",
+  "status": "complete",
+  "evidence": ["<in-scope file or referent path you actually verified>"],
+  "findings": [
+    {
+      "severity": "high | medium | low",
+      "file": "path/to/file", "line": 42,
+      "referent": "D3 | R2 | steering/architecture.md: <quoted rule>",
+      "what": "one sentence: what the code does vs what the referent requires",
+      "fix": "one-line fix direction, no code",
+      "kind": "finding"
+    }
+  ],
+  "unreached": ["what you could not verify within the budget, if anything"]
+}
+```
 
-End with a verdict: `PASS` (no findings) or `FAIL (<n> findings)`.
-If a referent is itself wrong or contradictory (the design no longer fits
-reality), report that separately as `DESIGN-CONFLICT` — the main agent
-handles it via the deviation rule, not as a code fix.
+Rules: a finding with no **referent** must NOT be reported. Findings go most
+severe first. `PASS` means no findings and a non-empty `evidence` list of paths
+from the scope you actually read; `FAIL` requires at least one finding. A
+budget cut goes in `unreached` — a partial result with a stated gap is useful, a
+silent one is not.
+General preferences and style opinions are out of scope. If a referent is
+itself wrong or contradictory (the design no longer fits reality), report it as
+a finding with `"kind": "DESIGN-CONFLICT"` — the orchestrator handles it via
+the deviation rule, not as a code fix.
 
 Never modify files. Never run state-changing commands (git diff/log, reads
 and greps only).

@@ -46,17 +46,41 @@ reviewer still exploring at turn 200 is not reviewing.
 - New attack surface the proposal doesn't account for (new endpoint, new
   input channel, new dependency) — flag it even if not exploitable yet.
 
-## Output contract (your final message)
+## Output contract (your final message is JSON, nothing else)
 
-A findings list, most severe first. Each finding MUST have:
+Your whole final message is one JSON object — the result envelope the panel
+gate (`skills/reviewer-panel/reviewer_plan.py`) validates. No prose before or
+after it: the orchestrator reads findings from the JSON and never reads
+reviewer prose, which is what keeps its context flat.
 
-- `file:line`
-- **referent**: the quoted `security.md` rule, or the named vulnerability
-  class with the concrete evidence (input path → sink). No referent or
-  evidence → do not report it.
-- one sentence: the failure scenario (who can do what they shouldn't).
-- a one-line fix direction (no code).
+```json
+{
+  "reviewer_id": "sdd-security",
+  "scope_id": "<exactly as given in the prompt>",
+  "lens": "security",
+  "verdict": "PASS | FAIL",
+  "status": "complete",
+  "evidence": ["<in-scope file or referent path you actually verified>"],
+  "findings": [
+    {
+      "severity": "high | medium | low",
+      "file": "path/to/file", "line": 42,
+      "referent": "steering/security.md: <quoted rule> | <vulnerability class>: <input path → sink>",
+      "what": "one sentence: the failure scenario (who can do what they shouldn't)",
+      "fix": "one-line fix direction, no code",
+      "kind": "finding"
+    }
+  ],
+  "unreached": ["what you could not verify within the budget, if anything"]
+}
+```
 
-End with a verdict: `PASS` or `FAIL (<n> findings)`.
+Rules: a finding with no **referent** must NOT be reported. Findings go most
+severe first. `PASS` means no findings and a non-empty `evidence` list of paths
+from the scope you actually read; `FAIL` requires at least one finding. A
+budget cut goes in `unreached` — a partial result with a stated gap is useful, a
+silent one is not.
+No referent or evidence → do not report it. Speculative hardening advice is
+not a finding.
 
 Never modify files. Reads, greps and `git diff`/`git log` only.

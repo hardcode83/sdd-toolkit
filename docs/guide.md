@@ -167,10 +167,13 @@ No hace falta que se te ocurran a ti: `/sdd:init` (y sus re-ejecuciones) sugiere
 
 **Sección de puro scaffolding** → `/sdd:run <feature> solo` (sin panel).
 
+**Una sección difícil dentro de un change normal** → márcala en `tasks.md` con `<!-- hard -->` al final de su heading (`## 3. State machine <!-- hard -->`). `run` implementa cada sección con un subagente fresco en sonnet; las marcadas van en opus. Es lo único que escala el modelo, así que úsalo a propósito. Y si un revisor de proyecto te sale en cada sección aunque no toque su ámbito, es que le falta `applies_to` en el frontmatter (`/sdd:doctor` lo avisa como `SDD028`).
+
 **Una tarea endiablada dentro del change** (algoritmo, state machine, concurrencia — donde dos implementaciones correctas pueden diferir mucho en calidad) → tournament, señalando la tarea por su número en `tasks.md`:
 
 ```
-/sdd:run timeline-state-machine tournament 2.1
+/sdd:tournament timeline-state-machine 2.1
+/sdd:run timeline-state-machine tournament 2.1   # equivalente
 ```
 
 Solo esa tarea compite: 3 agentes la implementan en paralelo en worktrees aislados con ángulos distintos (simple-correcto / performance / defensivo), el panel juzga los 3 diffs contra los mismos referentes, el ganador se aplica y se injertan las ideas buenas de los perdedores. ~3× el coste de *esa tarea*; el resto del change va por run normal. No lo uses para CRUD — el panel normal ya cubre eso.
