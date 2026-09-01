@@ -243,10 +243,13 @@ Then, for the feature at hand:
    Those final effects are permitted only once the merge is objectively proven
    — a `MERGED` PR, or the reviewed commit contained in the base branch.
 9. **Return to base and continue.** If this feature ran in its own worktree,
-    go back to the main worktree (`EnterWorktree` with the original `path`, or
-    `ExitWorktree` with `action: "keep"` when auto created it this session) and
-    leave the worktree **on disk** — the change is not merged yet, so its work
-    must survive. Otherwise `git checkout BASE`. Then take the next entry.
+    go back to the main worktree — `ExitWorktree` with `action: "keep"` when
+    this session entered it through `EnterWorktree`; otherwise (a session
+    pinned to the worktree) `EnterWorktree` cannot target the main worktree
+    and `ExitWorktree` no-ops, so run what follows as
+    `cd <main_worktree> && <command>` per call — and leave the worktree **on
+    disk** — the change is not merged yet, so its work must survive. Otherwise
+    `git checkout BASE`. Then take the next entry.
     Never archive or remove a worktree here; that is `/sdd:archive`'s job, after
     the merge is proven.
 

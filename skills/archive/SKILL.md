@@ -29,19 +29,30 @@ Write spec updates in the same language as the existing specs (or the user's lan
 
    Check where you are: `git rev-parse --git-dir` returning a path under
    `.git/worktrees/` means this is a linked worktree; `sdd_session.py --root .
-   check` names the main one (`main_worktree` in its JSON). Prefer to leave first
-   (`EnterWorktree` with the main worktree's `path`, or `ExitWorktree` with
-   `action: "keep"`) and re-run there.
+   check` names the main one (`main_worktree` in its JSON).
 
-   What that rule is actually about is the **base branch**, not the directory:
-   steps 3–6 write `sdd/specs/`, `sdd/roadmap.md` and `sdd/metrics.md`, and those
+   **Standing in a feature worktree is normal, not a stop condition — and not a
+   job for the worktree tools.** `EnterWorktree` refuses the main worktree by
+   design (it only enters *linked* worktrees), and `ExitWorktree` no-ops in any
+   session that did not arrive through `EnterWorktree`; in a pinned session (an
+   Orca workspace, a `claude` started inside the worktree) both fail every
+   time, and a bare `cd` is reset before the next call. The sanctioned way is
+   per command: run **every** command of this flow as
+   `cd <main_worktree> && <command>` inside a single Bash call, or pass
+   `--root <main_worktree>` to the SDD scripts. In the measured sessions that
+   fallback always worked; the only archive that stalled was the one that
+   declared a "hard stop" and handed the work back to the user.
+
+   What rule 10 is actually about is the **base branch**, not your cwd: steps
+   3–6 write `sdd/specs/`, `sdd/roadmap.md` and `sdd/metrics.md`, and those
    writes belong on the base — from the feature's branch they would land in the
-   change nobody is going to merge again. So if you cannot move (a session pinned
-   to one workspace, per-feature Orca-style sessions), the question to answer is
-   where the base branch is checked out and whether you are on it, and git allows
-   exactly one worktree to hold it at a time. If you are not on it and cannot get
-   to it, say so and stop before writing anything: half an archive on the wrong
-   branch costs more than a re-run.
+   change nobody is going to merge again. So the question to answer is where
+   the base branch is checked out, and git allows exactly one worktree to hold
+   it at a time — normally the main one. Only if the main worktree's HEAD is
+   **not** on the base branch and you cannot switch it safely (it is somebody
+   else's session, or it carries work that is not yours to move), say so and
+   stop before writing anything: half an archive on the wrong branch costs more
+   than a re-run.
 
    What is **no longer** a reason to stop is standing in the worktree that has to
    be retired. Retirement relocates itself (step 7), so the feature's own session
@@ -103,7 +114,9 @@ Write spec updates in the same language as the existing specs (or the user's lan
    updates its pointer. It is idempotent and never modifies living specs. If it
    warns that no roadmap entry names the feature, the tick did **not** happen:
    report that verbatim and fix `sdd/roadmap.md` — never claim a closed loop the
-   roadmap does not show.
+   roadmap does not show. If it warns that files still link to the old
+   `sdd/changes/<feature>/` path, fix those links now — the move just broke
+   them — and carry the files into the deliverables commit (step 9).
 6. **Consolidate metrics from the log, after the move.** Run it unconditionally
    (no-ops when tracking is off):
 
@@ -144,13 +157,18 @@ Write spec updates in the same language as the existing specs (or the user's lan
    - **you are standing in it** is not a blocker any more. `retire` moves itself
      to the main worktree before touching git, because everything after the
      removal (`git branch -d`, the binding, the ACL strip, the plugin registry)
-     runs from a directory that no longer exists otherwise. The listing says so
-     on its own line, and the outcome's `disk:` line names where you were moved.
-     **Do the retirement last** and, the moment it reports `disk: clean`, enter
-     the main worktree (`EnterWorktree` with its `path`) before running anything
-     else — including step 9. Your working directory is gone; a `git` or `python3`
-     call from there fails with `Unable to read current working directory` and
-     names neither the worktree nor the retirement.
+     runs from a directory that no longer exists otherwise. What it relocates is
+     its **own process, not your session**: a pinned session's shell is reset
+     into the — now deleted — worktree on every call, so after this retirement
+     **no command will run again in this session**. Not the doctor, not `git`,
+     nothing: the shell itself fails to start, with errors that name neither the
+     worktree nor the retirement. That is why step 9 runs the entire close-out
+     — commit, publish, deliverables, doctor, closing summary — **before** this
+     one retirement, and makes retiring the worktree you stand in the session's
+     **final tool call**: when its result arrives, relay its lines
+     (`runtime` / `git` / `plugins` / `disk` / `branches`) and end the turn.
+     Two measured sessions that retired first simply died mid-archive — loop
+     closed on disk, nobody told.
    - **a stack nobody declared how to stop** now comes with the exact line to
      declare, derived from what docker reported (`declare it to unblock:
      teardown: …`). That line is the answer to the closing question in step 8,
@@ -195,7 +213,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    closed loop. Every other blocker names work that did not reach the merge, or a
    session that would break. Full protocol in
    `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
-8. **Summarize, then close in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then ask **once** (`AskUserQuestion`, both questions in the same call, recommending yes to both):
+8. **Summarize, then close in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then ask **once** (`AskUserQuestion`, both questions in the same call, recommending yes to both). The answers are **executed in step 9's order**, not in the order asked:
 
    1. **Commit the archive and publish it on `<base>`?** — and if yes, do both:
       stage with `git add -A sdd/`, commit, then
@@ -232,7 +250,21 @@ Write spec updates in the same language as the existing specs (or the user's lan
       It is idempotent, and a repository with no remote is told so rather than
       failed. If the push is refused because the base is protected, it prints the
       bookkeeping-branch fallback: hand that off, do not invent a workaround.
-   2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run `retire` for each.
+
+      **Deliverables outside `sdd/` travel in their own commit, pushed in the
+      same turn.** Steering docs whose `phases` include `archive` make this
+      phase create or edit files beyond `sdd/` — capability pages under
+      `docs/`, READMEs, diagrams — and `publish-archive` deliberately refuses
+      to push them. So after it runs, check `git status --porcelain`: anything
+      this archive touched outside `sdd/` (including every file the
+      finalize-archive warning listed as still linking to the old change path)
+      is committed separately and pushed with `git push` **now**, never left
+      for a later turn. In the measured corpus that second commit was forgotten
+      three runs in a row; each time it left the base dirty, broke the next
+      session's fast-forward, and cost a separate cleanup session.
+   2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run
+      `retire` for each — in step 9's order: after the doctor and the closing
+      summary, and the worktree this session is standing in the very last.
 
       When step 7 found a worktree whose only blocker was an **undeclared
       teardown**, this is the same question, with the line it derived already in
@@ -243,19 +275,35 @@ Write spec updates in the same language as the existing specs (or the user's lan
       back and ask for the cleanup a second time.
 
    Never pass `--force` on the user's behalf, and never retire a worktree the command refuses for any other reason. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
-9. **Verify the commit, not the working tree.** If a retirement in step 8 moved
-   you out of the worktree you were standing in, enter the main worktree first —
-   otherwise this step cannot run at all. Once the archive is committed, run
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its output.
-   Run it **after** the commit: a clean doctor on an uncommitted tree proves
-   nothing about what landed, and that gap is exactly how an orphaned `STATE.md`
-   reaches the base branch and resurfaces as four errors on somebody else's run.
-   In the commit diff the change's files must appear as **renames into**
-   `sdd/changes/archive/<date>-<feature>/`; a bare addition there, with no
-   deletion at the active path, means only half the move was committed. Never
-   report a closed loop from a pre-commit doctor run.
+9. **Execute the close in this order — a self-retirement is the session's last
+   act.** Retirement destroys the directory a pinned session runs from, and a
+   doctor run before the commit proves nothing; the order is what makes the
+   close both verifiable and survivable:
 
-   State the loop as three facts, each one checked: the archive is **committed**,
-   it is **published** on `origin/<base>` (or explicitly local, when there is no
-   remote), and the worktrees are **retired** — or which of them survived and why.
-   Anything you could not verify is reported as not done, not as done.
+   1. **Commit** the archive (`git add -A sdd/`, commit), then run
+      `publish-archive` (step 8, question 1).
+   2. **Push the deliverables outside `sdd/`** as their own commit (question
+      1's second half). The tree must be clean before anything is retired.
+   3. **Doctor — verify the commit, not the working tree.** Run
+      `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd-doctor.py"` and report its
+      output. Run it **after** the commit: a clean doctor on an uncommitted
+      tree proves nothing about what landed, and that gap is exactly how an
+      orphaned `STATE.md` reaches the base branch and resurfaces as four errors
+      on somebody else's run. In the commit diff the change's files must appear
+      as **renames into** `sdd/changes/archive/<date>-<feature>/`; a bare
+      addition there, with no deletion at the active path, means only half the
+      move was committed. Never report a closed loop from a pre-commit doctor
+      run. A `RETIRABLE` worktree still standing at doctor time is expected —
+      it dies in the next sub-step, not before.
+   4. **State the loop as facts, now** — while every command still runs: the
+      archive is **committed** and **published** on `origin/<base>` (or
+      explicitly local, when there is no remote), each one checked, and which
+      worktrees the next sub-step is about to retire or why they survive.
+      Anything you could not verify is reported as not done, not as done.
+   5. **Retire, last.** Run `retire` for each worktree the user approved,
+      relaying each outcome's lines as they come — and leave the worktree this
+      session is standing in for the very end. That self-retirement is the
+      session's **final tool call**: when its result arrives, relay its lines
+      (`runtime` / `git` / `plugins` / `disk` / `branches`) and end the turn.
+      Any command issued after it fails before it starts (step 7), so nothing —
+      not even a `git status` — comes after it.

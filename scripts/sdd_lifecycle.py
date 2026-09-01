@@ -1928,6 +1928,44 @@ def stage_archive_move(
         try_command(["git", "add", "-A", "--", str(path)], root, runner)
 
 
+def stale_change_links(
+    root: Path, feature: str, runner: Runner = subprocess.run
+) -> list[str]:
+    """Files still pointing at the pre-archive path of a change.
+
+    The move to `sdd/changes/archive/<date>-<feature>/` breaks every link that
+    anchored to `sdd/changes/<feature>/` — docs deliverables routinely carry
+    them ("full detail in the proposal") and nothing else in the flow reads
+    those files again, so the rot only surfaces when a reader clicks. Measured
+    on a real project: two capability docs shipped with dead links and were
+    fixed in a separate session days later.
+
+    `--untracked` matters: the docs pages archive itself creates are usually
+    not committed yet when this runs. The archive directory is excluded — the
+    moved change referring to its own old path is history, not rot.
+    """
+    matches = try_command(
+        [
+            "git",
+            "grep",
+            "-I",
+            "-l",
+            "--untracked",
+            "-E",
+            "-e",
+            f"sdd/changes/{re.escape(feature)}($|[^A-Za-z0-9_-])",
+            "--",
+            ".",
+            ":(exclude)sdd/changes/archive",
+        ],
+        root,
+        runner,
+    )
+    if not matches:
+        return []
+    return [line for line in matches.stdout.splitlines() if line.strip()]
+
+
 def finalize_archive(
     root: Path,
     feature: str,
@@ -1968,6 +2006,14 @@ def finalize_archive(
         message += (
             f" WARNING: no roadmap entry names '{feature}', so nothing was ticked "
             "— check sdd/roadmap.md by hand."
+        )
+    stale = stale_change_links(root, feature, runner)
+    if stale:
+        listed = ", ".join(stale)
+        message += (
+            f" WARNING: these files still link to 'sdd/changes/{feature}/', a "
+            f"path this archive just moved — repoint them to "
+            f"'sdd/{archive_relative}' before committing: {listed}"
         )
     return message
 
