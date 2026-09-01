@@ -992,6 +992,47 @@ class LifecycleTests(unittest.TestCase):
             (self.root / "sdd" / "roadmap.md").read_text(encoding="utf-8"),
         )
 
+    def test_archive_warns_about_links_to_the_moved_change_path(self) -> None:
+        """The move breaks every link anchored at sdd/changes/<feature>/."""
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        docs = self.root / "docs"
+        docs.mkdir()
+        # Untracked on purpose: the docs pages archive creates are not
+        # committed yet when finalize runs, and they still must be caught.
+        (docs / "capability.md").write_text(
+            "Full detail in sdd/changes/example/proposal.md.\n",
+            encoding="utf-8",
+        )
+        message = finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 30)
+        )
+        self.assertIn("still link to 'sdd/changes/example/'", message)
+        self.assertIn("docs/capability.md", message)
+        self.assertIn("sdd/changes/archive/2026-07-30-example/", message)
+
+    def test_archive_does_not_flag_the_moved_change_or_other_features(self) -> None:
+        """Self-references travel into the archive as history, not as rot."""
+        (self.change / "design.md").write_text(
+            "See sdd/changes/example/proposal.md for requirements.\n",
+            encoding="utf-8",
+        )
+        other = self.root / "sdd" / "changes" / "example-two"
+        other.mkdir()
+        # A sibling feature whose slug extends this one must not match.
+        (self.root / "docs-notes.md").write_text(
+            "Tracked in sdd/changes/example-two/proposal.md.\n",
+            encoding="utf-8",
+        )
+        self.implement_beyond_base()
+        self.git("checkout", "main")
+        self.git("merge", "--no-ff", "-m", "merge implementation", "sdd/example")
+        message = finalize_archive(
+            self.root, FEATURE, specs_confirmed=True, today=date(2026, 7, 30)
+        )
+        self.assertNotIn("still link", message)
+
     def test_squash_merge_proves_equivalence_without_a_pull_request(self) -> None:
         """A squash rewrites the SHA; the change is merged all the same."""
         self.implement_beyond_base()

@@ -303,9 +303,15 @@ order, and the order is the whole fix:
    worktree could never be retired by the run that finished its work, and every
    archive ended by asking somebody to do it from elsewhere.
 
-   A session that retires its own directory must move with it — `EnterWorktree`
-   with the main worktree's path — before running anything else. The `disk:` line
-   names where.
+   What relocates is `retire`'s own process, **not the calling session**:
+   `EnterWorktree` cannot move it (the main worktree is not a linked worktree,
+   so the tool refuses it), and a pinned session's shell is reset into the —
+   now deleted — worktree on every call, so after a self-retirement no further
+   command runs in that session at all. The consequence is ordering, not
+   ceremony: a session retiring its own directory does it as its **final tool
+   call**, after everything else is committed, published and verified, then
+   relays the outcome's lines and ends. The `disk:` line names where the
+   process moved.
 
 4. **Then the disk — and the ACL that used to win.** `git worktree
    remove` unregisters before it deletes, so a failed deletion leaves files git no
