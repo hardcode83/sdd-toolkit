@@ -31,6 +31,25 @@ Two more numbers from the same corpus:
 - Exact duplicate reads inside a session: **5%**. The waste is not repetition —
   the loops and fix-round caps hold. It is accumulation.
 
+## Second measurement (September 2026)
+
+80 features of the same project, 398k OTel datapoints, ~12.3k USD estimated, read
+from `.sdd-usage/otel.jsonl` — so this one counts subagents and models too:
+
+| where | share of spend | avg context / request |
+|---|---:|---:|
+| main conversation, all phases | **75%** | 189k–444k |
+| `run`, main conversation | 42% | **444k** (sessions peaking at 526–694k) |
+| panel subagents (`run` + `review`) | 17% | 105k–140k |
+| auxiliary (titles, compaction summaries) | 6% | — |
+
+79% of `run`'s main-conversation cost was cache *reads*: re-reading the
+accumulated context on every request. Opus was 77% of all spend although the
+skills asked for Sonnet — an inline skill's `model:` does not govern the
+session. And 62% of sessions touched more than one feature: the `/clear` advice
+at the gate was not being followed. The panel is not the problem; where the
+phase runs is.
+
 ## Why a fresh context loses nothing
 
 Shared rule 1 already says it: **state lives in `sdd/`, not in the session.**
@@ -43,21 +62,31 @@ information. It is the design working. If a phase *would* break when run in a
 fresh session, that is a bug in rule 1 compliance, not a reason to keep the
 context.
 
-## The three mechanisms
+## The four mechanisms
 
 The model cannot clear its own context — `/clear` is a client command, not a
 tool, and `--autocompact` only moves the compaction threshold. What exists:
 
-1. **A fresh headless session** — `claude -p "/sdd:review <feature>"` from Bash.
-   A real session: skills resolve, the per-phase model profile applies, hooks
-   and MCP work, and the panel launches its agents normally. The caller gets
-   only the final report back. This is what `/sdd:auto` uses.
-2. **A subagent** (`Agent` tool) — isolated context, simpler, but a subagent
-   launching a panel of subagents is not something to rely on. Fine for
-   mechanical phases, not for `review`.
-3. **Telling the user** — in interactive use the skill cannot clear anything,
-   but the phase gate (shared rule 3) already stops there. Saying "`/clear`
-   before the next phase" at the gate costs one line and captures most of it.
+1. **A forked skill** — `context: fork` in the skill's frontmatter. Claude Code
+   runs the skill in a subagent with **no conversation history**; the skill text
+   is its prompt, `model:` and `effort:` from the frontmatter apply to that
+   subagent (they do not apply to an inline skill), and `background: false`
+   makes the caller wait for the result in the same turn. A subagent can spawn
+   subagents up to three layers deep by default, so a forked `review` still
+   launches its panel. Two limits shape the skills: no subagent has
+   `AskUserQuestion` (hence the `HANDOFF` block of shared rule 11), and `cd`
+   does not persist between Bash calls (hence `cd <path> &&` per command).
+   This is what `review`, `ship`, `archive`, `status` and `history` use.
+2. **A fresh headless session** — `claude -p "/sdd:review <feature>"` from Bash.
+   A real session: skills resolve, hooks and MCP work, and the panel launches
+   its agents normally. The caller gets only the final report back. This is
+   what `/sdd:auto` uses; a forked skill invoked inside `-p` simply waits.
+3. **A plain subagent** (`Agent` tool) — isolated context for one delegated
+   task. Fine for mechanical work; a phase is better expressed as (1).
+4. **Telling the user** — for the phases that stay inline (`new`, `design`,
+   `tasks`, `run`) the gate (shared rule 3) already stops there. Saying
+   "`/clear` before the next phase" costs one line; the measurement above says
+   it is followed about a third of the time, which is why (1) exists.
 
 ## Reading the result, not the prose
 

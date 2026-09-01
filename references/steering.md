@@ -45,4 +45,7 @@ exists, read each doc's frontmatter and load the full doc when **both**:
 
 Adjust per project — these are defaults, not law. Keep each doc focused and
 under ~100 lines; if a doc grows past that, split it by scope so the loading
-rule can do its job.
+rule can do its job. `/sdd:doctor` reports `SDD027` (warning) for any steering
+doc over 150 lines: the loading rule can only leave out what is in a *different*
+file, and a doc read whole by every phase and reviewer it applies to is a fixed
+cost paid on every request.

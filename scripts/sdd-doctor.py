@@ -344,6 +344,48 @@ def roadmap_size_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
     ]
 
 
+STEERING_LINE_BUDGET = 150
+
+
+def steering_size_checks(root: Path, sdd: Path) -> list[Diagnostic]:
+    """A steering doc is loaded whole by every phase and reviewer it applies to.
+
+    `references/steering.md` asks for focused docs of about 100 lines, because the
+    selective loading rule can only leave out what is in a *different* file. A
+    security guide that grew to 93 KB in a real project (~23k tokens) was read in
+    full by `design`, by `run` and by the security reviewer of every panel — the
+    single largest fixed cost per request after the conversation itself.
+    """
+    steering = sdd / "steering"
+    if not steering.is_dir():
+        return []
+    diagnostics: list[Diagnostic] = []
+    for doc in sorted(steering.glob("*.md")):
+        lines = len(read_lines(doc))
+        if lines <= STEERING_LINE_BUDGET:
+            continue
+        size = doc.stat().st_size
+        diagnostics.append(
+            Diagnostic(
+                "SDD027",
+                "WARNING",
+                relative(doc, root),
+                0,
+                (
+                    f"{doc.name} is {lines} lines ({size // 1024} KB, ~{size // 4000}k "
+                    f"tokens); every phase and reviewer it applies to loads it whole "
+                    f"on every run (budget: {STEERING_LINE_BUDGET} lines)."
+                ),
+                (
+                    "Split it by scope into several docs with their own `applies_to` "
+                    "/ `phases` frontmatter so the loading rule can leave most of it "
+                    "out; see references/steering.md."
+                ),
+            )
+        )
+    return diagnostics
+
+
 def graph_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
     """Dependency-graph consistency, delegated to the roadmap module.
 
@@ -953,6 +995,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
         )
         diagnostics.extend(graph_checks(root, roadmap))
         diagnostics.extend(roadmap_size_checks(root, roadmap))
+    diagnostics.extend(steering_size_checks(root, sdd))
     diagnostics.extend(worktree_checks(root))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))

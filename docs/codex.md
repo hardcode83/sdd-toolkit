@@ -99,6 +99,15 @@ Claude Code.
 
 ## Known limitations
 
+- `review`, `ship`, `archive`, `status` and `history` declare Claude-only
+  frontmatter (`context: fork`, `background`, `effort`, alongside the existing
+  `model`). Codex ignores those keys and runs the skill inline, as it always did.
+  The skills are written so that nothing depends on the fork: every question a
+  forked phase cannot ask ends in a `HANDOFF` block (shared rule 11), which is
+  also the right shape for Codex, where `AskUserQuestion` never existed. Under
+  Codex the caller and the phase are the same session, so the `HANDOFF` is
+  simply the gate and the step 9 close of `archive` runs in that same session.
+
 - The existing skills resolve shared files through `${CLAUDE_PLUGIN_ROOT}`, which
   Codex does not provide on its own (confirmed: unset in the shell, and not
   substituted in skill text). `scripts/codex-adapter-install.sh` supplies it via

@@ -1,6 +1,9 @@
 ---
 name: status
 model: haiku
+effort: low
+context: fork
+background: false
 description: Show the state of SDD changes - active changes, phase, task progress, and the roadmap as derived views (what is workable now in parallel, dependency waves, critical path per stage, dependency graph). With a feature name, drills into that change's tasks.md - full plan, or filtered by section/pending/done/requirement, for surgical navigation of large task lists. Use when the user runs /sdd:status or asks where a change/the roadmap/a specific task stands, or what can be worked on next.
 ---
 

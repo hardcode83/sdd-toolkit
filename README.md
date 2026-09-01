@@ -430,6 +430,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD024` | warning | `.claude/worktrees/` no está en `.gitignore` y hay worktrees (o el proyecto declara `isolation: always`, y entonces el aviso llega **antes** de que el directorio exista, que es cuando sirve). |
 | `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. Procedimiento y comprobaciones: [`references/roadmap-migration.md`](references/roadmap-migration.md). |
 | `SDD026` | error | `sdd/project.md` declara un `isolation:` que no es `always` ni `on-conflict`: degradaría al defecto en silencio y el proyecto creería estar aislando. |
+| `SDD027` | warning | Un doc de `sdd/steering/` pasa de 150 líneas. La carga selectiva solo puede dejar fuera lo que está en *otro* fichero: un `security.md` de 93 KB (~23k tokens) se leía entero en design, en run y en cada revisor de seguridad de cada panel. Partirlo por ámbito con su propio `applies_to`/`phases`. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -909,9 +910,20 @@ todo lo que una fase necesita está en `sdd/`, empezar con el contexto vacío no
 pierde nada. Una fase que se rompiera en sesión limpia sería un incumplimiento de
 la regla 1, no un motivo para conservar la conversación.
 
-- **Interactivo**: el gate de cada fase recomienda `/clear` antes de la
-  siguiente. El modelo no puede vaciarse el contexto —`/clear` es un comando del
-  cliente, no una herramienta—, así que decirlo en el gate *es* el mecanismo.
+- **Interactivo**: `review`, `ship`, `archive`, `status` e `history` declaran
+  `context: fork` (con `background: false`) en su frontmatter, así que Claude
+  Code las ejecuta en un **subagente sin historial de conversación**, y ahí sí
+  se respetan su `model:` y su `effort:` (inline no se respetaban: el 77 % del
+  gasto medido en septiembre fue Opus aunque las skills pidieran Sonnet). Como
+  ningún subagente tiene `AskUserQuestion`, una fase en fork no pregunta: termina
+  con un bloque `HANDOFF` —qué hizo, qué hay que decidir y el comando exacto por
+  respuesta— y la conversación que la llamó pregunta y ejecuta. Codex, que
+  tampoco tiene esa herramienta, recibe el mismo bloque. Las fases que siguen
+  inline (`new`, `design`, `tasks`, `run`) recomiendan `/clear` en su gate.
+  Segunda medición (80 features, sep 2026): el hilo principal fue el 75 % del
+  gasto, `run` promedió 444k de contexto por request y el 79 % de su coste fue
+  releer ese contexto; los subagentes del panel, el 19 %. Detalle en
+  [ADR 0003](docs/adr/0003-forked-phases.md).
 - **Desatendido**: `/sdd:auto` corre cada feature y su review en una **sesión
   headless nueva** (`claude -p`), y lee lo que volvió de `STATE.md`, no de la
   prosa de la sub-sesión — evidencia sobre afirmaciones, como en la regla 8. Con
