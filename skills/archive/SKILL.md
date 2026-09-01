@@ -1,6 +1,9 @@
 ---
 name: archive
-model: haiku
+model: sonnet
+effort: medium
+context: fork
+background: false
 description: Archive a merged SDD change after objectively verifying its Pull Request, then update living specs, roadmap, metrics, and history. Use when the user runs /sdd:archive after the associated PR is merged.
 ---
 
@@ -8,7 +11,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 # SDD — Archive
 
-Close out a merged change. Argument: the feature name; if omitted and exactly one non-archived change exists in `sdd/changes/`, use it — otherwise ask.
+Close out a merged change. Argument: the feature name; if omitted and exactly one non-archived change exists in `sdd/changes/`, use it — otherwise end the turn with a `HANDOFF` listing the candidates (shared rule 11: this phase runs forked and cannot ask).
 
 Write spec updates in the same language as the existing specs (or the user's language for new ones).
 
@@ -20,12 +23,19 @@ Write spec updates in the same language as the existing specs (or the user's lan
    serialization point of the whole flow. Being post-merge, the base branch is
    also where the merged content actually is.
 
-   **And in a fresh session** (shared rule 11). Archive reads the merged code and
-   the change's documents from disk; it needs nothing the conversation holds. Run
-   after a long day of `/sdd:run` it averaged 634k of context per request in the
-   measured corpus — the most expensive phase in the flow, for pure bookkeeping.
-   If this session already carries other work, say so and recommend `/clear`
-   before continuing.
+   **And in a fresh context, by construction** (shared rule 11): this skill
+   declares `context: fork`, so it runs in a subagent that holds nothing of the
+   conversation before it. Archive reads the merged code and the change's
+   documents from disk; it needs nothing the conversation holds. Run inline
+   after a long day of `/sdd:run` it averaged 634k of context per request in
+   the first measured corpus (291k in the second) — the most expensive phase in
+   the flow, for pure bookkeeping. If a runtime runs this skill inline anyway
+   (Codex does) and the session already carries other work, say so and
+   recommend `/clear` before continuing. Two consequences of the fork shape the
+   end of this flow: there is no `AskUserQuestion` here, so step 8 hands its two
+   questions to the calling conversation instead of asking them; and `cd` does
+   not persist between Bash calls, so the `cd <main_worktree> &&` prefix below
+   is the only way to stand somewhere.
 
    Check where you are: `git rev-parse --git-dir` returning a path under
    `.git/worktrees/` means this is a linked worktree; `sdd_session.py --root .
@@ -213,7 +223,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    closed loop. Every other blocker names work that did not reach the merge, or a
    session that would break. Full protocol in
    `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
-8. **Summarize, then close in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then ask **once** (`AskUserQuestion`, both questions in the same call, recommending yes to both). The answers are **executed in step 9's order**, not in the order asked:
+8. **Summarize, then hand the close to the caller in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then end the turn with a `HANDOFF` block (shared rule 11 — a forked phase cannot ask): the two questions below, recommending yes to both, and the step 9 sequence written out with its exact commands, `<feature>`, `<base>` and worktree paths filled in. The calling conversation asks **once** (`AskUserQuestion` there, both questions in the same call) and then executes step 9 itself. The answers are **executed in step 9's order**, not in the order asked. Nothing below this step is committed, pushed or retired by the forked phase: an archive that stops here leaves the move staged and the specs edited, which is exactly what `git status` shows the caller before it commits.
 
    1. **Commit the archive and publish it on `<base>`?** — and if yes, do both:
       stage with `git add -A sdd/`, commit, then
@@ -275,8 +285,10 @@ Write spec updates in the same language as the existing specs (or the user's lan
       back and ask for the cleanup a second time.
 
    Never pass `--force` on the user's behalf, and never retire a worktree the command refuses for any other reason. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
-9. **Execute the close in this order — a self-retirement is the session's last
-   act.** Retirement destroys the directory a pinned session runs from, and a
+9. **The caller executes the close in this order — a self-retirement is the
+   session's last act.** This step runs in the calling conversation, from the
+   `HANDOFF` of step 8 (in a runtime that ran the skill inline, in the same
+   session). Retirement destroys the directory a pinned session runs from, and a
    doctor run before the commit proves nothing; the order is what makes the
    close both verifiable and survivable:
 

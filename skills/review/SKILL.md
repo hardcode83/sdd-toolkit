@@ -1,6 +1,8 @@
 ---
 name: review
 model: sonnet
+context: fork
+background: false
 description: Detect drift between sdd/specs/ and code, or validate an implemented change locally and mark it READY_FOR_PR. Use when the user runs /sdd:review, asks whether specs are up to date, or wants a spec-vs-implementation check.
 ---
 
@@ -28,6 +30,7 @@ Two modes:
 
 - `<feature>` — **change review**: verify the implementation of `sdd/changes/<feature>/` against its proposal.
 - no argument — **drift check**: compare `sdd/specs/` against the codebase.
+- `drift` — the drift check named explicitly, for when active changes exist and the caller already chose (see below).
 
 ## Choosing the mode when no argument was given
 
@@ -50,12 +53,15 @@ reason. Then:
 - **No active change anywhere** → drift check. If `sdd/specs/` is also missing or
   empty there is nothing to check at all: say so and point to `/sdd:new`.
 - **One or more active changes** → both modes are legitimate and you cannot tell
-  which was meant, so **ask** (`AskUserQuestion`): the active changes as options,
-  each labelled with its state and the worktree it lives in, plus "drift check" as
-  the alternative. Recommend the change whose tasks are all checked — that is the
-  one waiting for exactly this phase. Guessing here is not a small error: a drift
-  check reports on specs instead of certifying an implementation, and it does it
-  without failing, so the user reads a report about the wrong thing.
+  which was meant, so **hand the choice back** (shared rule 11 — this phase runs
+  forked and has no `AskUserQuestion`): end the turn with a `HANDOFF` listing the
+  active changes as options, each labelled with its state and the worktree it
+  lives in, plus "drift check" as the alternative, and the exact command per
+  option (`/sdd:review <feature>` or `/sdd:review drift`). Recommend the change
+  whose tasks are all checked — that is the one waiting for exactly this phase.
+  Guessing here is not a small error: a drift check reports on specs instead of
+  certifying an implementation, and it does it without failing, so the user
+  reads a report about the wrong thing.
 
 **Never applies under `/sdd:auto`**, which always passes the feature name.
 
@@ -71,15 +77,19 @@ reason. Then:
 
 ## Change review
 
-0. **Prefer a fresh session** (shared rule 11). Everything this phase needs —
-   proposal, design, tasks, the diff, `STATE.md` — is on disk, and it is the most
-   expensive phase per request in the flow (571k of context on average in the
-   measured corpus) precisely because it usually runs on top of a long `/sdd:run`.
-   If the session already carries the implementation it is about to review, say
-   so once and recommend `/clear`; then continue either way — this is advice, not
+0. **You are running in a fresh context by construction** (shared rule 11): this
+   skill declares `context: fork`, so nothing of the conversation that ran
+   `/sdd:run` is here — and nothing is missing, because everything this phase
+   needs (proposal, design, tasks, the diff, `STATE.md`) is on disk. It used to
+   be the most expensive phase per request in the flow (571k of context on
+   average in the first measured corpus, 351k in the second) precisely because
+   it inherited a long `/sdd:run`. If a runtime runs this skill inline anyway
+   (Codex does) and the session already carries the implementation it is about
+   to review, say so once and recommend `/clear`; then continue either way —
+   this is advice, not
    a gate.
 
-1. **Worktree first** (shared rule 10): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`) — this phase records `implementation_sha` from HEAD, so reviewing from the wrong working directory would certify the wrong commit. Nothing printed means the feature has no worktree; continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
+1. **Worktree first** (shared rule 10): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>`. If it prints a path that is not the current directory, work there for the rest of the phase: prefix every command with `cd <path> &&` (or pass `--root <path>` to the SDD scripts) and read files by absolute path — `cd` does not persist between calls in a forked phase and `EnterWorktree` is not to be relied on there (shared rule 11). This phase records `implementation_sha` from HEAD, so reviewing from the wrong working directory would certify the wrong commit. Nothing printed means the feature has no worktree; continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 
    **Then the branch guard, before reading a single diff.** Verify `git branch --show-current` is `sdd/<feature>` (or the branch `STATE.md` records). If it is not, **STOP** and report it — do not "fix" it with a checkout. `/sdd:run` has carried this guard since worktrees existed because it writes code; review needs it just as much because it *certifies*: `mark-ready` records `head_branch` and `implementation_sha` as the merge gate's evidence, and a review run from the base branch would sign a range that is not the change. Until now the conversation usually carried the right directory over from run; a phase that starts in a fresh context (shared rule 11) has only what it asks for.
 
@@ -88,6 +98,10 @@ reason. Then:
    assistant message, sent together: the three core reviewers — `sdd-architect`,
    `sdd-security`, `sdd-qa` — plus every project reviewer at
    `.claude/agents/sdd-review-*.md` (same discovery and contract as in `/sdd:run`).
+   Launch `sdd-security` with `model: opus` here: its agent file defaults to
+   Sonnet for the per-section panels of `/sdd:run`, and feature scale — the
+   whole change, trust boundaries across sections — is where the stronger
+   model earns its price.
    One call per message costs 2N round-trips of the most expensive context in the
    flow instead of 2, and lets each prompt be written after reading the previous
    verdict; `/sdd:run`'s step 3 has the measurement and the reasoning, including
@@ -190,12 +204,14 @@ reason. Then:
 
 7. **Offer to publish — one question, not five instructions.** On a passing
    verdict, `READY_FOR_PR` is a change that is finished locally and invisible to
-   everyone else: the branch is unpushed and no PR exists. Ask once
-   (`AskUserQuestion`, recommend yes) whether to run `/sdd:ship <feature>` now,
-   and if the user accepts, follow `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`.
+   everyone else: the branch is unpushed and no PR exists. End the turn with a
+   `HANDOFF` (shared rule 11 — a forked phase cannot ask) whose single question
+   is whether to run `/sdd:ship <feature>` now, recommending yes; the calling
+   conversation asks it once and, on yes, runs `/sdd:ship <feature>`, which
+   follows `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`.
    Ship stays a separate phase — review is report-only and must not grow a
    publishing contract — but *reaching* it should cost one tap, not a sequence
-   of typed orders. If the user declines, say that `STATE.md` holds the next
+   of typed orders. If the user declines, `STATE.md` holds the next
    action and `/sdd:status` will keep surfacing it (shared rule 1).
    **Skip this question entirely under `/sdd:auto`**, which drives ship itself.
 

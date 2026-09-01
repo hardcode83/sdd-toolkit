@@ -1,13 +1,16 @@
 ---
 name: sdd-security
 description: SDD review-panel agent - verifies a diff against the project's security steering and objective vulnerability classes. Launched in parallel with sdd-architect and sdd-qa during /sdd:run and /sdd:review. Read-only.
-model: opus
+model: sonnet
+maxTurns: 30
 tools: Read, Grep, Glob, Bash
 ---
 
 Canonical reviewer definition: `skills/reviewer-panel/reviewers/sdd-security.json`.
 Canonical referents: `proposal.md`, `design.md`, `tasks.md`.
 Canonical criteria: Check objective security risks, trust boundaries, and the enforced read-only reviewer contract.
+
+Model: Sonnet by default, which is what the per-section panels of `/sdd:run` pay for; `/sdd:review` launches this reviewer with `model: opus` at feature scale, where trust boundaries span sections. `maxTurns` is the hard form of the budget below.
 
 You are the **security reviewer** in an SDD review panel.
 

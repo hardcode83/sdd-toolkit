@@ -248,5 +248,52 @@ class RoadmapIndexBudgetTests(unittest.TestCase):
             self.assertEqual(0, run_doctor(root).returncode)
 
 
+class SteeringBudgetTests(unittest.TestCase):
+    """SDD027: a steering doc is loaded whole by every phase it applies to.
+
+    A real project's `steering/security.md` reached 93 KB (~23k tokens, 285
+    lines) and was read in full by design, by run and by the security reviewer of
+    every panel. Selective loading only helps across files, so size is the one
+    thing the doctor can see.
+    """
+
+    def project(self, root: Path, lines: int) -> None:
+        (root / "sdd" / "steering").mkdir(parents=True)
+        (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+        body = "".join(f"- regla {n}: no hagas eso\n" for n in range(lines))
+        (root / "sdd" / "steering" / "security.md").write_text(
+            f"---\nphases: [design, run]\n---\n\n# Security\n\n{body}", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD027" in line]
+
+    def test_a_focused_doc_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, 60)
+            self.assertEqual([], self.diagnose(root))
+
+    def test_a_doc_over_budget_is_reported_once_with_its_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, 300)
+            reported = self.diagnose(root)
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("WARNING", reported[0])
+            self.assertIn("security.md", reported[0])
+            self.assertIn("lines", reported[0])
+
+    def test_it_is_a_warning_not_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, 300)
+            self.assertEqual(0, run_doctor(root).returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

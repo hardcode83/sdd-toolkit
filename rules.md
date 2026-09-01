@@ -96,13 +96,30 @@
     makes this safe: everything a phase needs is in `sdd/`, so starting with an
     empty context loses nothing — and a phase that *would* break without the
     conversation is a rule 1 violation, not a reason to keep it. It matters
-    because cost follows position, not work: measured over 38 sessions of a real
-    project, `review` averaged 571k of context per request and `archive` 634k,
-    while `new`/`design`/`tasks` together accounted for 6.6% of all spend. The
-    terminal phases are expensive only because they run last.
-    - Interactive: each phase gate recommends `/clear` before the next phase.
-      The model cannot clear its own context; saying so at the gate is the whole
-      mechanism.
+    because cost follows position, not work: re-measured over 80 features of a
+    real project (Sep 2026), the main conversation was 75% of all spend, `run`
+    averaged 444k of context per request and 79% of its cost was re-reading
+    that context, while the panel's subagents were 19%. The terminal phases are
+    expensive only because they run last.
+    - Interactive: `review`, `ship`, `archive`, `status` and `history` declare
+      `context: fork` (with `background: false`) in their skill frontmatter, so
+      Claude Code runs them in a **fresh subagent with no conversation
+      history**, and their `model:`/`effort:` are honoured there — which they
+      are not for a skill running inline. The gates of the phases that stay
+      inline (`new`, `design`, `tasks`, `run`) still recommend `/clear`.
+    - **A forked phase cannot ask.** No subagent has `AskUserQuestion`, and
+      Codex has no equivalent either. So a forked phase never stops on a
+      question: it finishes everything that needs no answer, persists what
+      rule 5 requires, and ends its turn with a `HANDOFF` block — what it did,
+      what must be decided (with a recommendation), and the **exact command per
+      answer**. The calling conversation asks the user and runs that command.
+      A fork that reaches a decision it cannot make and has no handoff to give
+      is a bug in the skill, not a reason to guess.
+    - **Working directory in a fork**: `cd` does not persist between Bash calls
+      in a subagent and `EnterWorktree` is not to be relied on there. Resolve
+      the feature's worktree once (`sdd_session.py … resolve`), then prefix
+      every command with `cd <path> &&` or pass `--root <path>` to the SDD
+      scripts, and read files by absolute path.
     - Unattended: `/sdd:auto` runs its terminal phases in a **fresh headless
       session** (`claude -p`), and reads what came back from `STATE.md`, not
       from the sub-session's prose — evidence over claims, as in rule 8.

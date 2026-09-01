@@ -1,6 +1,9 @@
 ---
 name: ship
 model: sonnet
+effort: medium
+context: fork
+background: false
 description: Publish a change that is READY_FOR_PR - sync the base into its branch, push it, open the Pull Request and record the PR evidence in STATE.md. Use when the user runs /sdd:ship, or accepts the offer at the end of /sdd:review.
 ---
 
@@ -10,7 +13,9 @@ Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (shared rules for all SDD phases).
 
 Publish a locally verified change: **sync → push → Pull Request → recorded
 evidence**. Argument: the feature name; if omitted and exactly one non-archived
-change is at `READY_FOR_PR`, use it — otherwise ask.
+change is at `READY_FOR_PR`, use it — otherwise end the turn with a `HANDOFF`
+listing the candidates and the exact `/sdd:ship <feature>` per option (shared
+rule 11: this phase runs forked and cannot ask).
 
 This phase exists because gating archive on a proven merge (shared rule 8) opened
 a stretch of the flow that nothing owned: `/sdd:review` stops at `READY_FOR_PR`
@@ -27,7 +32,7 @@ ship never reviews, never merges the PR and never archives.
 
 ## Steps
 
-1. **Worktree, then state.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>` — if it prints a path that is not the current directory, enter it with `EnterWorktree` (`path`): the branch to push is checked out there, not here. Nothing printed → continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
+1. **Worktree, then state.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . resolve <feature>` — if it prints a path that is not the current directory, work there for the rest of the phase — prefix every command with `cd <path> &&` (or `--root <path>` for the SDD scripts) and read files by absolute path, because `cd` does not persist between calls in a forked phase and `EnterWorktree` is not to be relied on there (shared rule 11): the branch to push is checked out there, not here. Nothing printed → continue here. Protocol: `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
 
    Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> ship` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, ship's spend is attributed to review.
 
