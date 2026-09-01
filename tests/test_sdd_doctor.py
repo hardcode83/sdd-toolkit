@@ -295,5 +295,54 @@ class SteeringBudgetTests(unittest.TestCase):
             self.assertEqual(0, run_doctor(root).returncode)
 
 
+class ProjectReviewerMetadataTests(unittest.TestCase):
+    """SDD028: a project reviewer without applies_to/phases runs on every panel.
+
+    Four such reviewers in a real project turned a 13-section run into 91
+    reviewer launches; the planner can only skip on a definitive NO MATCH.
+    """
+
+    def project(self, root: Path, frontmatter: str) -> None:
+        (root / "sdd").mkdir()
+        (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+        agents = root / ".claude" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "sdd-review-i18n.md").write_text(
+            f"---\n{frontmatter}---\n\nYou are the i18n reviewer.\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD028" in line]
+
+    def test_a_reviewer_with_metadata_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(
+                root,
+                "name: sdd-review-i18n\ndescription: i18n\nmodel: haiku\n"
+                "phases: [run, review, auto]\napplies_to: [\"frontend/**\"]\n",
+            )
+            self.assertEqual([], self.diagnose(root))
+
+    def test_a_reviewer_without_metadata_is_reported_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "name: sdd-review-i18n\ndescription: i18n\nmodel: haiku\n")
+            reported = self.diagnose(root)
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("WARNING", reported[0])
+            self.assertIn("applies_to", reported[0])
+
+    def test_it_is_a_warning_not_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, "name: sdd-review-i18n\ndescription: i18n\n")
+            self.assertEqual(0, run_doctor(root).returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

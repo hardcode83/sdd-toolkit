@@ -187,7 +187,9 @@ Then, for the feature at hand:
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.
-5. **run** — follow the run skill with the shared reviewer-panel plan and panel **mandatory** (`solo` mode
+5. **run** — follow the run skill (one fresh implementer subagent per section
+   where the runtime can spawn one, inline otherwise) with the shared
+   reviewer-panel plan and panel **mandatory** (`solo` mode
    is forbidden in auto; `tournament` only if the roadmap entry explicitly
    says so). Findings persisting after 2 fix rounds → BLOCK. Commit after
    each completed section: `sdd(<feature>): section <n>`.

@@ -99,6 +99,12 @@ Claude Code.
 
 ## Known limitations
 
+- `run` delegates each section to an implementer subagent where the runtime
+  can spawn one; under Codex it implements inline with the same contract (order,
+  verification before `[x]`, `## Implementation Notes`). The reviewers' final
+  message is now the JSON result envelope of `reviewer_plan.py` — the same shape
+  the native Codex handoff already validated — so the two runtimes share the
+  whole contract. `tournament` remains unsupported under Codex.
 - `review`, `ship`, `archive`, `status` and `history` declare Claude-only
   frontmatter (`context: fork`, `background`, `effort`, alongside the existing
   `model`). Codex ignores those keys and runs the skill inline, as it always did.

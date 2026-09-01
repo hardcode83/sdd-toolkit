@@ -82,7 +82,10 @@ tool, and `--autocompact` only moves the compaction threshold. What exists:
    its agents normally. The caller gets only the final report back. This is
    what `/sdd:auto` uses; a forked skill invoked inside `-p` simply waits.
 3. **A plain subagent** (`Agent` tool) — isolated context for one delegated
-   task. Fine for mechanical work; a phase is better expressed as (1).
+   task. A phase is better expressed as (1); `run` uses it the other way round:
+   it stays inline (its gates converse with the user) and delegates each
+   section to a fresh implementer, so the orchestrator's context stays flat
+   while the diffs, test output and reviewer JSON live and die in subagents.
 4. **Telling the user** — for the phases that stay inline (`new`, `design`,
    `tasks`, `run`) the gate (shared rule 3) already stops there. Saying
    "`/clear` before the next phase" costs one line; the measurement above says

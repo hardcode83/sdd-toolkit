@@ -386,6 +386,57 @@ def steering_size_checks(root: Path, sdd: Path) -> list[Diagnostic]:
     return diagnostics
 
 
+REVIEWER_FRONTMATTER_RE = re.compile(r"\A---\n(?P<head>.*?)\n---\n", re.DOTALL)
+
+
+def reviewer_metadata_checks(root: Path) -> list[Diagnostic]:
+    """A project reviewer without `applies_to`/`phases` runs on every panel.
+
+    The shared planner (`skills/reviewer-panel/reviewer_plan.py`) can skip a
+    project reviewer only on a definitive NO MATCH; without metadata the answer
+    is UNKNOWN and the reviewer is launched for every section of every change. In
+    a real project four such reviewers turned a 13-section run into 91 reviewer
+    launches, most of them on files their lens had nothing to say about.
+    """
+    directory = root / ".claude" / "agents"
+    if not directory.is_dir():
+        return []
+    diagnostics: list[Diagnostic] = []
+    for path in sorted(directory.glob("sdd-review-*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        match = REVIEWER_FRONTMATTER_RE.match(text)
+        keys: set[str] = set()
+        if match:
+            for line in match.group("head").splitlines():
+                if ":" in line:
+                    keys.add(line.split(":", 1)[0].strip())
+        missing = [key for key in ("phases", "applies_to") if key not in keys]
+        if not missing:
+            continue
+        diagnostics.append(
+            Diagnostic(
+                "SDD028",
+                "WARNING",
+                relative(path, root),
+                0,
+                (
+                    f"{path.name} declares no {' / '.join(missing)}: the panel "
+                    f"cannot exclude it, so it runs on every section of every "
+                    f"change, whatever files the section touched."
+                ),
+                (
+                    "Add `phases: [run, review, auto]` and `applies_to: [\"<globs of "
+                    "the files this lens is about>\"]` to its frontmatter; see "
+                    "templates/reviewer-template.md."
+                ),
+            )
+        )
+    return diagnostics
+
+
 def graph_checks(root: Path, roadmap: Path) -> list[Diagnostic]:
     """Dependency-graph consistency, delegated to the roadmap module.
 
@@ -996,6 +1047,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
         diagnostics.extend(graph_checks(root, roadmap))
         diagnostics.extend(roadmap_size_checks(root, roadmap))
     diagnostics.extend(steering_size_checks(root, sdd))
+    diagnostics.extend(reviewer_metadata_checks(root))
     diagnostics.extend(worktree_checks(root))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))

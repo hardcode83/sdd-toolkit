@@ -431,6 +431,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD025` | warning | `roadmap.md` pasa de 32 KB. Es un índice y **lo lee cada fase**, así que su tamaño se paga en cada run; el razonamiento largo va a `sdd/roadmap/<feature>.md`, que solo lee el `/sdd:new` de esa entrada. Procedimiento y comprobaciones: [`references/roadmap-migration.md`](references/roadmap-migration.md). |
 | `SDD026` | error | `sdd/project.md` declara un `isolation:` que no es `always` ni `on-conflict`: degradaría al defecto en silencio y el proyecto creería estar aislando. |
 | `SDD027` | warning | Un doc de `sdd/steering/` pasa de 150 líneas. La carga selectiva solo puede dejar fuera lo que está en *otro* fichero: un `security.md` de 93 KB (~23k tokens) se leía entero en design, en run y en cada revisor de seguridad de cada panel. Partirlo por ámbito con su propio `applies_to`/`phases`. |
+| `SDD028` | warning | Un revisor de proyecto (`.claude/agents/sdd-review-*.md`) no declara `phases`/`applies_to`: el planificador no puede excluirlo y corre en **cada sección de cada change**, toque lo que toque. Cuatro así convirtieron un run de 13 secciones en 91 lanzamientos. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -543,10 +544,12 @@ Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
 | `new` | **opus** | — (gate humano; en auto: auto-check vs roadmap + product.md) |
 | `design` | **opus** | en modo auto: `sdd-architect` pre-aprueba el design antes de codificar |
 | `tasks` | sonnet | — (check de cobertura R#→tareas) |
-| `run` | sonnet | **panel por sección**: `sdd-architect` + `sdd-security` + `sdd-qa` en paralelo; en `tournament`: 3 implementadores en worktrees + panel como juez |
-| `review` | sonnet | el mismo panel, a escala feature |
-| `archive` | haiku | — |
-| `status` / `history` | haiku | — (solo lectura) |
+| `run` | sonnet (orquestador, inline) | **un implementador fresco por sección** (`Agent` en sonnet; opus si la sección lleva `<!-- hard -->`), y **panel por sección**: `sdd-architect` + `sdd-security` + `sdd-qa` en paralelo, más los revisores del proyecto que apliquen; los fixes también van a un implementador |
+| `tournament` | sonnet (orquestador) | 3 implementadores opus en worktrees aislados + panel como juez — skill propia, solo bajo petición |
+| `review` | sonnet (**fork**) | el mismo panel, a escala feature; `sdd-security` en opus aquí |
+| `ship` | sonnet (**fork**, esfuerzo medio) | — |
+| `archive` | sonnet (**fork**, esfuerzo medio) | — |
+| `status` / `history` | haiku (**fork**) | — (solo lectura) |
 | `doctor` | — | — (script determinista, solo lectura) |
 | `auto` | sonnet (orquestador) | todos los anteriores según la fase que esté ejecutando |
 
@@ -555,13 +558,15 @@ Los agentes del panel (`agents/`) tienen su propio modelo y contrato:
 | Agente | Modelo | Referente que verifica | Regla |
 |---|---|---|---|
 | `sdd-architect` | sonnet | `design.md` (D#) + `steering/architecture.md` | Desviación del design = finding aunque funcione; design obsoleto = `DESIGN-CONFLICT`, nunca parche |
-| `sdd-security` | **opus** | `steering/security.md` regla a regla; sin ese doc, solo clases objetivas con evidencia | Cita la regla o el input→sink; sin evidencia no reporta |
+| `sdd-security` | sonnet por sección, **opus** en `review` | `steering/security.md` regla a regla; sin ese doc, solo clases objetivas con evidencia | Cita la regla o el input→sink; sin evidencia no reporta |
 | `sdd-qa` | sonnet | criterios EARS del proposal + `steering/testing.md` | Por cada R#: ¿implementado? ¿testeado de verdad? ¿aguanta? — ejecuta tests, intenta romper |
 | `sdd-review-*` (del proyecto) | el que declare | su `steering/<lente>.md` | Revisores custom por repo (`.claude/agents/`), descubiertos por convención — mismo contrato |
 
 **El panel se lanza en un solo mensaje, y con los referentes dentro del prompt.** Las dos cosas están medidas sobre 38 sesiones de un proyecto real: **481 de 481 lanzamientos fueron secuenciales** pese a que la skill pedía paralelo —lo que cuesta 2N viajes del contexto de `run`/`review` en vez de 2, y deja que el prompt del segundo revisor se escriba después de leer los findings del primero, que es justo la independencia que el panel compra—; y los revisores promediaron **60 turnos de herramienta cada uno** redescubriendo documentos que la sesión que los lanzó ya tenía cargados. Por eso el prompt del panel lleva ahora el texto EARS de los R#, las decisiones D# citadas, las reglas de steering que aplican y el rango del diff, y cada agente trae un **presupuesto de turnos** (~25, ~35 para qa, que además ejecuta tests) con la obligación de reportar lo que no alcanzó. Lo que no cambia es la mejor propiedad del panel: sin referente citado, no hay finding.
 
-**Cómo cambiar la configuración**: el modelo de una fase se edita en el frontmatter `model:` de `skills/<fase>/SKILL.md`; el de un agente, en `agents/sdd-*.md`. Es configuración del plugin (no por proyecto): editar, commitear y subir versión aplica a todos tus proyectos. El override de modelo dura solo esa invocación — la sesión vuelve a tu modelo al terminar.
+**Los revisores devuelven JSON, no informes.** El mensaje final de cada revisor es el sobre de resultado que valida `reviewer_plan.py` (`reviewer_id`, `scope_id`, `lens`, `verdict`, `findings`, `evidence`, `status`, más `criteria`/`tests` en qa) y nada más: el orquestador lee los findings del JSON y nunca carga prosa de revisor en su contexto. Es el mismo sobre que valida el handoff nativo de Codex, así que los dos runtimes comparten el contrato entero.
+
+**Cómo cambiar la configuración**: el modelo de una fase se edita en el frontmatter `model:` de `skills/<fase>/SKILL.md`; el de un agente, en `agents/sdd-*.md`. Es configuración del plugin (no por proyecto): editar, commitear y subir versión aplica a todos tus proyectos. Ojo con lo que gobierna de verdad: el `model:` de una skill **inline** no cambia el modelo de la sesión interactiva (medido: el 77 % del gasto fue opus con skills que pedían sonnet); el de una skill en **fork** y el de un agente sí. Por eso `run` delega en subagentes y las fases terminales van en fork.
 
 ## Estructura en el proyecto destino
 
@@ -669,14 +674,16 @@ Dónde aparecen: en `/sdd:status` como sección propia, y en `/sdd:new` acotadas
 
 `/sdd:run` lanza, **al cerrar cada sección de tareas** que toca código de producción, tres revisores en paralelo (`agents/`): **sdd-architect** (diff vs `design.md` + steering de arquitectura), **sdd-security** (diff vs `security.md` o clases objetivas de vulnerabilidad, en opus) y **sdd-qa** (cada criterio EARS: ¿implementado? ¿testeado? ¿se puede romper? — ejecuta los tests). La regla que mantiene el panel útil: **ningún finding sin referente** (R#, decisión D# o regla de steering citada) — sin referente, se descarta. Máximo 2 rondas de fix por sección; los `DESIGN-CONFLICT` van por la deviation rule (actualizar el design con el usuario), nunca como parche silencioso.
 
-`/sdd:review <feature>` usa el mismo panel a escala feature y, si pasa, deja el change en `READY_FOR_PR`; no lo archiva. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>` (3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
+`/sdd:review <feature>` usa el mismo panel a escala feature y, si pasa, deja el change en `READY_FOR_PR`; no lo archiva. Modos de `run`: `solo` (sin panel, para changes de scaffolding) y `tournament <task>`, que desde 0.44 es una skill propia (`/sdd:tournament <feature> <task>`: 3 implementaciones paralelas en worktrees aisladas + el panel como juez — ~3× coste, solo para tareas con varianza real de solución; nunca por defecto). El coste del panel es visible en las métricas por feature (los subagentes computan como `query_source=subagent`), así que puedes ajustar su agresividad con datos.
+
+**`run` es un orquestador, no el implementador (0.44).** Cada sección de `tasks.md` la implementa un subagente fresco (sonnet; opus si la sección lleva `<!-- hard -->`) que recibe en su prompt las tareas, los R# con su texto EARS, las D# citadas, el steering que aplica y los comandos de test, y devuelve un informe de treinta líneas sin diffs ni logs. Los fixes de los findings van a otro implementador acotado. El orquestador comprueba en disco lo que el informe afirma (casillas de `tasks.md`, `git status`) y su contexto se queda plano durante todo el run — que es donde estaba el 56 % del gasto medido. La continuidad entre secciones vive en `## Implementation Notes` de `tasks.md`, que cada implementador lee y amplía. Sin subagentes (Codex), el orquestador implementa él mismo con el mismo contrato.
 
 ### Composición del panel: core + revisores del proyecto
 
 El panel es **aditivo en dos capas**:
 
 - **Core (plugin, siempre corren)**: architect, security, qa — el suelo de calidad. Sin referente rico se auto-limitan (security sin `security.md` solo reporta vulnerabilidades objetivas con evidencia), así que nunca estorban. No se desactivan por proyecto — para saltarse el panel entero en secciones triviales está `solo`.
-- **Del proyecto (opcionales, aditivos)**: cualquier agente en `.claude/agents/sdd-review-*.md` del repo se descubre por convención y se lanza junto a los core, con el mismo contrato. Versionados con el proyecto — el equipo los recibe al clonar.
+- **Del proyecto (opcionales, aditivos)**: cualquier agente en `.claude/agents/sdd-review-*.md` del repo se descubre por convención y se lanza junto a los core, con el mismo contrato. Versionados con el proyecto — el equipo los recibe al clonar. **Declara `phases` y `applies_to`** en su frontmatter: sin ellos el planificador no puede excluirlo y corre en cada sección de cada change (`SDD028`); con ellos, un revisor de i18n solo se lanza cuando la sección toca `frontend/**`.
 
 Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/agents/sdd-review-<lente>.md`, rellena los huecos (referente, checks, modelo) y normalmente crea su `sdd/steering/<lente>.md` con las reglas que hará cumplir. Ejemplo: un revisor de performance para un proyecto con hot paths, o de i18n para uno multi-idioma.
 
