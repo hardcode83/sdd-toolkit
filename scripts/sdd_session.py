@@ -402,6 +402,23 @@ def base_facts(root: Path, runner: Runner = subprocess.run) -> dict:
     }
 
 
+def feature_worktrees(
+    root: Path, feature: str, runner: Runner = subprocess.run
+) -> list[dict]:
+    """Every worktree of the clone whose branch names this feature.
+
+    `sdd/<feature>` is the toolkit's branch; `<anything>/<feature>` covers the
+    worktree an external tool (Orca, `claude -w`) created for the same feature.
+    Two of them for one feature is how work ends up in two places.
+    """
+    found: list[dict] = []
+    for entry in git_worktrees(root, runner):
+        branch = entry.get("branch") or ""
+        if branch == f"sdd/{feature}" or branch.rsplit("/", 1)[-1] == feature:
+            found.append({"path": entry["path"], "branch": branch})
+    return found
+
+
 def check(
     root: Path, feature: str | None, runner: Runner = subprocess.run
 ) -> dict:
@@ -431,13 +448,25 @@ def check(
     other_active = [name for name in active if name != feature]
 
     reasons: list[str] = []
-    if others:
-        for entry in others:
+    here = root.resolve()
+    elsewhere: list[dict] = []
+    for entry in others:
+        # The registry is shared by every worktree of the clone, but HEAD is
+        # not: a session working in *another* worktree cannot drag this one's
+        # files onto its branch. Only a session standing in this same directory
+        # is a conflict. Counting the others is what made a clean Orca worktree
+        # spawn a second worktree next to itself (ADR 0007).
+        try:
+            same_dir = Path(entry.get("worktree") or "").resolve() == here
+        except OSError:
+            same_dir = False
+        if same_dir:
             reasons.append(
                 f"another live session ({entry.get('pid')}) holds "
-                f"{entry.get('feature') or 'no feature'} at "
-                f"{entry.get('worktree') or 'unknown path'}"
+                f"{entry.get('feature') or 'no feature'} in this same directory"
             )
+        else:
+            elsewhere.append(entry)
     if branch_feature and feature and branch_feature != feature:
         reasons.append(
             f"HEAD is on sdd/{branch_feature}, a different feature than {feature}"
@@ -451,13 +480,20 @@ def check(
         )
 
     policy = read_isolation_policy(root)
+    linked = in_linked_worktree(root, runner)
+    duplicates = [
+        entry for entry in feature_worktrees(root, feature, runner)
+        if Path(entry["path"]).resolve() != here
+    ] if feature else []
     return {
         "session_id": me,
         "worktree": str(root),
         # Where a new worktree has to be created from. A session already standing
         # in a linked worktree must not nest another one inside it.
         "main_worktree": str(common_dir(root, runner).parent.resolve()),
-        "in_linked_worktree": in_linked_worktree(root, runner),
+        "in_linked_worktree": linked,
+        "sessions_elsewhere": elsewhere,
+        "duplicate_worktrees": duplicates,
         "branch": branch,
         "dirty": dirty,
         "feature": feature or "",
@@ -472,7 +508,10 @@ def check(
         "policy_declared": policy.declared,
         "policy_source": policy.source,
         "policy_valid": policy.valid,
-        "isolate": bool(reasons) or policy.always,
+        # A linked worktree already is the pristine, single-purpose directory
+        # `isolation: always` asks for; creating another one inside it would give
+        # the feature two homes (and two stacks).
+        "isolate": bool(reasons) or (policy.always and not linked),
         "base": base_facts(root, runner),
     }
 
@@ -1693,10 +1732,21 @@ def render_check(report: dict) -> str:
         lines.append(f"feature {report['feature']} → {bound}")
     lines.append("")
     if report["conflict"]:
-        lines.append("CONFLICT — this clone is not free:")
+        lines.append("CONFLICT — this directory is not free:")
         lines.extend(f"  - {reason}" for reason in report["reasons"])
     else:
-        lines.append("CLEAR — no other session is working this clone.")
+        lines.append("CLEAR — no other session is working this directory.")
+    for entry in report.get("sessions_elsewhere") or []:
+        lines.append(
+            f"  · another live session ({entry.get('pid')}) holds "
+            f"{entry.get('feature') or 'no feature'} in its own worktree "
+            f"({entry.get('worktree') or 'unknown path'}) — not a conflict here"
+        )
+    for entry in report.get("duplicate_worktrees") or []:
+        lines.append(
+            f"NOTE — {entry['path']} already holds a worktree for this feature "
+            f"(branch {entry['branch']}). Work there or retire it; never a third."
+        )
     # The verdict describes the evidence; this line is the decision. They are
     # printed apart because CLEAR + isolate is a real, and now common, combination.
     if report["isolate"]:
@@ -1708,6 +1758,11 @@ def render_check(report: dict) -> str:
         lines.append(
             f"ISOLATE — give this feature its own worktree before creating its "
             f"branch ({because}). Protocol: references/isolation.md."
+        )
+    elif report["in_linked_worktree"] and report.get("policy") == "always":
+        lines.append(
+            "WORK HERE — this linked worktree already is the isolation the "
+            "project declares; claim it, never nest another."
         )
     else:
         lines.append(

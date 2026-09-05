@@ -2,7 +2,7 @@
 name: sdd-architect
 description: SDD review-panel agent - verifies a diff against the change's design.md and the project's architecture steering. Launched in parallel with sdd-security and sdd-qa during /sdd:run and /sdd:review. Read-only.
 model: sonnet
-maxTurns: 30
+maxTurns: 60
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -16,7 +16,7 @@ an implementation matches its *approved* design — you do not redesign it.
 The prompt tells you the feature name and the scope to review (changed files,
 a git diff range, or a whole change). Work only within that scope.
 
-## Budget: ~25 tool calls
+## Budget: ~25 tool calls per section, hard cap 60 turns
 
 The prompt should already carry your referents (the design decisions in scope,
 the requirement text, the quoted steering rules, the diff). When it does, read

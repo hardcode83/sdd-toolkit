@@ -2,7 +2,7 @@
 name: sdd-qa
 description: SDD review-panel agent - verifies that each EARS acceptance criterion in scope is implemented and tested, runs the tests, and tries to break the implementation. Launched in parallel with sdd-architect and sdd-security during /sdd:run and /sdd:review. May run tests but never edits files.
 model: sonnet
-maxTurns: 40
+maxTurns: 100
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -19,7 +19,12 @@ The prompt tells you the feature name and the scope to review (a task
 section's requirements, or the whole change). Work only on the requirements
 (R#) in that scope.
 
-## Budget: ~35 tool calls
+## Budget: ~35 tool calls per section, hard cap 100 turns
+
+At feature scale you run the change's suites and the R# matrix, which is where
+the cap matters: if you are cut, the orchestrator relaunches **you alone** with
+your partial report, not the panel. Say what you established and what you did
+not reach rather than padding.
 
 The prompt should already carry your referents (the EARS criteria in scope, the
 tasks that claim them, the test commands, the diff). When it does, read to

@@ -597,6 +597,69 @@ def ensure_local_gates(change: Path, *, strict: bool = False) -> None:
         raise LifecycleError(f"{what} Entries: {listed}")
 
 
+PANEL_RECEIPT_PHASES = {"review", "auto"}
+
+
+def panel_receipt_path(root: Path, feature: str, runner: Runner = subprocess.run) -> Path:
+    """`<git common dir>/sdd/receipts/<feature>.json` — machine-local, shared by
+    every worktree, invisible to `git status` (the same home as the session
+    registry). `reviewer_panel.py` writes it; the lifecycle reads it."""
+    common = run_command(["git", "rev-parse", "--git-common-dir"], root, runner).stdout.strip()
+    return (root / common).resolve() / "sdd" / "receipts" / f"{feature}.json"
+
+
+def panel_receipt(root: Path, feature: str, runner: Runner = subprocess.run) -> dict | None:
+    """The feature-scale panel verdict `reviewer_panel.py` left for this change."""
+    try:
+        path = panel_receipt_path(root, feature, runner)
+    except LifecycleError:
+        return None
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def ensure_panel_receipt(change: Path, root: Path, runner: Runner = subprocess.run) -> dict:
+    """Certification needs the panel's verdict on disk, at this very commit.
+
+    Measured (ADR 0007): eight feature-scale panels passed for one change and
+    none reached `mark-local-verified`, because the verdict lived in a fork's
+    prose. The receipt is the mechanical link — no receipt, no milestone.
+    """
+    receipt = panel_receipt(root, change.name, runner)
+    if receipt is None:
+        raise LifecycleError(
+            f"No panel receipt for '{change.name}'. Run the feature-scale panel through "
+            "`reviewer_panel.py --phase review` (it writes the receipt) before certifying; "
+            "a verdict that is not on disk did not happen."
+        )
+    if receipt.get("phase") not in PANEL_RECEIPT_PHASES:
+        raise LifecycleError(
+            f"The panel receipt is from phase {receipt.get('phase')!r}; certification needs a "
+            "review or auto panel."
+        )
+    if receipt.get("gate") != "PASS":
+        errors = "; ".join(str(e) for e in (receipt.get("errors") or [])[:4])
+        raise LifecycleError(
+            f"The panel receipt records gate {receipt.get('gate')!r}"
+            + (f" ({errors})" if errors else "")
+            + ". Fix the findings and re-run the panel; the gate is what certifies."
+        )
+    head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    if receipt.get("sha") != head:
+        raise LifecycleError(
+            f"The panel receipt certifies {str(receipt.get('sha'))[:12]} but HEAD is "
+            f"{head[:12]}: commits landed after the panel. Re-run the panel on HEAD "
+            "(`reviewer_panel.py --phase review --carry` reuses the PASS verdicts when only "
+            "documents changed)."
+        )
+    return receipt
+
+
 def block_change(
     root: Path,
     feature: str,
@@ -1723,6 +1786,7 @@ def mark_local_verified(
 ) -> str:
     change = active_change(root, feature)
     ensure_local_gates(change)
+    ensure_panel_receipt(change, root, runner)
     data = read_state(change) or initial_state()
     current = data.get("state", "ACTIVE")
     if (
@@ -1810,6 +1874,7 @@ def mark_recertified(
     expected_path = lifecycle_path(root, feature, runner)
     ensure_clean_or_only_expected_state(root, expected_path, runner)
     ensure_local_gates(change)
+    ensure_panel_receipt(change, root, runner)
     data = read_state(change)
     if not data:
         raise LifecycleError(
@@ -2421,6 +2486,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="task id this entry covers (repeatable), e.g. --task 4.3",
     )
+    receipt = subparsers.add_parser(
+        "receipt", help="show the feature-scale panel receipt and whether it certifies HEAD"
+    )
+    receipt.add_argument("feature")
+    receipt.add_argument("--json", action="store_true")
     blocked = subparsers.add_parser("blocked", help="list the change's BLOCKED entries")
     blocked.add_argument("feature")
     blocked.add_argument("--json", action="store_true")
@@ -2462,6 +2532,33 @@ def main(argv: list[str] | None = None) -> int:
                 resume=args.resume,
                 tasks=tuple(args.task),
             )
+        elif args.command == "receipt":
+            change = active_change(root, args.feature)
+            data = panel_receipt(root, args.feature) or {}
+            head = run_command(["git", "rev-parse", "HEAD"], root).stdout.strip()
+            certifies = bool(data) and data.get("gate") == "PASS" and data.get("sha") == head \
+                and data.get("phase") in PANEL_RECEIPT_PHASES
+            summary = {
+                "feature": args.feature, "present": bool(data), "phase": data.get("phase"),
+                "gate": data.get("gate"), "sha": data.get("sha"), "head": head, "at": data.get("at"),
+                "certifies_head": certifies,
+                "reviewers": [
+                    {"reviewer_id": r.get("reviewer_id"), "verdict": r.get("verdict"), "status": r.get("status")}
+                    for r in data.get("reviewers", [])
+                ],
+            }
+            if args.json:
+                print(json.dumps(summary, indent=2))
+            else:
+                if not data:
+                    print(f"No panel receipt for '{args.feature}'.")
+                else:
+                    print(f"receipt: phase {data.get('phase')} · gate {data.get('gate')} · sha {str(data.get('sha'))[:12]} · at {data.get('at')}")
+                    for r in summary["reviewers"]:
+                        print(f"  {r['reviewer_id']}: {r['verdict']} ({r['status']})")
+                    print(f"HEAD {head[:12]}")
+                print("RECEIPT: CERTIFIES_HEAD" if certifies else "RECEIPT: STALE_OR_MISSING")
+            return 0
         elif args.command == "blocked":
             entries = blocked_entries(active_change(root, args.feature))
             if args.json:

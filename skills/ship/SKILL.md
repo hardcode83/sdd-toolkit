@@ -49,7 +49,9 @@ ship never reviews, never merges the PR and never archives.
      abort with an actionable message — "execute `/sdd:review <feature>` to
      recertify the fix on the same PR" — and do NOT run step 3, do NOT
      re-run `record-pr`, do NOT push. Ship publishes; it does not certify.
-   - `ACTIVE` or `LOCAL_VERIFIED` → not publishable yet: no reviewed `implementation_sha` means nothing objective to attach the PR to. Point to `/sdd:review <feature>` and stop.
+   - `ACTIVE` or `LOCAL_VERIFIED` → look at the panel receipt before sending anyone back to review: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . receipt <feature>`. Its last line decides:
+     - `RECEIPT: CERTIFIES_HEAD` — the feature-scale panel already passed on this very commit and only the milestone is missing (a review fork that ended before recording it). Record it here, no human needed: `mark-local-verified <feature>`, then `mark-ready <feature> --base <base>` where `<base>` is `STATE.md`'s `base_branch` if present, else the remote's default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`, minus `origin/`), else `main`. Then continue as `READY_FOR_PR`. Re-running a panel that passed on the same HEAD is the loop ADR 0007 measured: ship → review → seven reviewers → ship.
+     - `RECEIPT: STALE_OR_MISSING` — nothing objective certifies HEAD: point to `/sdd:review <feature>` and stop.
    - `MERGED` → point to `/sdd:archive <feature>` and stop.
    - A `BLOCKED.md` with a `decision` entry (or one whose type cannot be read — `sdd_lifecycle.py blocked <feature>` lists them typed) → do not publish work that is waiting on a human decision. Show the entries and stop. `deferred` and `assumed` entries do **not** stop ship: they travel with the PR and are listed in its body (step 5).
 

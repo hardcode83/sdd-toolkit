@@ -120,7 +120,11 @@ reason. Then:
    - Always at feature scale regardless of annotations: the R# completeness matrix (met/partially/unmet with `file:line` — qa) and cumulative scope creep.
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).
 3. **Synthesize**: merge the three reports, dedupe, and drop any finding without a referent (R#, D#, or quoted steering rule). Present per requirement: **met / partially met / unmet** with `file:line` of implementation and test (from the QA report), then the surviving findings most severe first, then scope creep.
-4. Route the selected logical plan through the shared reviewer-panel boundary. An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
+4. Route the selected logical plan through the shared reviewer-panel boundary — `scripts/reviewer_panel.py --phase review --feature <feature> --scope … --results …` (with `--worktree <path>` when the feature lives elsewhere). An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
+
+   **The gate writes the receipt.** On every evaluation `reviewer_panel.py` persists the verdict per reviewer, the gate and the HEAD it judged, in `<git common dir>/sdd/receipts/<feature>.json` — machine-local, shared by every worktree, invisible to `git status`. `sdd_lifecycle.py receipt <feature>` prints it and says whether it certifies HEAD. Two things follow (ADR 0007):
+   - **A reviewer cut by its turn limit is relaunched alone.** Its partial result is a non-PASS for the gate, but the panel does not start over: relaunch **that reviewer** with the same prompt plus "resume from what you already established", and re-run the gate. Measured: 15 of 24 turn-limit cuts were `sdd-qa` running full suites at feature scale, and every cut used to relaunch all seven.
+   - **A re-review after fixes relaunches only what did not PASS.** Read the receipt: reviewers with `verdict: PASS` at its `sha` stay; relaunch the others scoped to `<receipt sha>..HEAD`, and run the gate with `--carry`, which reuses the recorded PASS verdicts **only** when the diff since the receipt touches no code (`sdd/`, `docs/`, markdown, images). Code changed → `--carry` refuses and names the paths: every reviewer runs again, because a PASS on other code is not a PASS on this one.
 4b. **When the verdict is FAIL, the fixes are not part of this phase — and they are
    not free either.** Review is report-only (see below), so fixing means leaving
    review and coming back. **Under `/sdd:auto`** the calling session is who comes
@@ -164,7 +168,12 @@ reason. Then:
    <head_branch>` (never `--force`) before invoking review in this case, so
    `mark-recertified` can verify the new HEAD is in the PR's `commits[]`.
 5. Conclude with a verdict: locally verified or list what's missing. If the
-   verdict passes, persist the lifecycle milestones. **Branch on `state`** —
+   verdict passes, persist the lifecycle milestones **in this same turn** —
+   `mark-local-verified` refuses without a PASS receipt at HEAD, and a fork that
+   ends after "the panel passed" without recording the milestone leaves
+   `STATE.md` at `ACTIVE`, which is how eight passing panels on one change
+   certified nothing (ADR 0007). The receipt, the milestone and the metrics are
+   the phase's output; the prose is a summary of them. **Branch on `state`** —
    the change may already be at `PR_OPEN`, in which case the milestones below
    would be a no-op or an error:
 

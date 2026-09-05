@@ -42,6 +42,19 @@ FEATURE = "example"
 PR_URL = "https://github.com/example/project/pull/17"
 
 
+def setUpModule() -> None:
+    """These tests exercise the lifecycle transitions, not the panel receipt
+    `mark-local-verified` now demands (ADR 0007); `tests/test_panel_receipt.py`
+    owns that contract, so here the receipt check is stubbed out."""
+    global _receipt_patch
+    _receipt_patch = mock.patch("sdd_lifecycle.ensure_panel_receipt", lambda *args, **kwargs: {})
+    _receipt_patch.start()
+
+
+def tearDownModule() -> None:
+    _receipt_patch.stop()
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

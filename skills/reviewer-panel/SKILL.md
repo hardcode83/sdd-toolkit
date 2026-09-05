@@ -38,6 +38,13 @@ capability or worktree mutation failures are unavailable results.
 Do not use `.codex/agents`, `~/.codex/agents`, copied prompts, symlinks, or
 project Codex configuration.
 
+`scripts/reviewer_panel.py` persists every feature-scale evaluation (`review`,
+`auto`) as a **receipt** in `<git common dir>/sdd/receipts/<feature>.json`:
+gate, HEAD, one row per reviewer with its verdict and, for a PASS, the payload.
+`mark-local-verified` and `mark-recertified` refuse without a PASS receipt at
+HEAD; `--carry` reuses the recorded PASS verdicts for reviewers not relaunched
+when only non-code changed since the receipt (ADR 0007).
+
 The executable lifecycle boundary is `execute_lifecycle_panel()` (with the
 thin `run_panel()`, `review_panel()`, and `auto_panel()` entry points). Each
 entry point builds the plan, invokes the selected adapter, re-evaluates the
