@@ -121,7 +121,11 @@
       every command with `cd <path> &&` or pass `--root <path>` to the SDD
       scripts, and read files by absolute path.
     - Unattended: `/sdd:auto` runs its terminal phases in a **fresh headless
-      session** (`claude -p`), and reads what came back from `STATE.md`, not
-      from the sub-session's prose — evidence over claims, as in rule 8.
+      session** (`claude -p`, launched through `scripts/sdd_auto_outcome.py` so
+      the permission recipe lives in one tested place), and reads what came back
+      from `STATE.md`, not from the sub-session's prose — evidence over claims,
+      as in rule 8. A phase started that way sees `SDD_AUTO=1` in its
+      environment: every "under `/sdd:auto`" clause in a skill applies then too,
+      even though the session was started as `/sdd:<phase>`.
     - Full measurement and the available mechanisms:
       `${CLAUDE_PLUGIN_ROOT}/references/context-budget.md`.

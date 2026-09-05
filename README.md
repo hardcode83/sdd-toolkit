@@ -696,7 +696,7 @@ Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/age
 
 Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect`, el panel es obligatorio por sección y `review` debe dar PASS. Tu revisión se mueve a **una rama + PR por feature**; lo que necesita decisión se convierte en **BLOCKED**. Auto registra `PR_OPEN` y se detiene: las specs vivas, el tick definitivo del roadmap y el archive esperan a que GitHub confirme el merge y se ejecute `/sdd:archive`.
 
-Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless (`claude -p "/sdd:auto 2" --permission-mode acceptEdits` en cron/CI). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
+Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless con la receta del toolkit (`python3 "$PLUGIN/scripts/sdd_auto_outcome.py" run "/sdd:auto 2" --cwd .` en cron/CI). La receta importa: un `claude -p` arranca en modo Manual, `acceptEdits` no aprueba comandos de shell y nadie está para responder al prompt — así murieron las tres primeras ejecuciones reales de auto, en menos de dos minutos, sobre `python3 …/sdd_roadmap.py`. El script lanza la sesión con `--permission-mode auto --permission-prompts none`, en Sonnet u Opus (**nunca Haiku**: para él el modo auto no existe y la sesión cae a Manual sin avisar), con `--json-schema` para que la fase termine en un objeto de veredicto, y resume lo que volvió en una última línea `AUTO_OUTCOME: PASS|BLOCKED|FAILED|DENIED|ERROR|INCOMPLETE|UNAVAILABLE`. Una denegación de permisos es `DENIED`: no es una decisión sino una regla que falta, y queda en `BLOCKED.md` como `deferred` con el comando exacto. Medidas y alternativas en [ADR 0005](docs/adr/0005-auto-headless-recipe.md). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
 **Auto no te pregunta nada.** Ni gates, ni ambigüedades, ni confirmaciones: cada punto donde una fase pediría tu opinión tiene un sustituto declarado, y lo que no lo tiene se escribe en `BLOCKED.md` y el run sigue con la siguiente entrada. Sin steering docs auto ya no pide confirmación: avanza y lo señala como el primer arreglo pendiente en el informe. Y los pasos que son tuyos por naturaleza —pushear sin remoto, abrir el PR sin `gh`, mergear, archivar— son **handoffs, no fallos**: auto los deja commiteados, con el siguiente paso registrado en `STATE.md` (`/sdd:status` lo lee, así que sobrevive al cierre de sesión) y con el comando exacto en una lista final de *"esto te toca a ti"*. Un run desatendido termina en acciones, no en un transcript que reconstruir.
 
@@ -933,9 +933,11 @@ la regla 1, no un motivo para conservar la conversación.
   releer ese contexto; los subagentes del panel, el 19 %. Detalle en
   [ADR 0003](docs/adr/0003-forked-phases.md).
 - **Desatendido**: `/sdd:auto` corre cada feature y su review en una **sesión
-  headless nueva** (`claude -p`), y lee lo que volvió de `STATE.md`, no de la
-  prosa de la sub-sesión — evidencia sobre afirmaciones, como en la regla 8. Con
-  fallback: si `claude` no está o falla, lo hace en línea y lo dice en el informe.
+  headless nueva** (`claude -p`, lanzada por `scripts/sdd_auto_outcome.py` con
+  la receta de permisos que sí funciona sin nadie delante), y lee lo que volvió
+  de `STATE.md`, no de la prosa de la sub-sesión — evidencia sobre
+  afirmaciones, como en la regla 8. Con fallback: si `claude` no está o falla
+  (`AUTO_OUTCOME: UNAVAILABLE`), lo hace en línea y lo dice en el informe.
   Una optimización de coste nunca bloquea una feature.
 - Las métricas siguen cuadrando: `.sdd-usage/` es **un sink por repositorio**, así
   que la sub-sesión exporta al mismo log y su fase se marca sola.

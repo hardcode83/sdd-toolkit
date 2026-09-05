@@ -81,6 +81,13 @@ tool, and `--autocompact` only moves the compaction threshold. What exists:
    A real session: skills resolve, hooks and MCP work, and the panel launches
    its agents normally. The caller gets only the final report back. This is
    what `/sdd:auto` uses; a forked skill invoked inside `-p` simply waits.
+   The permission mode is the part that is easy to get wrong: a `-p` session
+   starts in Manual on every plan, `acceptEdits` approves file edits but not
+   shell commands, and nobody is there to answer the prompt — which is how
+   every real auto run of v0.37 died in under two minutes. The working recipe
+   (`--permission-mode auto --permission-prompts none`, Sonnet or Opus as the
+   session model, never Haiku, `--json-schema` for the outcome) lives in
+   `scripts/sdd_auto_outcome.py`; ADR 0005 has the measurements.
 3. **A plain subagent** (`Agent` tool) — isolated context for one delegated
    task. A phase is better expressed as (1); `run` uses it the other way round:
    it stays inline (its gates converse with the user) and delegates each
