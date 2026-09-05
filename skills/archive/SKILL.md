@@ -74,8 +74,10 @@ Write spec updates in the same language as the existing specs (or the user's lan
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . verify-merge <feature>
    ```
 
-   The helper requires all tasks checked, no active `BLOCKED.md`, and local
-   review approved. It then proves the merge through one of three objective
+   The helper requires all tasks checked (`<!-- manual -->` ones included —
+   the PR is where they were meant to be done), **no `BLOCKED.md` entry of any
+   type** (`deferred` and `assumed` travelled with the PR; acknowledging one is
+   deleting it), and local review approved. It then proves the merge through one of three objective
    paths, picked from the recorded state — never from anyone's claim:
 
    - **PR evidence** (`merge_evidence: pr`), when a PR is recorded: complete PR

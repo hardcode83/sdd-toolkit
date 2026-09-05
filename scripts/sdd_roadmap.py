@@ -21,7 +21,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sdd_lifecycle import LifecycleError, read_state
+from sdd_lifecycle import LifecycleError, blocked_entries, read_state
 
 
 # Same shape both other parsers accept, so a roadmap stays readable by all three.
@@ -346,15 +346,18 @@ def entry_status(root: Path, entry: Entry, archived: set[str]) -> str:
     """Derived state for an entry — never read from the roadmap itself (D5).
 
     Precedence: an archive on disk outranks a stale STATE.md, and a non-empty
-    BLOCKED.md outranks the lifecycle state because it is what needs a human.
+    BLOCKED.md entry of type `decision` outranks the lifecycle state because it
+    is what needs a human; `deferred`/`assumed` entries do not.
     """
     if entry.feature in archived:
         return "ARCHIVED"
     change = root / "sdd" / "changes" / entry.feature
     if not change.is_dir():
         return "ARCHIVED" if entry.checked else "PENDING"
-    blocked = change / "BLOCKED.md"
-    if blocked.is_file() and blocked.read_text(encoding="utf-8", errors="replace").strip():
+    # Only an entry that needs a human (`decision`, or one whose type cannot be
+    # read) outranks the state: `deferred` and `assumed` entries travel with the
+    # PR and are the inbox, not a stop (ADR 0006).
+    if any(entry.blocks_locally for entry in blocked_entries(change)):
         return "BLOCKED"
     try:
         state = read_state(change)

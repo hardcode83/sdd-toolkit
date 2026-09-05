@@ -66,12 +66,33 @@ recorded as a BLOCKED.md entry and the run continues with the next feature.
 Everywhere a phase skill says "ask the user", "wait for approval", or
 "stop and ask", auto substitutes:
 
-- **Ambiguity that changes requirements** (new), **open questions** (design),
-  **blockers** (run: its "stop and ask rather than guessing" becomes this),
-  **persistent panel findings** (run/review), or any DESIGN-CONFLICT that
-  can't be resolved by making the documents match already-approved sources →
-  **BLOCK the feature** (see contract below) and move on. Never guess to keep
-  moving — guessing is exactly what gates prevent.
+- **Ambiguity that changes requirements** (new), **blockers** (run: its "stop
+  and ask rather than guessing" becomes this), **findings the fix ladder could
+  not close** (run/review — the ladder itself is in `/sdd:run` step 3), or any
+  DESIGN-CONFLICT that can't be resolved by making the documents match
+  already-approved sources → **BLOCK the feature** with a `decision` entry (see
+  contract below) and move on. Never guess to keep moving — guessing is exactly
+  what gates prevent.
+- **Open questions (design) with a recommendation** → when the design skill
+  surfaces a choice, recommends an option, and **every** option respects the
+  proposal and the steering docs, take the recommended one, materialise it as a
+  D#, and record an `assumed` entry (shared rule 5): the option taken, the
+  alternatives, why the recommendation, and the D#. The human vetoes it at the
+  PR. An open question without a recommendation, or one whose options touch a
+  requirement R#, security or an irreversible action → `decision`, BLOCK.
+- **`<!-- manual -->` tasks** (a browser pass with no free port, a console
+  step, an external system) → never attempt them and never check them off:
+  record a `deferred` entry naming the task (`block … --type deferred --task
+  N.M`) and continue. The gates let them travel with the PR (ADR 0006); the
+  archive still requires them done.
+- **Environment contention** (the suite dies of OOM, a stack cannot be raised
+  because peers hold the host) is a fact to document in the task and a
+  `deferred` entry, not a reason to mark anything done and not a `decision`:
+  nobody has to decide anything, the host has to free up.
+- **A generic authorisation from the human** ("ok, go ahead") on a blocked
+  feature is *not* a decision on a specific option. Take the phase's
+  recommended option, record it as `assumed` saying the authorisation was
+  generic, and never write the user's name on a choice they did not make.
 - **Approvals** → replaced by the automated checks listed per phase.
 - **Shared rule 6** (an existing `proposal.md` / `design.md` / `tasks.md`, whose
   question is regenerate/amend/keep) → always **keep**: a document already on
@@ -129,7 +150,7 @@ disk (`STATE.md`, `BLOCKED.md`, `tasks.md`) before acting on it:
 | `BLOCKED` | the sub-session wrote `BLOCKED.md` | adopt it; next feature |
 | `FAILED` | the phase ran and its verdict is negative | BLOCK the feature |
 | `DENIED` | `permission_denials` is non-empty | **not a decision — configuration**: `deferred` entry with the exact denied command(s) so the user adds the rule; never retry blind |
-| `ERROR` | API error, budget or turn limit, abnormal end | retry the same launch **once**; then `deferred` with the reason |
+| `ERROR` | API error, budget or turn limit, abnormal end | if the reason names a rate limit or usage window, wait for it (the message says when) and retry the same launch **once**; otherwise retry once immediately; then `deferred` with the reason |
 | `INCOMPLETE` | ended without an outcome object | read the disk; if it does not prove the phase's milestone, treat as `FAILED` |
 | `UNAVAILABLE` | no `claude` on PATH, or it could not start | run that phase **inline** and say so in the report — a cost optimisation never aborts a run |
 
@@ -313,7 +334,7 @@ Then, for the feature at hand:
 
 `/sdd:auto <feature>` where `sdd/changes/<feature>/` already exists does NOT start over — it resumes from the change's current phase with the same gate substitutes:
 
-- `BLOCKED.md` present → do not resume: the feature awaits the user's decision. Report it as blocked and take the next roadmap entry; only a run that targeted this single feature ends here.
+- `BLOCKED.md` with a `decision` entry (or one whose type cannot be read: `sdd_lifecycle.py blocked <feature>` lists them) → do not resume: the feature awaits the user's decision. Report it as blocked and take the next roadmap entry; only a run that targeted this single feature ends here. `deferred` and `assumed` entries alone never stop a resume — they travel with the PR.
 - Only `proposal.md` → continue at design (the existing proposal counts as approved: the user drove it).
 - `proposal.md` + `design.md` → continue at tasks.
 - `tasks.md` with unchecked tasks → continue at run.
@@ -353,10 +374,16 @@ run or turn into a question. For every one of them:
 
 When blocking a feature:
 
-1. Write `sdd/changes/<feature>/BLOCKED.md` (entry format per shared rule 5:
-   phase · type · what & why · exact resume command): the exact question(s)
-   a human must answer or the findings that persisted, and what was tried.
-   This file is the handoff — write it so the user can decide in one read.
+1. Write the entry with the script, never by hand (shared rule 5 — a forked
+   phase once left the file at the worktree root):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root <feature dir> block <feature> --phase <phase> --type decision --title "<one line>" --why "<what was tried, the exact question(s) or the findings that persisted>" --resume "<exact command>"
+   ```
+
+   This entry is the handoff — write it so the user can decide in one read.
+   `deferred` and `assumed` entries use the same command with their type; they
+   do not block the feature and the pipeline continues past them.
 2. Commit whatever is consistent (documents + code that passed its
    verification) on `sdd/<feature>` — never leave uncommitted work.
 3. Do **not** annotate the roadmap. `BLOCKED.md` is the record, and
@@ -371,6 +398,9 @@ file, and resumes with the normal phase skills on that branch.
 
 ## Final report (always, even if everything blocked)
 
+- Per feature, the `assumed` entries auto took (option, alternatives, D#): the
+  human reads them at the PR, and `/sdd:archive` will not close until each is
+  acknowledged by deleting it.
 - Per feature: **PR open** (link; archive pending merge) /
   **ready for PR** (exact next action) / **awaiting archive** (already merged →
   `/sdd:archive <feature>`) / **blocked** (phase + one-line reason) /

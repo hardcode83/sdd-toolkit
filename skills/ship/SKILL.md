@@ -51,7 +51,7 @@ ship never reviews, never merges the PR and never archives.
      re-run `record-pr`, do NOT push. Ship publishes; it does not certify.
    - `ACTIVE` or `LOCAL_VERIFIED` → not publishable yet: no reviewed `implementation_sha` means nothing objective to attach the PR to. Point to `/sdd:review <feature>` and stop.
    - `MERGED` → point to `/sdd:archive <feature>` and stop.
-   - A non-empty `BLOCKED.md` → do not publish work that is waiting on a human decision. Show the entries and stop.
+   - A `BLOCKED.md` with a `decision` entry (or one whose type cannot be read — `sdd_lifecycle.py blocked <feature>` lists them typed) → do not publish work that is waiting on a human decision. Show the entries and stop. `deferred` and `assumed` entries do **not** stop ship: they travel with the PR and are listed in its body (step 5).
 
    **Never ask for the base branch.** `mark-ready` recorded `base_branch`, `head_branch`, `repository` and `implementation_sha` in `STATE.md`; those are the facts, and asking again invites a different answer than the one the evidence was recorded against.
 
@@ -130,7 +130,7 @@ ship never reviews, never merges the PR and never archives.
 
 5. **Open or validate the Pull Request** with `gh pr create`, base `base_branch`, head `head_branch`:
    - Title: `SDD: <feature>`.
-   - Body: the proposal's Why/What, the review verdict, and a link to the change directory. If step 3 resolved anything, say which paths and how it was verified — the reviewer is entitled to know the branch carries a resolution the local review never saw.
+   - Body: the proposal's Why/What, the review verdict, and a link to the change directory. If step 3 resolved anything, say which paths and how it was verified — the reviewer is entitled to know the branch carries a resolution the local review never saw. Then a section **"Pending, travelling with this PR"** listing every `deferred` and `assumed` entry of `BLOCKED.md` (type, title, and for `assumed` the option taken and its D#): the PR is where a human performs the deferred checks and vetoes the assumptions, and `/sdd:archive` will not close until each is acknowledged.
    - **Attribution follows the project's settings**: only append the Claude Code attribution line if `includeCoAuthoredBy` is not disabled in the effective settings — never hardcode a signature against the user's configuration.
    - A PR already open for that head branch → don't create a second one; take its URL and continue to step 6.
    - No `gh`, or `gh` fails (no permission, protected branch) → handoff, step 7.
