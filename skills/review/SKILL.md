@@ -123,8 +123,12 @@ reason. Then:
 4. Route the selected logical plan through the shared reviewer-panel boundary. An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
 4b. **When the verdict is FAIL, the fixes are not part of this phase — and they are
    not free either.** Review is report-only (see below), so fixing means leaving
-   review and coming back. Two rules make that terminate, mirroring the fix loop
-   `/sdd:run` already caps per section:
+   review and coming back. **Under `/sdd:auto`** the calling session is who comes
+   back: fill the outcome object's `findings` (reviewer, severity, `file:line`,
+   referent, what, fix direction — one item per surviving finding, nothing in
+   prose that is not there) and end with `outcome: FAILED`; auto runs the fix
+   ladder of its step 6 and re-invokes this skill. Two rules make that
+   terminate, mirroring the fix loop `/sdd:run` already caps per section:
    - **Re-review what you fixed.** A finding closed without a reviewer seeing the
      fix is an unreviewed change wearing an approved verdict. Re-run only the
      reviewer(s) whose findings you touched, scoped to the fix.

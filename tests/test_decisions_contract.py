@@ -82,6 +82,24 @@ class FixLadderContractTests(unittest.TestCase):
             self.assertNotRegex(path.read_text(encoding="utf-8"), r"claude-(opus|sonnet|haiku|fable)-\d")
 
 
+class ReviewFixLadderContractTests(unittest.TestCase):
+    """Measured: 52 of 84 features needed more than one review; auto used to BLOCK
+    on the first FAIL without trying a fix."""
+
+    def test_auto_climbs_the_ladder_on_a_failed_review(self) -> None:
+        auto = read("skills", "auto", "SKILL.md")
+        self.assertIn("`FAILED` is not a block yet", auto)
+        self.assertIn("review fixes — round 1", auto)
+        self.assertIn("`model: opus`, given the\n      new findings", auto)
+        self.assertIn("re-run the delegated\n      review", auto)
+        self.assertIn("Two rounds is the cap", auto)
+
+    def test_review_fills_findings_for_the_caller_under_auto(self) -> None:
+        review = read("skills", "review", "SKILL.md")
+        self.assertIn("fill the outcome object's `findings`", review)
+        self.assertIn("auto runs the fix\n   ladder", review)
+
+
 class ForegroundForkContractTests(unittest.TestCase):
     def test_review_and_the_panel_wait_in_the_foreground(self) -> None:
         self.assertIn("In the foreground, and wait in this turn", read("skills", "review", "SKILL.md"))

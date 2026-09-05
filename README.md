@@ -186,7 +186,21 @@ separa ahora explícitamente:
 
 `BLOCKED` y `CANCELLED` son estados laterales: `BLOCKED` conserva un
 `BLOCKED.md` accionable y permite reanudar el flujo cuando se resuelva;
-`CANCELLED` termina un change descartado sin presentarlo como entregado. Este
+`CANCELLED` termina un change descartado sin presentarlo como entregado.
+La cola de `BLOCKED.md` tiene **tres tipos de entrada** (regla compartida 5,
+[ADR 0006](docs/adr/0006-decisions-three-levels.md)): `decision` necesita a un
+humano y para `READY_FOR_PR` (es lo único que pone `⛔` en `/sdd:status`);
+`deferred` (reanudable: un panel interrumpido, una verificación post-merge, una
+tarea `<!-- manual -->` que nadie puede hacer desde el worktree) y `assumed`
+(una elección que auto tomó con recomendación declarada, nombrando la opción y
+la D# donde aterrizó) **viajan con el PR**: pasan los gates locales, `/sdd:ship`
+las lista en el cuerpo del PR, y `/sdd:archive` se niega a cerrar mientras quede
+cualquiera — reconocerla es borrarla. Las entradas se escriben con
+`sdd_lifecycle.py block <feature> --type … --title … --why … --resume …`, que
+deriva la ruta del change; una entrada cuyo tipo no se puede leer cuenta como
+`decision` (el gate falla cerrado, `SDD030`). Y una autorización genérica del
+humano ("adelante") nunca convierte una `assumed` en decisión suya: auto toma la
+opción recomendada y deja escrito que la autorización fue genérica. Este
 incremento no añade un comando público de cancelación ni archiva
 automáticamente ninguno de los dos.
 
@@ -420,10 +434,12 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD014` | error | El estado, su ubicación o sus campos obligatorios forman una combinación incompatible con el lifecycle. |
 | `SDD015` | error | La metadata local ya contiene evidencia de merge pero conserva `state: PR_OPEN`; debe reanudarse `/sdd:archive`. |
 | `SDD016` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` afirma tareas completas, pero `tasks.md` tiene casillas sin marcar (o no existe). El lifecycle exige ese gate al escribir el estado; esta regla lo revalida después. |
-| `SDD017` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` convive con un `BLOCKED.md` sin resolver. |
+| `SDD017` | error | Un change en `READY_FOR_PR`, `PR_OPEN` o `MERGED` convive con una entrada `decision` (o ilegible) en `BLOCKED.md`; las `deferred`/`assumed` viajan con el PR y no disparan este error. |
 | `SDD018` | error | El roadmap declara la misma feature en más de una entrada. |
 | `SDD019` | error | Una entrada declara una relación (`needs`, `completes`, `informs-from`, `inherits-from`) con una feature que no es entrada del roadmap. |
 | `SDD020` | error | Las relaciones del roadmap forman un ciclo de dependencias. |
+| `SDD030` | warning | Una entrada de `BLOCKED.md` no tiene tipo legible (`decision`/`deferred`/`assumed`); los gates la tratan como `decision`. |
+| `SDD031` | warning | Una tarea `<!-- manual -->` sigue abierta y ninguna entrada `deferred` la nombra; `READY_FOR_PR` se negará. |
 | `SDD021` | error | Una entrada cerrada declara una dependencia que sigue abierta: se entregó antes de aquello de lo que dijo depender. |
 | `SDD022` | warning | Una sub-línea de metadatos usa una clave desconocida, o un `size`/`kind` fuera de su vocabulario. |
 | `SDD023` | warning | Un `## Stage` no declara el resultado que se alcanza al cerrarlo. |
@@ -537,7 +553,16 @@ esta suite.
 
 ## Modelos y agentes por fase
 
-Qué modelo ejecuta cada fase y qué subagentes intervienen en ella:
+Qué modelo ejecuta cada fase y qué subagentes intervienen en ella. Los nombres
+son **alias de nivel** (`haiku` rápido · `sonnet` estándar · `opus` fuerte ·
+`fable` reservado), nunca IDs de modelo: Claude Code los resuelve por
+`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, así que el mismo texto corre sobre la API de
+Anthropic, sobre MiniMax (su receta oficial mapea los tres alias a `MiniMax-M3`),
+detrás de un gateway o en Bedrock, y bajo Codex documentan la intención mientras
+el modelo lo elige la sesión. Toda llamada `Agent` lleva su alias explícito: una
+sin `model` hereda el de la sesión (medido en el primer run real de auto). El
+mapeo es del entorno del usuario, no del toolkit ni de `sdd/project.md`:
+`references/models.md`.
 
 | Fase | Modelo | Agentes que intervienen |
 |---|---|---|
@@ -697,6 +722,8 @@ Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/age
 Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect`, el panel es obligatorio por sección y `review` debe dar PASS. Tu revisión se mueve a **una rama + PR por feature**; lo que necesita decisión se convierte en **BLOCKED**. Auto registra `PR_OPEN` y se detiene: las specs vivas, el tick definitivo del roadmap y el archive esperan a que GitHub confirme el merge y se ejecute `/sdd:archive`.
 
 Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless con la receta del toolkit (`python3 "$PLUGIN/scripts/sdd_auto_outcome.py" run "/sdd:auto 2" --cwd .` en cron/CI). La receta importa: un `claude -p` arranca en modo Manual, `acceptEdits` no aprueba comandos de shell y nadie está para responder al prompt — así murieron las tres primeras ejecuciones reales de auto, en menos de dos minutos, sobre `python3 …/sdd_roadmap.py`. El script lanza la sesión con `--permission-mode auto --permission-prompts none`, en Sonnet u Opus (**nunca Haiku**: para él el modo auto no existe y la sesión cae a Manual sin avisar), con `--json-schema` para que la fase termine en un objeto de veredicto, y resume lo que volvió en una última línea `AUTO_OUTCOME: PASS|BLOCKED|FAILED|DENIED|ERROR|INCOMPLETE|UNAVAILABLE`. Una denegación de permisos es `DENIED`: no es una decisión sino una regla que falta, y queda en `BLOCKED.md` como `deferred` con el comando exacto. Medidas y alternativas en [ADR 0005](docs/adr/0005-auto-headless-recipe.md). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
+
+**Un FAIL de review bajo auto no es un bloqueo, es el inicio de la escalera de fixes** (medido: 52 de 84 features necesitaron más de una review, y más de la mitad del gasto de review fue re-review): implementador `sonnet` acotado a los findings del veredicto, re-review delegada, segunda ronda en `opus` con el informe anterior, y solo al tercer FAIL una `decision` con las dos posiciones escritas ([ADR 0006](docs/adr/0006-decisions-three-levels.md), adenda).
 
 **Auto no te pregunta nada.** Ni gates, ni ambigüedades, ni confirmaciones: cada punto donde una fase pediría tu opinión tiene un sustituto declarado, y lo que no lo tiene se escribe en `BLOCKED.md` y el run sigue con la siguiente entrada. Sin steering docs auto ya no pide confirmación: avanza y lo señala como el primer arreglo pendiente en el informe. Y los pasos que son tuyos por naturaleza —pushear sin remoto, abrir el PR sin `gh`, mergear, archivar— son **handoffs, no fallos**: auto los deja commiteados, con el siguiente paso registrado en `STATE.md` (`/sdd:status` lo lee, así que sobrevive al cierre de sesión) y con el comando exacto en una lista final de *"esto te toca a ti"*. Un run desatendido termina en acciones, no en un transcript que reconstruir.
 

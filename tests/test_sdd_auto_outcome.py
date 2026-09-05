@@ -105,6 +105,23 @@ class ClassifyTests(unittest.TestCase):
                 self.assertEqual(verdict["next_command"], "/sdd:ship demo")
                 self.assertEqual(verdict["cost_usd"], 0.42)
 
+    def test_findings_travel_with_a_failed_verdict(self) -> None:
+        """Measured on AutoHostAI: 52 of 84 features needed more than one review
+        session. The caller runs the fix ladder from the findings, never from prose."""
+        finding = {"reviewer": "sdd-qa", "severity": "medium", "file": "app/x.ts:12",
+                   "referent": "R2", "what": "null guest renders empty", "fix": "fallback to em dash"}
+        verdict = sdd_auto_outcome.classify(
+            result(structured_output=outcome("FAILED", next_command="", findings=[finding, "junk"]))
+        )
+        self.assertEqual("FAILED", verdict["kind"])
+        self.assertEqual([finding], verdict["findings"])
+        text = sdd_auto_outcome.format_verdict(verdict)
+        self.assertIn("finding: [sdd-qa/medium] app/x.ts:12 — null guest renders empty → fallback to em dash (R2)", text)
+        self.assertEqual("AUTO_OUTCOME: FAILED", text.splitlines()[-1])
+        schema = sdd_auto_outcome.PHASE_OUTCOME_SCHEMA
+        self.assertNotIn("findings", schema["required"])
+        self.assertEqual(["high", "medium", "low"], schema["properties"]["findings"]["items"]["properties"]["severity"]["enum"])
+
     def test_permission_denials_win_over_a_claimed_pass(self) -> None:
         denial = {
             "tool_name": "Bash",
