@@ -32,6 +32,10 @@ mkdir -p "$dir/tasks"
 printf '%s/%s' "$feature" "$phase" > "$dir/current-task"
 if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   printf '%s/%s' "$feature" "$phase" > "$dir/tasks/$CLAUDE_CODE_SESSION_ID"
+  # History of marks, so usage-sync can attribute the datapoints a session
+  # produced before its first mark (loading the skill) to that first phase
+  # instead of to whatever another session was doing (ADR 0007, adenda).
+  printf '%s %s/%s\n' "$(date +%s)" "$feature" "$phase" >> "$dir/tasks/$CLAUDE_CODE_SESSION_ID.history"
 fi
 
 # ensure sink (port from the configured OTLP endpoint)

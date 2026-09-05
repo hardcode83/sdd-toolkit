@@ -37,15 +37,20 @@ def read_task(path):
 def task_for(session, cache):
     """The feature/phase to attribute a datapoint to, resolved by its session.
 
-    Falls back to the shared pointer when the session is unknown (a datapoint
-    without `session.id`, or a session that never marked a phase), so nothing
-    that used to be attributed stops being attributed.
+    Falls back to the shared pointer only for a datapoint without `session.id`.
+    A session that has not marked yet is left untagged and re-attributed by
+    usage-sync from its mark history.
     """
     key = str(session or "")
     if key not in cache:
-        cache[key] = (
-            read_task(os.path.join(TASKS_DIR, key)) if key else ""
-        ) or read_task(TASK)
+        if key:
+            # A session that has not marked yet stays untagged: usage-sync
+            # re-attributes it to the session's first mark later. Borrowing the
+            # shared pointer here billed a session's first requests to whatever
+            # feature another session was working on (ADR 0007, adenda).
+            cache[key] = read_task(os.path.join(TASKS_DIR, key))
+        else:
+            cache[key] = read_task(TASK)
     return cache[key]
 
 

@@ -103,3 +103,16 @@ asserts it.
   relative measure.
 - Requires `jq` and `python3`. Sessions must restart once after enabling
   (env changes apply at session start).
+
+## Attribution of a session's first requests
+
+`usage-mark.sh` writes the session's phase to `tasks/<session id>` **and**
+appends it to `tasks/<session id>.history`. The sink attributes each datapoint
+by its `session.id`; a session that has not marked yet stays **untagged**
+(only a datapoint with no session id at all falls back to the shared
+`current-task` pointer), and `usage-sync` re-attributes those untagged rows to
+the session's **first** mark from the history. Before this, the requests that
+load a skill were billed to whatever feature another session was working on:
+three sessions of one feature showed up inside another's review cost (ADR 0007,
+adenda).
+

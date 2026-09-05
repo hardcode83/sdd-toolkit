@@ -660,6 +660,162 @@ def ensure_panel_receipt(change: Path, root: Path, runner: Runner = subprocess.r
     return receipt
 
 
+def git_text(args: list[str], root: Path, runner: Runner = subprocess.run) -> str | None:
+    """`try_command`'s stdout, stripped, or None when the command failed."""
+    result = try_command(["git", *args], root, runner)
+    return None if result is None else result.stdout.strip()
+
+
+def default_base(root: Path, data: dict | None, runner: Runner = subprocess.run) -> str:
+    """The base branch: recorded in STATE.md, else the remote's default, else main."""
+    if data and data.get("base_branch"):
+        return str(data["base_branch"])
+    remote_head = git_text(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, runner)
+    if remote_head:
+        return remote_head.removeprefix("origin/")
+    return "main"
+
+
+def preflight_archive(
+    root: Path,
+    feature: str,
+    base: str | None = None,
+    fetch: bool = True,
+    runner: Runner = subprocess.run,
+) -> dict:
+    """Every precondition of `/sdd:archive`, checked before anything is written.
+
+    Measured (ADR 0007, adenda): 31 of 64 archive sessions failed at least once
+    before succeeding, on conditions that were all knowable up front — a stale
+    local base, a dirty tree, the change not present where archive ran, a
+    pending task or queue entry, a PR still open, no roadmap entry to tick.
+    The agentic loop found the fix every time; this reports all of them at once,
+    each with its exact command, and changes nothing.
+    """
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, detail: str, fix: str = "") -> None:
+        checks.append({"check": name, "ok": ok, "detail": detail, "fix": fix})
+
+    git_dir = git_text(["rev-parse", "--absolute-git-dir"], root, runner)
+    if git_dir is None:
+        add("repository", False, f"{root} is not inside a git repository.", "cd into the project's main worktree.")
+        return {"feature": feature, "ready": False, "checks": checks}
+    common = git_text(["rev-parse", "--git-common-dir"], root, runner) or ".git"
+    common_path = (root / common).resolve()
+    main_worktree = common_path.parent
+    linked = Path(git_dir).resolve() != common_path
+    add(
+        "main-worktree", not linked,
+        "this is the main worktree." if not linked else f"this is a linked worktree; the main one is {main_worktree}.",
+        "" if not linked else f"run every command as `cd {main_worktree} && …` (or pass --root {main_worktree}).",
+    )
+
+    change_dir = root / "sdd" / "changes" / feature
+    archived = archived_change(root, feature) if (root / "sdd" / "changes").is_dir() else None
+    data: dict | None = None
+    if change_dir.is_dir():
+        try:
+            data = read_state(change_dir)
+        except LifecycleError as exc:
+            add("state", False, str(exc), "Repair STATE.md before archiving.")
+        add("change-present", True, f"sdd/changes/{feature}/ is here.")
+    elif archived is not None:
+        add("change-present", False, f"'{feature}' is already archived at {archived.relative_to(root)}.",
+            "Nothing to archive; run `/sdd:status` if the roadmap or specs look stale.")
+    else:
+        add("change-present", False, f"sdd/changes/{feature}/ is not in this worktree.",
+            f"The change lives on the base after the merge: `git pull --ff-only origin <base>` here, "
+            f"or run archive from the worktree that holds it ({main_worktree}).")
+
+    target_base = base or default_base(root, data, runner)
+    branch = git_text(["branch", "--show-current"], root, runner) or ""
+    add("base-branch", branch == target_base,
+        f"HEAD is on '{branch or '(detached)'}'; the base is '{target_base}'.",
+        "" if branch == target_base else f"`git switch {target_base}` in the main worktree (never in a feature worktree).")
+
+    status = (git_text(["status", "--porcelain"], root, runner) or "").splitlines()
+    add("clean-tree", not status,
+        "working tree is clean." if not status else f"{len(status)} path(s) modified/untracked: " + ", ".join(l[3:] for l in status[:5]),
+        "" if not status else "Commit or stash them; archive writes sdd/specs, roadmap and metrics and must start clean.")
+
+    has_origin = git_text(["rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{target_base}"], root, runner) is not None
+    if has_origin:
+        if fetch:
+            git_text(["fetch", "--quiet", "origin", target_base], root, runner)
+        integrated = git_text(["merge-base", "--is-ancestor", f"origin/{target_base}", target_base], root, runner) is not None
+        add("remote-integrated", integrated,
+            f"origin/{target_base} is contained in local {target_base}." if integrated
+            else f"origin/{target_base} moved on and local {target_base} does not contain it.",
+            "" if integrated else f"`git pull --ff-only origin {target_base}` (from a clean tree).")
+    else:
+        add("remote-integrated", True, "no origin/<base> to integrate (local workflow).")
+
+    if data is not None:
+        try:
+            ensure_local_gates(change_dir, strict=True)
+            add("tasks-and-queue", True, "every task checked, BLOCKED.md empty.")
+        except LifecycleError as exc:
+            add("tasks-and-queue", False, str(exc),
+                "Finish or record the tasks; acknowledge every BLOCKED entry by deleting it.")
+        if data.get("local_review") != "APPROVED":
+            add("local-review", False, f"local_review is '{data.get('local_review', '')}'.",
+                f"`/sdd:review {feature}` must have recorded READY_FOR_PR.")
+        else:
+            add("local-review", True, "local review approved.")
+        try:
+            _, evidence, _ = require_merge(root, feature, runner=runner, write=False)
+            add("merge-evidence", True, f"merge proven by {evidence.get('evidence') or evidence.get('kind') or 'recorded PR'}.")
+        except LifecycleError as exc:
+            add("merge-evidence", False, str(exc), "Merge the PR (or integrate the branch into the base) and re-run.")
+
+    roadmap = root / "sdd" / "roadmap.md"
+    if roadmap.is_file():
+        entry = None
+        for line in roadmap.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = ROADMAP_ENTRY_RE.match(line)
+            if match and roadmap_feature(match.group("body")) == feature:
+                entry = match
+                break
+        if entry is None:
+            add("roadmap-entry", False, f"no roadmap entry names '{feature}'.",
+                "Add the entry (or accept that archive will report the tick as unmatched).")
+        else:
+            add("roadmap-entry", True,
+                "roadmap entry found" + (" (already checked)." if entry.group("checked") != " " else " (open, will be ticked)."))
+    else:
+        add("roadmap-entry", True, "no roadmap in this project.")
+
+    worktrees = []
+    listing = git_text(["worktree", "list", "--porcelain"], root, runner) or ""
+    path = br = None
+    for line in listing.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line.startswith("branch "):
+            br = line[len("branch "):].removeprefix("refs/heads/")
+        elif not line.strip():
+            if path and br and (br == f"sdd/{feature}" or br.rsplit("/", 1)[-1] == feature):
+                worktrees.append({"path": path, "branch": br})
+            path = br = None
+    ready = all(check["ok"] for check in checks)
+    return {"feature": feature, "base": target_base, "ready": ready, "checks": checks, "worktrees": worktrees}
+
+
+def render_preflight(report: dict) -> str:
+    lines = [f"preflight-archive {report['feature']} (base {report.get('base', '?')})"]
+    for check in report["checks"]:
+        mark = "ok " if check["ok"] else "FAIL"
+        lines.append(f"  [{mark}] {check['check']}: {check['detail']}")
+        if not check["ok"] and check.get("fix"):
+            lines.append(f"         fix: {check['fix']}")
+    for entry in report.get("worktrees") or []:
+        lines.append(f"  · worktree to retire after the archive: {entry['path']} ({entry['branch']})")
+    failed = sum(1 for check in report["checks"] if not check["ok"])
+    lines.append("PREFLIGHT: READY" if report["ready"] else f"PREFLIGHT: BLOCKED ({failed})")
+    return "\n".join(lines)
+
+
 def block_change(
     root: Path,
     feature: str,
@@ -2486,6 +2642,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="task id this entry covers (repeatable), e.g. --task 4.3",
     )
+    preflight = subparsers.add_parser(
+        "preflight-archive",
+        help="check every archive precondition at once, with the fix for each; writes nothing",
+    )
+    preflight.add_argument("feature")
+    preflight.add_argument("--base", help="base branch (default: STATE.md, then origin/HEAD, then main)")
+    preflight.add_argument("--no-fetch", action="store_true", help="do not fetch origin before comparing")
+    preflight.add_argument("--json", action="store_true")
     receipt = subparsers.add_parser(
         "receipt", help="show the feature-scale panel receipt and whether it certifies HEAD"
     )
@@ -2532,6 +2696,10 @@ def main(argv: list[str] | None = None) -> int:
                 resume=args.resume,
                 tasks=tuple(args.task),
             )
+        elif args.command == "preflight-archive":
+            report = preflight_archive(root, args.feature, base=args.base, fetch=not args.no_fetch)
+            print(json.dumps(report, indent=2) if args.json else render_preflight(report))
+            return 0 if report["ready"] else 2
         elif args.command == "receipt":
             change = active_change(root, args.feature)
             data = panel_receipt(root, args.feature) or {}
