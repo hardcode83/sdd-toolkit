@@ -22,7 +22,7 @@ Report the state of the SDD workflow. Read-only — change nothing. Arguments: n
      phase and never infer PR/merge state.
    - **Phase**: which of `proposal.md` / `design.md` / `tasks.md` exist.
    - **Progress**: if `tasks.md` exists, count `- [x]` vs `- [ ]` (e.g. `grep -c '^\s*- \[x\]'`).
-   - **Pending queue**: if `BLOCKED.md` exists, this change has unresolved entries — show these FIRST, each with its type (`decision`: needs the user / `deferred`: resumable — show its resume command) and one-line reason. This is the user's inbox: decisions to make and deferred work to pick up.
+   - **Pending queue**: if `BLOCKED.md` exists, this change has unresolved entries — show these FIRST (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . blocked <feature>` lists them typed), each with its type and one-line reason: `decision` — needs the user, and is what puts the change at `⛔`; `deferred` — resumable, show its resume command; `assumed` — a choice auto took with a declared recommendation, show the option and where it landed (D#), so the user can veto it at the PR or acknowledge it by deleting the entry. This is the user's inbox: decisions to make, deferred work to pick up, assumptions to confirm. An entry whose type cannot be read is shown as `decision` (the gates treat it that way; `/sdd:doctor` reports `SDD030`).
 2. **Other worktrees of this repo** (shared rule 10 — a change may not be in *this* directory at all):
 
    ```bash

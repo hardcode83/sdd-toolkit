@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 import re
@@ -57,6 +58,24 @@ PR_FIELDS = (
     "pr_url",
 )
 TASK_RE = re.compile(r"^\s*-\s+\[([ xX])\]")
+# A task only a human (or an environment the flow cannot reach) can perform:
+# `- [ ] 4.3 Manual browser check <!-- manual -->`. Left unchecked, it does not
+# block READY_FOR_PR when a `deferred` BLOCKED entry names it; archive still
+# requires it done (ADR 0006).
+MANUAL_RE = re.compile(r"<!--\s*manual\s*-->", re.IGNORECASE)
+TASK_ID_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(?P<id>\d+(?:\.\d+)+)\b")
+# The three entry types of shared rule 5. `decision` needs a human before the
+# change can move; `deferred` (resumable work) and `assumed` (a choice auto took
+# with a declared recommendation, vetoable at the PR) travel with the PR and are
+# acknowledged by deleting them before archive. An entry whose type cannot be
+# read is treated as a decision: the gate fails closed.
+BLOCKED_TYPES = ("decision", "deferred", "assumed")
+BLOCKED_TYPE_LINE_RE = re.compile(
+    r"\b(?:type|tipo)\b[^A-Za-z]{0,12}(decision|deferred|assumed)\b", re.IGNORECASE
+)
+BLOCKED_TYPE_WORD_RE = re.compile(r"\b(decision|deferred|assumed)\b", re.IGNORECASE)
+BLOCKED_RESOLVED_RE = re.compile(r"\b(DELETED|RESOLVED|RESUELT[OA])\b")
+BLOCKED_TASK_REF_RE = re.compile(r"\b(\d+\.\d+)\b")
 ROADMAP_ENTRY_RE = re.compile(r"^(?P<prefix>\s*-\s+)\[(?P<checked>[ xX])\](?P<body>.*)$")
 CHANGE_POINTER_RE = re.compile(
     r"(?P<path>(?:sdd/)?changes/(?:archive/)?[A-Za-z0-9._-]+/?)"
@@ -434,21 +453,191 @@ def incomplete_tasks(change: Path) -> list[tuple[int, str]]:
     return pending
 
 
-def ensure_local_gates(change: Path) -> None:
-    pending = incomplete_tasks(change)
-    if pending:
-        lines = ", ".join(str(line) for line, _ in pending)
-        raise LifecycleError(
-            f"Change has {len(pending)} incomplete task(s) at tasks.md line(s) "
-            f"{lines}. Complete and verify them before continuing."
+@dataclass
+class BlockedEntry:
+    """One item of the change's pending queue (shared rule 5)."""
+
+    title: str
+    kind: str  # decision | deferred | assumed | unknown
+    line: int
+    body: str
+    tasks: tuple[str, ...]
+
+    @property
+    def blocks_locally(self) -> bool:
+        """Whether this entry stops READY_FOR_PR. An unreadable type does: the
+        gate fails closed rather than guess that a human already decided."""
+        return self.kind in {"decision", "unknown"}
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "title": self.title,
+            "type": self.kind,
+            "line": self.line,
+            "tasks": list(self.tasks),
+            "blocks_locally": self.blocks_locally,
+        }
+
+
+def _classify_blocked(text: str) -> str:
+    explicit = BLOCKED_TYPE_LINE_RE.search(text)
+    if explicit:
+        return explicit.group(1).lower()
+    words = {match.group(1).lower() for match in BLOCKED_TYPE_WORD_RE.finditer(text)}
+    if len(words) == 1:
+        return words.pop()
+    return "unknown"
+
+
+def blocked_entries(change: Path) -> list[BlockedEntry]:
+    """Parse `BLOCKED.md` leniently, one entry per `## ` heading.
+
+    Entries were written by hand for months in several shapes (`- **type**:
+    deferred`, `**Type:** decision`, `· **Tipo**: deferred`, a heading like
+    `## ops · run · decision — …`), so the parser reads the type from a
+    type/tipo line first, then from the only type word the entry uses, and
+    reports `unknown` otherwise. A heading marked DELETED/RESOLVED is a
+    resolved item kept for the record and is skipped. `sdd_lifecycle.py block`
+    writes the canonical shape so new entries never need the leniency.
+    """
+    path = change / "BLOCKED.md"
+    if not path.is_file():
+        return []
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not "".join(lines).strip():
+        return []
+    sections: list[tuple[int, str, list[str]]] = []
+    current: tuple[int, str, list[str]] | None = None
+    for number, line in enumerate(lines, start=1):
+        if line.startswith("## "):
+            current = (number, line[3:].strip(), [])
+            sections.append(current)
+        elif current is not None:
+            current[2].append(line)
+    if not sections:
+        # No headings at all: the file is one entry (a top-level title does not count).
+        body = [line for line in lines if not line.startswith("# ")]
+        if not "".join(body).strip():
+            return []
+        title = next((line.strip() for line in body if line.strip()), "BLOCKED")
+        text = "\n".join(body)
+        return [
+            BlockedEntry(
+                title[:120],
+                _classify_blocked(text),
+                1,
+                text,
+                tuple(sorted(set(BLOCKED_TASK_REF_RE.findall(text)))),
+            )
+        ]
+    entries: list[BlockedEntry] = []
+    for number, title, body_lines in sections:
+        if BLOCKED_RESOLVED_RE.search(title):
+            continue
+        body = "\n".join(body_lines)
+        text = title + "\n" + body
+        entries.append(
+            BlockedEntry(
+                title,
+                _classify_blocked(text),
+                number,
+                body,
+                tuple(sorted(set(BLOCKED_TASK_REF_RE.findall(text)))),
+            )
         )
-    blocked = change / "BLOCKED.md"
-    if blocked.is_file() and blocked.read_text(
-        encoding="utf-8", errors="replace"
-    ).strip():
+    return entries
+
+
+def ensure_local_gates(change: Path, *, strict: bool = False) -> None:
+    """The local gate every milestone shares.
+
+    Non-strict (`mark-local-verified`, `mark-ready`, `mark-recertified`,
+    `record-pr`): every task checked — except a `<!-- manual -->` task named by
+    a `deferred` entry — and no `decision` (or unreadable) entry in
+    `BLOCKED.md`. `deferred` and `assumed` entries travel with the PR.
+    Strict (`verify-merge`, the archive path): every task checked and no entry
+    at all — the archive is where the queue must be empty.
+    """
+    entries = blocked_entries(change)
+    deferred = [entry for entry in entries if entry.kind == "deferred"]
+    uncovered: list[tuple[int, str]] = []
+    for line_number, text in incomplete_tasks(change):
+        task = TASK_ID_RE.match(text)
+        covered = (
+            not strict
+            and MANUAL_RE.search(text) is not None
+            and task is not None
+            and any(task.group("id") in entry.tasks for entry in deferred)
+        )
+        if not covered:
+            uncovered.append((line_number, text))
+    if uncovered:
+        lines = ", ".join(str(line) for line, _ in uncovered)
+        hint = (
+            " A task only a human can perform may stay open through the PR if it "
+            "carries `<!-- manual -->` and a `deferred` BLOCKED entry names it "
+            "(`sdd_lifecycle.py block <feature> --type deferred --task N.M …`)."
+            if not strict
+            else " The archive requires every task done, manual ones included."
+        )
         raise LifecycleError(
+            f"Change has {len(uncovered)} incomplete task(s) at tasks.md line(s) "
+            f"{lines}. Complete and verify them before continuing.{hint}"
+        )
+    blocking = entries if strict else [entry for entry in entries if entry.blocks_locally]
+    if blocking:
+        listed = "; ".join(f"{entry.kind}: {entry.title}" for entry in blocking[:5])
+        what = (
             "BLOCKED.md contains unresolved work. Resolve it before continuing."
+            if strict
+            else "BLOCKED.md contains unresolved work that needs a human "
+            "(`decision`, or an entry whose type cannot be read). Resolve it "
+            "before continuing."
         )
+        raise LifecycleError(f"{what} Entries: {listed}")
+
+
+def block_change(
+    root: Path,
+    feature: str,
+    *,
+    phase: str,
+    kind: str,
+    title: str,
+    why: str,
+    resume: str,
+    tasks: tuple[str, ...] = (),
+) -> str:
+    """Append one canonical entry to the change's `BLOCKED.md`.
+
+    The file's path is derived from the change, never from the caller's working
+    directory: a forked phase wrote `BLOCKED.md` at the worktree root in the
+    first real auto run because `cd` does not persist there (ADR 0006).
+    """
+    if kind not in BLOCKED_TYPES:
+        raise LifecycleError(
+            f"Unknown BLOCKED type {kind!r}; use one of {', '.join(BLOCKED_TYPES)}."
+        )
+    if not title.strip() or not why.strip() or not resume.strip():
+        raise LifecycleError("A BLOCKED entry needs --title, --why and --resume.")
+    change = active_change(root, feature)
+    path = change / "BLOCKED.md"
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if not existing.strip():
+        existing = (
+            f"# BLOCKED — {feature}\n\n"
+            "One entry per pending item (shared rule 5): `decision` needs a human "
+            "before the change can move; `deferred` and `assumed` travel with the "
+            "PR and are acknowledged by deleting them; `/sdd:archive` refuses to "
+            "close while any entry remains.\n"
+        )
+    entry = [f"\n## {title.strip()}\n", f"- **phase**: {phase}", f"- **type**: {kind}"]
+    if tasks:
+        entry.append(f"- **tasks**: {', '.join(tasks)}")
+    entry.append(f"- **what & why**: {why.strip()}")
+    entry.append(f"- **exact resume command**: {resume.strip()}")
+    path.write_text(existing.rstrip("\n") + "\n" + "\n".join(entry) + "\n", encoding="utf-8")
+    return f"BLOCKED entry ({kind}) appended to {path.relative_to(root)}."
 
 
 def run_command(
@@ -1774,7 +1963,7 @@ def require_merge(
     write: bool = True,
 ) -> tuple[dict[str, str], dict[str, object], bool]:
     change = active_change(root, feature)
-    ensure_local_gates(change)
+    ensure_local_gates(change, strict=True)
     data = read_state(change)
     if not data:
         raise LifecycleError(
@@ -2216,6 +2405,25 @@ def build_parser() -> argparse.ArgumentParser:
     finalize = subparsers.add_parser("finalize-archive")
     finalize.add_argument("feature")
     finalize.add_argument("--specs-confirmed", action="store_true")
+    block = subparsers.add_parser(
+        "block",
+        help="append a canonical entry to the change's BLOCKED.md (shared rule 5)",
+    )
+    block.add_argument("feature")
+    block.add_argument("--phase", required=True, help="new|design|tasks|run|review|ship|archive")
+    block.add_argument("--type", required=True, choices=BLOCKED_TYPES, dest="kind")
+    block.add_argument("--title", required=True)
+    block.add_argument("--why", required=True, help="what & why, one paragraph")
+    block.add_argument("--resume", required=True, help="the exact resume command")
+    block.add_argument(
+        "--task",
+        action="append",
+        default=[],
+        help="task id this entry covers (repeatable), e.g. --task 4.3",
+    )
+    blocked = subparsers.add_parser("blocked", help="list the change's BLOCKED entries")
+    blocked.add_argument("feature")
+    blocked.add_argument("--json", action="store_true")
     publish = subparsers.add_parser(
         "publish-archive",
         help="push the archive's bookkeeping commit to the base branch",
@@ -2243,6 +2451,28 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_recertified(root, args.feature)
         elif args.command == "record-pr":
             message = record_pr(root, args.feature, args.url)
+        elif args.command == "block":
+            message = block_change(
+                root,
+                args.feature,
+                phase=args.phase,
+                kind=args.kind,
+                title=args.title,
+                why=args.why,
+                resume=args.resume,
+                tasks=tuple(args.task),
+            )
+        elif args.command == "blocked":
+            entries = blocked_entries(active_change(root, args.feature))
+            if args.json:
+                print(json.dumps([entry.to_dict() for entry in entries], indent=2))
+            elif not entries:
+                print("No BLOCKED entries.")
+            else:
+                for entry in entries:
+                    flag = "blocks READY_FOR_PR" if entry.blocks_locally else "travels with the PR"
+                    print(f"[{entry.kind}] {entry.title} ({flag})")
+            return 0
         elif args.command == "sync-base":
             report = sync_base(root, args.feature)
             print(json.dumps(report, indent=2) if args.json else render_sync(report))

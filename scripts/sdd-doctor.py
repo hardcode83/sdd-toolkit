@@ -19,11 +19,14 @@ from sdd_session import (
     read_isolation_policy,
 )
 from sdd_lifecycle import (
+    MANUAL_RE,
     PR_FIELDS,
     PR_URL_RE,
     SHA_RE,
     STATES,
+    TASK_ID_RE,
     LifecycleError,
+    blocked_entries,
     read_state,
 )
 
@@ -544,6 +547,65 @@ def active_document_checks(root: Path, active_changes: list[Path]) -> list[Diagn
                     f"Create sdd/changes/{change.name}/proposal.md via /sdd:new.",
                 )
             )
+        diagnostics.extend(blocked_queue_checks(root, change))
+    return diagnostics
+
+
+def blocked_queue_checks(root: Path, change: Path) -> list[Diagnostic]:
+    """SDD030/SDD031 — the pending queue has to be readable by the gates.
+
+    `mark-local-verified` lets `deferred`/`assumed` entries and `<!-- manual -->`
+    tasks travel with the PR, and stops on `decision` entries — so an entry
+    whose type cannot be read is treated as a decision (fail closed), and an
+    open manual task that no `deferred` entry names still blocks. Both are
+    things the doctor can say before the gate refuses (ADR 0006).
+    """
+    diagnostics: list[Diagnostic] = []
+    entries = blocked_entries(change)
+    blocked = change / "BLOCKED.md"
+    for entry in entries:
+        if entry.kind == "unknown":
+            diagnostics.append(
+                Diagnostic(
+                    "SDD030",
+                    "WARNING",
+                    relative(blocked, root),
+                    entry.line,
+                    (
+                        f"BLOCKED entry '{entry.title[:60]}' has no readable type "
+                        "(decision / deferred / assumed); the gates treat it as a decision."
+                    ),
+                    "Add a `- **type**: …` line, or rewrite it with `sdd_lifecycle.py block`.",
+                )
+            )
+    deferred_tasks = {
+        task for entry in entries if entry.kind == "deferred" for task in entry.tasks
+    }
+    tasks = change / "tasks.md"
+    for line_number, line in enumerate(read_lines(tasks), start=1):
+        match = TASK_RE.match(line)
+        if not (match and match.group(1) == " " and MANUAL_RE.search(line)):
+            continue
+        task = TASK_ID_RE.match(line)
+        task_id = task.group("id") if task else None
+        if task_id in deferred_tasks:
+            continue
+        diagnostics.append(
+            Diagnostic(
+                "SDD031",
+                "WARNING",
+                relative(tasks, root),
+                line_number,
+                (
+                    f"Manual task {task_id or '?'} is open and no `deferred` BLOCKED "
+                    "entry names it; READY_FOR_PR will refuse."
+                ),
+                (
+                    f"Do it, or record it: `sdd_lifecycle.py block {change.name} "
+                    f"--type deferred --task {task_id or 'N.M'} …`."
+                ),
+            )
+        )
     return diagnostics
 
 
@@ -601,6 +663,24 @@ def unchecked_tasks(change: Path) -> list[int]:
         for line_number, line in enumerate(read_lines(change / "tasks.md"), start=1)
         if (match := TASK_RE.match(line)) and match.group(1) == " "
     ]
+
+
+def open_tasks_not_carried(change: Path) -> list[int]:
+    """Open task lines, minus `<!-- manual -->` tasks a `deferred` entry names:
+    those legitimately stay open through READY_FOR_PR/PR_OPEN (ADR 0006)."""
+    deferred_tasks = {
+        task for entry in blocked_entries(change) if entry.kind == "deferred" for task in entry.tasks
+    }
+    lines: list[int] = []
+    for line_number, line in enumerate(read_lines(change / "tasks.md"), start=1):
+        match = TASK_RE.match(line)
+        if not (match and match.group(1) == " "):
+            continue
+        task = TASK_ID_RE.match(line)
+        if MANUAL_RE.search(line) and task and task.group("id") in deferred_tasks:
+            continue
+        lines.append(line_number)
+    return lines
 
 
 def active_blocked_file(change: Path) -> Path | None:
@@ -962,7 +1042,7 @@ def lifecycle_checks(
                     )
                 )
             else:
-                pending = unchecked_tasks(change)
+                pending = open_tasks_not_carried(change)
                 if pending:
                     diagnostics.append(
                         Diagnostic(
@@ -977,8 +1057,10 @@ def lifecycle_checks(
                             "Finish the work and re-run /sdd:review, or correct tasks.md.",
                         )
                     )
+            # `deferred` and `assumed` entries travel with the PR (ADR 0006); only
+            # an entry that needs a human contradicts a certified state.
             blocked = active_blocked_file(change)
-            if blocked:
+            if blocked and any(entry.blocks_locally for entry in blocked_entries(change)):
                 diagnostics.append(
                     Diagnostic(
                         "SDD017",

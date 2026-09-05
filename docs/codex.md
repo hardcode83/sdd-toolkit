@@ -120,7 +120,13 @@ Claude Code.
   `shell_environment_policy.set` — run it at install and after every update.
   Without that step the phases fail to read `rules.md` and templates.
 - Claude model names in skill frontmatter do not select Codex models. Codex
-  uses the model configured for its session.
+  uses the model configured for its session. The skills name **tier aliases**
+  (`haiku`/`sonnet`/`opus`/`fable`, `references/models.md`), never model IDs;
+  under Codex they document intent (which phases deserve the stronger model),
+  and a project that wants that ladder uses Codex profiles outside the toolkit.
+- The pending queue's three entry types, the `<!-- manual -->` task marker and
+  the `block`/`blocked` subcommands of `sdd_lifecycle.py` are stdlib Python and
+  behave identically under Codex (ADR 0006).
 - `AskUserQuestion` has no identical Codex primitive. Normal questions preserve
   the verified phase gates, but advanced multi-select interactions are not
   guaranteed to behave identically.

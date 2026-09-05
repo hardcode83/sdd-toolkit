@@ -98,6 +98,12 @@ reason. Then:
    assistant message, sent together: the three core reviewers — `sdd-architect`,
    `sdd-security`, `sdd-qa` — plus every project reviewer at
    `.claude/agents/sdd-review-*.md` (same discovery and contract as in `/sdd:run`).
+   **In the foreground, and wait in this turn** (shared rule 11): this phase is
+   a fork, and a fork that ends its turn is finished — no notification will
+   wake it. Never launch reviewers in the background and never "pause until
+   they report back": on the first real auto run this fork did exactly that and
+   was ended with `sdd-qa` still running, so the verdict had to be rebuilt by
+   the calling session.
    Launch `sdd-security` with `model: opus` here: its agent file defaults to
    Sonnet for the per-section panels of `/sdd:run`, and feature scale — the
    whole change, trust boundaries across sections — is where the stronger
@@ -126,7 +132,18 @@ reason. Then:
      be needed, say so and present what is open instead of iterating. Findings that
      keep reappearing in the same place are usually a structural problem — the same
      statement duplicated across several artifacts, a contract with no single home —
-     and another round of edits will not fix that; naming it will.
+     and another round of edits will not fix that; naming it will. Record what is
+     open with `sdd_lifecycle.py --root <path> block <feature> --phase review
+     --type decision …` — never write `BLOCKED.md` by hand: the script derives the
+     path from the change, and a fork that wrote it by hand left it at the
+     worktree root (ADR 0006).
+   - **An open `<!-- manual -->` task is not a FAIL.** If `mark-local-verified`
+     refuses because a task marked `<!-- manual -->` is unchecked, record it as
+     `deferred` naming the task (`block … --type deferred --task N.M --resume
+     "/sdd:run <feature> N.M"`) and retry: `deferred` and `assumed` entries and
+     the manual tasks they name travel with the PR, where the human performs the
+     check; only `decision` entries stop `READY_FOR_PR`. An unchecked task
+     **without** the marker is unfinished work and the refusal stands.
    Prefer verifying a text fix by grepping the superseded wording across the whole
    change, not by re-reading the passage you just rewrote: the corrected sentence
    tends to land in the explanatory copy while the stale one survives in the

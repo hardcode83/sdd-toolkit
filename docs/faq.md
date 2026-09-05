@@ -75,7 +75,15 @@ Si el marketplace se registró **desde git** (`/plugin marketplace add hardcode8
 
 ## ¿Dónde queda lo que se interrumpe a medias (un panel cortado, una duda, una tarea aparcada)?
 
-En la **cola de pendientes** del change: `sdd/changes/<feature>/BLOCKED.md`. Regla compartida nº 5: ninguna fase puede terminar dejando deuda solo en la conversación — la persiste con tipo (`decision`: te toca a ti / `deferred`: reanudable, con su comando exacto). `/sdd:status` la muestra como bandeja de entrada; `/sdd:archive` se niega a cerrar con entradas vivas. Un panel interrumpido se reanuda como `/sdd:review <feature>` — cubre lo pendiente y las interacciones.
+En la **cola de pendientes** del change: `sdd/changes/<feature>/BLOCKED.md`. Regla compartida nº 5: ninguna fase puede terminar dejando deuda solo en la conversación — la persiste con `sdd_lifecycle.py block` y un tipo: `decision` (te toca a ti; para `READY_FOR_PR`), `deferred` (reanudable, con su comando exacto; viaja con el PR) o `assumed` (una elección que auto tomó con recomendación declarada; viaja con el PR para que la vetes). `/sdd:status` la muestra como bandeja de entrada; `/sdd:ship` lista en el PR lo que viaja; `/sdd:archive` se niega a cerrar con entradas vivas del tipo que sean. Un panel interrumpido se reanuda como `/sdd:review <feature>` — cubre lo pendiente y las interacciones. Por qué tres tipos y no uno: [ADR 0006](adr/0006-decisions-three-levels.md).
+
+## ¿Por qué auto puede "asumir" una decisión en vez de parar?
+
+Porque parar por todo no era lo que pasaba en la práctica: de 13 `BLOCKED.md` históricos, ninguno era una ambigüedad de requisitos y varios eran elecciones con recomendación que un humano habría aceptado. El nivel `assumed` acota exactamente eso: la fase recomienda una opción, todas las opciones respetan proposal y steering, no tocan ningún R#, ni seguridad, ni nada irreversible fuera del repo. Auto la toma, la materializa como D#, y la deja en `BLOCKED.md` como `assumed` con las alternativas. El PR es donde la vetas, y `/sdd:archive` no cierra hasta que la reconozcas borrándola. Lo que no cumple esas condiciones sigue siendo `decision`. Y hay una regla que salió del primer run real: si contestas "adelante" sin elegir, eso es una autorización genérica, no una decisión — auto toma la recomendada y lo deja escrito así, nunca con tu nombre.
+
+## ¿Y si no uso modelos de Anthropic (MiniMax, un gateway, Codex)?
+
+El toolkit nunca escribe un ID de modelo: habla en alias de nivel (`haiku`, `sonnet`, `opus`, `fable`) y toda llamada `Agent` lleva el suyo explícito. Claude Code resuelve cada alias por su variable `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, que es justo lo que la receta oficial de MiniMax para Claude Code configura (los tres alias a `MiniMax-M3`). Así la misma skill corre en Anthropic, en MiniMax o detrás de un gateway, y el mapeo vive en tu entorno, no en el plugin ni en `sdd/project.md`. `sdd_auto_outcome.py run` avisa si `ANTHROPIC_BASE_URL` está puesto y falta la variable del alias que va a usar. En Codex no hay alias ni `Agent`: el modelo es el de la sesión y los niveles documentan la intención. Detalle: `references/models.md`.
 
 ## ¿Por qué auto ya no archiva antes de abrir el PR?
 

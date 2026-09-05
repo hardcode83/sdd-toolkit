@@ -20,7 +20,10 @@ requirements/design/tasks referents, and the read-only boundary.
 
 `dispatch_claude_panel()` is the compatibility boundary. Launch every planned
 item in one parallel assistant message using the existing Claude agent names,
-wait for every response, and normalize exactly one result per planned item.
+**in the foreground** — never as background agents — wait for every response
+in the same turn, and normalize exactly one result per planned item. Inside a
+forked phase ending the turn ends the phase (shared rule 11), so a panel
+launched in the background is a panel whose results nobody collects.
 MiniMax-through-Claude uses this same boundary. An unavailable or malformed
 response is synthesized as an explicit unavailable result and cannot pass.
 

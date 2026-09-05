@@ -77,6 +77,18 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(command[command.index("--fallback-model") + 1], "sonnet")
         self.assertEqual(command[command.index("--effort") + 1], "medium")
 
+    def test_provider_alias_warning_only_behind_a_custom_base_url(self) -> None:
+        """MiniMax and gateways remap the aliases through ANTHROPIC_DEFAULT_*_MODEL;
+        an unmapped alias would ask the provider for an Anthropic model ID."""
+        self.assertEqual([], sdd_auto_outcome.provider_warnings("sonnet", {}))
+        base = {"ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic"}
+        self.assertEqual(1, len(sdd_auto_outcome.provider_warnings("sonnet", base)))
+        mapped = {**base, "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3"}
+        self.assertEqual([], sdd_auto_outcome.provider_warnings("sonnet", mapped))
+        self.assertEqual(1, len(sdd_auto_outcome.provider_warnings("opus", mapped)))
+        # A full model ID is passed through: nothing to remap, nothing to warn about.
+        self.assertEqual([], sdd_auto_outcome.provider_warnings("MiniMax-M3", base))
+
     def test_delegated_environment_marks_both_guards(self) -> None:
         env = sdd_auto_outcome.delegated_environment({"PATH": "/bin"})
         self.assertEqual(env["SDD_AUTO_DELEGATED"], "1")

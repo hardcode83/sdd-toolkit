@@ -162,6 +162,35 @@ def build_command(
     return command
 
 
+ALIAS_ENV = {
+    "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "fable": "ANTHROPIC_DEFAULT_FABLE_MODEL",
+}
+
+
+def provider_warnings(model: str, env: dict[str, str] | None = None) -> list[str]:
+    """The toolkit names models by alias so the environment can remap them.
+
+    Behind `ANTHROPIC_BASE_URL` (MiniMax, a gateway, Bedrock) an alias resolves
+    to whatever `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` says; unset, it resolves to the
+    Anthropic model ID, which the provider will not serve. Say so before the
+    session fails on its first request (`references/models.md`).
+    """
+    env = os.environ if env is None else env
+    if not env.get("ANTHROPIC_BASE_URL"):
+        return []
+    alias = model.lower()
+    variable = ALIAS_ENV.get(alias)
+    if variable and not env.get(variable):
+        return [
+            f"ANTHROPIC_BASE_URL is set but {variable} is not: the alias {alias!r} "
+            "will resolve to the Anthropic model ID, which this provider may not serve."
+        ]
+    return []
+
+
 def delegated_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """The environment a delegated session runs with.
 
@@ -327,6 +356,8 @@ def run(
         fallback_model=fallback_model,
         executable=executable,
     )
+    for warning in provider_warnings(model):
+        print(f"warning: {warning}", file=sys.stderr)
     try:
         completed = subprocess.run(
             command,

@@ -21,11 +21,30 @@
    leaving anything undone or undecided — an interrupted panel, a skipped
    verification, a parked task, a question for the user — it MUST persist it
    in `sdd/changes/<feature>/BLOCKED.md` before finishing, one entry per
-   item: **phase** · **type** (`decision`: needs a human / `deferred`: the
-   flow can resume it) · **what & why** · **exact resume command** (e.g.
-   `/sdd:review <feature>`). `/sdd:status` surfaces this queue first;
-   `/sdd:archive` refuses to close a change with unresolved entries;
-   resolving an entry deletes it (delete the file when empty).
+   item: **phase** · **type** · **what & why** · **exact resume command** (e.g.
+   `/sdd:review <feature>`). Write entries with
+   `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py --root <root> block <feature>
+   --phase … --type … --title … --why … --resume … [--task N.M]`: it derives the
+   path from the change (a forked phase once wrote the file at the worktree
+   root by hand) and writes the shape the gates parse. Three types:
+   - `decision` — needs a human before the change can move. It stops
+     `READY_FOR_PR`; `/sdd:status` shows the change as `⛔`.
+   - `deferred` — the flow can resume it (an interrupted panel, a post-merge
+     verification, a `<!-- manual -->` task nobody can perform from here). It
+     travels with the PR.
+   - `assumed` — a choice auto took **without a human**, because the phase had a
+     recommendation and every option respected proposal and steering; it names
+     the option taken, the alternatives, and where it materialised (D#, file).
+     It travels with the PR, which is where the human vetoes it. A generic
+     "go ahead" from the user never turns an `assumed` into a human decision:
+     record the option and that the authorisation was generic; never write the
+     user's name on a choice they did not make.
+   An entry whose type cannot be read counts as `decision` (the gate fails
+   closed; `/sdd:doctor` reports it as `SDD030`). `/sdd:status` surfaces the
+   queue first; `deferred` and `assumed` entries pass `mark-local-verified`,
+   `mark-ready` and `record-pr`; `/sdd:archive` refuses to close a change while
+   **any** entry remains — acknowledging one means deleting it (delete the file
+   when empty). Rationale and measurement: `docs/adr/0006-decisions-three-levels.md`.
 6. **Never silently overwrite an existing phase document.** Before writing
    `proposal.md`, `design.md`, or `tasks.md`, check whether it already
    exists. If it does: show it and ask what the user wants —
@@ -120,6 +139,13 @@
       the feature's worktree once (`sdd_session.py … resolve`), then prefix
       every command with `cd <path> &&` or pass `--root <path>` to the SDD
       scripts, and read files by absolute path.
+    - **A fork waits in the foreground.** Ending the turn ends the fork: there
+      is no later notification to resume on. So a forked phase never launches
+      its panel or implementers in the background and never "pauses until the
+      agents report back" — every `Agent` call is a foreground call whose result
+      arrives in the same turn. Measured on the first real auto run: the review
+      fork launched seven reviewers in the background, said it would wait for
+      their notifications, and was ended with `sdd-qa` still running.
     - Unattended: `/sdd:auto` runs its terminal phases in a **fresh headless
       session** (`claude -p`, launched through `scripts/sdd_auto_outcome.py` so
       the permission recipe lives in one tested place), and reads what came back
