@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -383,6 +384,71 @@ def steering_size_checks(root: Path, sdd: Path) -> list[Diagnostic]:
                 ),
             )
         )
+    return diagnostics
+
+
+# MCP servers the init catalog once wrote that no longer work. The init writes
+# `.mcp.json` when the entry is correct; nothing else ever tells the project that
+# it stopped being so — a dead server just fails to connect, silently, on every
+# session. Each row: a substring that identifies the entry in its `url` or
+# `args`, why it is dead, and the catalog's current replacement.
+DEAD_MCP_SERVERS = (
+    (
+        "mcp.atlassian.com/v1/sse",
+        "Atlassian switched the legacy SSE endpoint off on 30 June 2026",
+        'use `{"type": "http", "url": "https://mcp.atlassian.com/v2/mcp"}` '
+        "(references/mcp-catalog.md, atlassian)",
+    ),
+    (
+        "@modelcontextprotocol/server-postgres",
+        "the reference Postgres server is archived upstream with no security "
+        "guarantees",
+        "use `npx -y @bytebase/dbhub --dsn <read-only DSN>` "
+        "(references/mcp-catalog.md, postgres)",
+    ),
+)
+
+
+def mcp_config_checks(root: Path) -> list[Diagnostic]:
+    """A `.mcp.json` entry that points at a server switched off upstream."""
+    config = root / ".mcp.json"
+    if not config.is_file():
+        return []
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return []
+    diagnostics: list[Diagnostic] = []
+    for name, server in servers.items():
+        if not isinstance(server, dict):
+            continue
+        haystack = " ".join(
+            [str(server.get("url", "")), str(server.get("command", ""))]
+            + [str(item) for item in server.get("args", []) or []]
+        )
+        for needle, why, fix in DEAD_MCP_SERVERS:
+            if needle in haystack:
+                diagnostics.append(
+                    Diagnostic(
+                        "SDD029",
+                        "WARNING",
+                        relative(config, root),
+                        next(
+                            (
+                                number
+                                for number, text in enumerate(read_lines(config), start=1)
+                                if needle in text
+                            ),
+                            0,
+                        ),
+                        f"MCP server `{name}` no longer works: {why}.",
+                        f"Replace the entry — {fix} — or remove it; "
+                        "re-running /sdd:init offers the replacement.",
+                    )
+                )
     return diagnostics
 
 
@@ -1048,6 +1114,7 @@ def diagnose(root: Path) -> list[Diagnostic]:
         diagnostics.extend(roadmap_size_checks(root, roadmap))
     diagnostics.extend(steering_size_checks(root, sdd))
     diagnostics.extend(reviewer_metadata_checks(root))
+    diagnostics.extend(mcp_config_checks(root))
     diagnostics.extend(worktree_checks(root))
     diagnostics.extend(active_document_checks(root, active_changes))
     diagnostics.extend(requirement_checks(root, active_changes + archived_changes))

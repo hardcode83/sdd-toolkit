@@ -35,7 +35,7 @@ flowchart LR
 
 | Capa | Qué contiene | Quién la escribe | Cómo cambia | Distribución / copia | ¿Depende del stack? |
 |---|---|---|---|---|---|
-| Plugin | skills/, agents/, templates/, references/, scripts/, hooks/, tests internos y CI | Mantenedores de este repositorio | Commit, revisión y actualización del plugin | Se instala por usuario; /sdd:init solo lee y copia los templates elegidos, nunca tests/ ni .github/workflows/ | No: su implementación puede usar Python, pero no define el stack del producto |
+| Plugin | skills/, agents/, templates/, references/, scripts/, tests internos y CI | Mantenedores de este repositorio | Commit, revisión y actualización del plugin | Se instala por usuario; /sdd:init solo lee y copia los templates elegidos, nunca tests/ ni .github/workflows/ | No: su implementación puede usar Python, pero no define el stack del producto |
 | Proyecto | sdd/project.md, steering/, specs/, changes/, archive/, roadmap.md, CLAUDE.md, .mcp.json, configuración y agentes del proyecto | /sdd:init, las fases SDD y el equipo | Cambios versionados en el repositorio consumidor | Viaja con el producto; los templates se materializan aquí y después son propiedad del proyecto | Sí: el proyecto declara su lenguaje, framework y comandos reales |
 | Máquina | Snapshots, cachés, binarios, logs y estado local no versionado | Runtime e instaladores | Se crea y rota localmente | No se distribuye ni se copia al proyecto | Solo por disponibilidad local, nunca como fuente de verdad |
 
@@ -59,7 +59,7 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
                                │  runtime
                                ▼
 ┌─ 💻 MÁQUINA ────────────── lo EFÍMERO ──────────────────────────┐
-│  .sdd-usage/ (snapshots de uso) · binarios: rtk, mmdc, LSPs       │
+│  .sdd-usage/ (snapshots de uso) · binarios: mmdc, LSPs            │
 │  vive: local, gitignorado — no viaja                              │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -70,7 +70,7 @@ Tres capas con dueños y ciclos de vida distintos. La regla rápida: **si define
 | `agents/` (panel) | Plugin | ídem | ídem |
 | `templates/` (esqueletos) | Plugin | ídem | solo afecta a documentos que se creen *a partir de ahora* |
 | `references/` (catálogos) | Plugin | ídem | el init los relee en cada re-ejecución |
-| `scripts/` + `hooks/` | Plugin | ídem | commit + versión |
+| `scripts/` | Plugin | ídem | commit + versión |
 | `sdd/project.md` | Proyecto | `/sdd:init` lo genera; se edita a mano | cuando cambie stack/comandos |
 | `sdd/steering/` | Proyecto | el init crea el esqueleto; **tú lo llenas de reglas** | editar a mano — efectivo al instante para fases y panel |
 | `sdd/specs/` | Proyecto | solo `/sdd:archive` | nunca a mano: vía changes |
@@ -432,6 +432,7 @@ Los códigos son estables y permiten identificar la regla sin depender del texto
 | `SDD026` | error | `sdd/project.md` declara un `isolation:` que no es `always` ni `on-conflict`: degradaría al defecto en silencio y el proyecto creería estar aislando. |
 | `SDD027` | warning | Un doc de `sdd/steering/` pasa de 150 líneas. La carga selectiva solo puede dejar fuera lo que está en *otro* fichero: un `security.md` de 93 KB (~23k tokens) se leía entero en design, en run y en cada revisor de seguridad de cada panel. Partirlo por ámbito con su propio `applies_to`/`phases`. |
 | `SDD028` | warning | Un revisor de proyecto (`.claude/agents/sdd-review-*.md`) no declara `phases`/`applies_to`: el planificador no puede excluirlo y corre en **cada sección de cada change**, toque lo que toque. Cuatro así convirtieron un run de 13 secciones en 91 lanzamientos. |
+| `SDD029` | warning | `.mcp.json` declara un servidor que ya no funciona: el endpoint SSE de Atlassian (`mcp.atlassian.com/v1/sse`, sin soporte desde el 30 jun 2026) o el servidor Postgres de referencia (`@modelcontextprotocol/server-postgres`, archivado sin garantías de seguridad). El init lo escribió cuando era correcto; nada más avisa de que dejó de serlo. El aviso nombra el reemplazo del catálogo. |
 
 Los **errores** representan contradicciones estructurales que impiden confiar en
 el estado y hacen que el proceso termine con exit code `1`. Los **warnings**
@@ -949,7 +950,8 @@ Medición completa y mecanismos disponibles: `references/context-budget.md`.
 - **LSPs** (`references/lsp-catalog.md`): instala binarios con aprobación e imprime los `/plugin install` de los plugins LSP oficiales.
 - **Plugins oficiales** (`references/plugin-catalog.md`): sugerencias curadas del marketplace `claude-plugins-official` según el stack (security-guidance, pr-review-toolkit, integraciones…), con reglas anti-solape (nunca ofrecer una integración como plugin Y como MCP crudo). El marketplace oficial no es consultable programáticamente — el catálogo curado es la fuente y tú ejecutas los `/plugin install`; la pestaña Discover de `/plugin` es el complemento navegable.
 - **Puntero en CLAUDE.md** y **métricas** (arriba).
-- **rtk** ([Rust Token Killer](https://www.rtk-ai.app)): el plugin trae de serie un hook PreToolUse (`hooks/hooks.json` → `scripts/rtk-rewrite.sh`) que reescribe los comandos Bash vía `rtk rewrite` para ahorrar 60-90% de tokens en operaciones de desarrollo. Sin el binario instalado es un no-op silencioso; el init solo ofrece instalarlo (`brew install rtk-ai/tap/rtk` o `cargo install rtk`) si falta.
+
+Hasta la 0.44 el plugin traía un hook PreToolUse que reescribía los comandos Bash con [rtk](https://www.rtk-ai.app). Se retiró en la 0.45: el benchmark controlado de JetBrains (jul 2026) midió **+7,6 % de coste** con esfuerzo bajo y ±0 con esfuerzo alto, y el propio rtk reconoce un techo de ~3 % del input. El porqué completo, en la [FAQ](docs/faq.md#por-qué-el-plugin-ya-no-trae-el-hook-de-rtk).
 
 ## Estructura del plugin
 
@@ -958,7 +960,6 @@ Medición completa y mecanismos disponibles: `references/context-budget.md`.
 rules.md            # reglas compartidas que toda fase lee primero
 skills/<fase>/      # init·new·design·tasks·run·archive·status·doctor·review·auto·history·diagram
 agents/             # panel: sdd-architect · sdd-security · sdd-qa
-hooks/hooks.json    # hook rtk (PreToolUse Bash, no-op sin binario)
 templates/          # proposal/design/tasks/spec/roadmap + steering/ + scaffold/
 references/         # steering · isolation · roadmap-migration · mcp-catalog · lsp-catalog · plugin-catalog · metrics
 scripts/            # sdd-doctor.py · sdd_lifecycle.py · sdd_roadmap.py · sdd_session.py · validate_toolkit.py · usage-{dir,mark,phase,sink,sync}

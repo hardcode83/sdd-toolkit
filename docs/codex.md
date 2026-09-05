@@ -95,7 +95,7 @@ Claude Code.
 | `isolation: always` | Partially supported, as a handoff | The policy is read correctly (`sdd_session.py --root . policy`), and it must never be silently ignored. Since the session cannot enter the worktree, a phase that has to isolate **creates it, binds it (`claim <feature> --worktree <path>`) and stops**, telling the user to re-run the phase from that directory; under `/sdd:auto` that is a `BLOCKED.md` entry with the resume command. Continuing in the main clone would defeat the policy the project declared (ADR 0002 D5). |
 | Tournament mode | Unsupported | Claude Agent calls, model roles, and isolated-worktree tournament orchestration were not adapted. |
 | Claude telemetry | Unsupported | No Codex equivalent was added for Claude OTel variables or per-phase usage scripts. |
-| Claude `PreToolUse` hook (RTK rewrite) | Non-fatal | Codex ingests `hooks/hooks.json` and enables the hook. The command is now guarded (`[ -x "$h" ] && exec "$h"; exit 0`), so it no-ops instead of failing when the path is unresolved; with the install script it resolves and runs (`rtk` absent → clean no-op). RTK rewrite itself is not exercised under Codex. |
+| Claude `PreToolUse` hook (RTK rewrite) | Removed in 0.45 | The plugin ships no hooks any more. The rtk rewrite was retired after JetBrains' controlled benchmark measured a cost *increase* (see the FAQ); nothing under `hooks/` remains for Codex to ingest. |
 
 ## Known limitations
 
@@ -126,7 +126,7 @@ Claude Code.
   guaranteed to behave identically.
 - `init` still uses shared Claude-oriented scaffold text and contains optional
   behavior for `CLAUDE.md`, `.claude/settings.json`, Claude reviewers, MCP/LSP
-  suggestions, telemetry, and RTK. The validated Codex path explicitly declined
+  suggestions, and telemetry. The validated Codex path explicitly declined
   all those extras.
 - Default `$run`, `$review`, and `$auto` use the shared architect/security/QA
   panel. `$run <feature> solo` remains the explicit bypass and cannot record a

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # codex-adapter-install.sh — wire the shared SDD skills into Codex.
 #
-# The shared skills and the PreToolUse hook reference files through
-# ${CLAUDE_PLUGIN_ROOT}. Claude Code sets that variable; Codex does not, and it
-# has no equivalent substitution. This script resolves the *installed* plugin
-# root and writes it into ~/.codex/config.toml via `shell_environment_policy.set`,
-# so Codex's shell resolves ${CLAUDE_PLUGIN_ROOT} for both the skills' file reads
-# and the hook.
+# The shared skills reference files through ${CLAUDE_PLUGIN_ROOT}. Claude Code
+# sets that variable; Codex does not, and it has no equivalent substitution. This
+# script resolves the *installed* plugin root and writes it into
+# ~/.codex/config.toml via `shell_environment_policy.set`, so Codex's shell
+# resolves ${CLAUDE_PLUGIN_ROOT} for the skills' file reads.
 #
 # The version is resolved at run time (never hardcoded). Re-run this after every
 # `codex plugin` update to point at the new version — it is idempotent.

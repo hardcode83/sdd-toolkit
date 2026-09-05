@@ -295,6 +295,85 @@ class SteeringBudgetTests(unittest.TestCase):
             self.assertEqual(0, run_doctor(root).returncode)
 
 
+class DeadMcpServerTests(unittest.TestCase):
+    """SDD029: a `.mcp.json` entry pointing at a server switched off upstream.
+
+    The init writes the entry when the catalog is right; nothing tells the project
+    when it stops being so. Atlassian retired its SSE endpoint on 30 June 2026 and
+    the reference Postgres server was archived — projects initialized before
+    either date carry a server that silently fails to connect on every session.
+    """
+
+    def project(self, root: Path, servers: str) -> None:
+        (root / "sdd").mkdir(parents=True)
+        (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+        (root / ".mcp.json").write_text(
+            '{\n  "mcpServers": {\n' + servers + "\n  }\n}\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+        )
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD029" in line]
+
+    def test_current_catalog_entries_are_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(
+                root,
+                '    "atlassian": {"type": "http", "url": "https://mcp.atlassian.com/v2/mcp"},\n'
+                '    "postgres": {"command": "npx", "args": ["-y", "@bytebase/dbhub", "--dsn", "postgresql://ro@localhost/db"]},\n'
+                '    "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"}',
+            )
+            self.assertEqual([], self.diagnose(root))
+
+    def test_the_retired_sse_endpoint_is_reported_with_its_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(
+                root,
+                '    "atlassian": {"type": "sse", "url": "https://mcp.atlassian.com/v1/sse"}',
+            )
+            reported = self.diagnose(root)
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("WARNING", reported[0])
+            self.assertIn(".mcp.json:3", reported[0])
+            self.assertIn("`atlassian`", reported[0])
+            self.assertIn("v2/mcp", reported[0])
+
+    def test_the_archived_postgres_server_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(
+                root,
+                '    "postgres": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/db"]}',
+            )
+            reported = self.diagnose(root)
+            self.assertEqual(1, len(reported), reported)
+            self.assertIn("`postgres`", reported[0])
+            self.assertIn("dbhub", reported[0])
+
+    def test_no_mcp_config_or_unparseable_config_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(root, '    "x": {}')
+            (root / ".mcp.json").write_text("{not json", encoding="utf-8")
+            self.assertEqual([], self.diagnose(root))
+            (root / ".mcp.json").unlink()
+            self.assertEqual([], self.diagnose(root))
+
+    def test_it_is_a_warning_not_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.project(
+                root,
+                '    "atlassian": {"type": "sse", "url": "https://mcp.atlassian.com/v1/sse"}',
+            )
+            self.assertEqual(0, run_doctor(root).returncode)
+
+
 class ProjectReviewerMetadataTests(unittest.TestCase):
     """SDD028: a project reviewer without applies_to/phases runs on every panel.
 

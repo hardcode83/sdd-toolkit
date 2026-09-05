@@ -42,7 +42,9 @@ def validate_manifests(root: Path = ROOT) -> list[str]:
     hooks_path = root / "hooks" / "hooks.json"
     plugin = read_json(plugin_path, root, errors)
     marketplace = read_json(marketplace_path, root, errors)
-    hooks = read_json(hooks_path, root, errors)
+    # The plugin ships no hooks since 0.45 (the rtk rewrite was retired); the
+    # file is validated only if a future hook brings it back.
+    hooks = read_json(hooks_path, root, errors) if hooks_path.is_file() else None
 
     if isinstance(plugin, dict):
         for field in ("name", "description", "version", "author", "repository"):

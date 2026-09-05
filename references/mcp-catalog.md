@@ -19,10 +19,14 @@ Auth: OAuth prompt on first use, or `Authorization: Bearer <PAT>` header.
 Relevant when: the team tracks work in Jira or documents in Confluence.
 
 ```json
-"atlassian": { "type": "sse", "url": "https://mcp.atlassian.com/v1/sse" }
+"atlassian": { "type": "http", "url": "https://mcp.atlassian.com/v2/mcp" }
 ```
 
-Auth: OAuth browser prompt on first use.
+Auth: OAuth browser prompt on first use (`/mcp` in a session). The legacy SSE
+endpoint (`mcp.atlassian.com/v1/sse`) stopped being supported on 30 June 2026 —
+a project still carrying it has a dead server; `/sdd:doctor` reports it
+(`SDD029`). Official plugin alternative: `atlassian@claude-plugins-official`
+(offer one or the other, never both).
 
 ## playwright — browser automation / E2E
 
@@ -45,10 +49,15 @@ Relevant when: heavy use of fast-moving frameworks/libraries.
 Relevant when: the project uses PostgreSQL and schema questions come up often.
 
 ```json
-"postgres": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/DBNAME"] }
+"postgres": { "command": "npx", "args": ["-y", "@bytebase/dbhub", "--dsn", "postgresql://readonly:PASSWORD@localhost:5432/DBNAME"] }
 ```
 
-Replace the connection string; prefer a read-only user.
+Replace the DSN; use a read-only role. This is the server the Claude Code docs
+recommend for database queries. The former reference server
+(`@modelcontextprotocol/server-postgres`) is archived upstream with an explicit
+"no security guarantees" notice — a project still launching it is flagged by
+`/sdd:doctor` (`SDD029`). When the database is hosted on Supabase or Neon,
+prefer their official plugins (`supabase`, `neon`) over a raw connection.
 
 ## sentry — error tracking
 
