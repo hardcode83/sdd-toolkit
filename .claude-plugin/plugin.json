@@ -1,7 +1,7 @@
 {
   "name": "sdd",
   "description": "Spec-Driven Development workflow: proposal → design → tasks → run → review → PR → merge-gated archive, with living specs, deterministic state diagnostics (/sdd:doctor), a multi-agent review panel, autonomous PR creation, a BLOCKED queue, metrics, and queryable history.",
-  "version": "0.47.0",
+  "version": "0.48.0",
   "author": {
     "name": "Jose Gascon"
   },
