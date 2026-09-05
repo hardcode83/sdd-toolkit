@@ -213,7 +213,7 @@ El panel salta al *completarse una sección* — una tarea suelta solo lo dispar
 - **Actualizar**: `/plugin marketplace update sdd-toolkit` + `/plugin update sdd@sdd-toolkit`. Tus `sdd/` no se tocan — son datos del proyecto.
 - **Cambiar el modelo de una fase o de un agente del panel**: frontmatter `model:` de `skills/<fase>/SKILL.md` o de `agents/sdd-*.md` en el repo del plugin, commit y subir versión. Aplica a todos tus proyectos (la configuración de modelos/agentes es del plugin, no del proyecto) — la tabla completa fase→modelo→agentes está en el README.
 - **Ajustar el panel**: los agentes leen *tus* steering docs como referente, así que su agresividad se calibra sobre todo ahí (reglas concretas = findings útiles). Para cambiar su contrato (qué chequean, formato de findings), edita `agents/sdd-*.md`.
-- **Añadir MCPs/LSPs a los catálogos**: `references/mcp-catalog.md` / `lsp-catalog.md`.
+- **Añadir MCPs/LSPs/plugins a los catálogos**: `references/mcp-catalog.md` / `lsp-catalog.md` / `plugin-catalog.md`. Cada entrada dice cuándo ofrecerla, qué cuesta al usarla, con qué solapa y si vale en Codex; la sección "no ofrecemos" del catálogo de plugins guarda los porqués de lo que se descartó.
 
 ## Las reglas de oro
 
