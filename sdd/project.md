@@ -4,7 +4,7 @@
 
 SDD Toolkit is a Claude Code plugin with a Codex adapter. It provides a
 file-backed Spec-Driven Development lifecycle, deterministic lifecycle scripts,
-review-panel agents, templates, hooks, and internal validation for toolkit
+review-panel agents, templates, and internal validation for toolkit
 releases.
 
 ## Stack
@@ -37,8 +37,7 @@ There is no teardown command because no stack is brought up per worktree.
 ## Conventions
 
 - Keep plugin behavior in `skills/`, `agents/`, `scripts/`, `templates/`,
-  `references/`, `hooks/`, and `rules.md`; keep project persistence under
-  `sdd/`.
+  `references/`, and `rules.md`; keep project persistence under `sdd/`.
 - Preserve the existing SDD change/state contracts and fail-closed gates.
 - Runtime-specific resources must remain adapters or generated artifacts, not
   independently maintained methodology copies.

@@ -136,7 +136,7 @@ Tell the user the rest is covered lazily: when a change touches an undocumented 
 
 ### 6. Offer optional extras
 
-When re-running this step on an already-initialized project, first diff against what's already enabled (the **Context** section of `sdd/project.md` plus the actual config files) and offer only what's new or missing. Ask the user (AskUserQuestion) about:
+When re-running this step on an already-initialized project, first diff against what's already enabled (the **Context** section of `sdd/project.md` plus the actual config files) and offer only what's new or missing. If `sdd-doctor.py --root .` reports `SDD029`, the project's `.mcp.json` still carries a server that no longer works (an endpoint switched off upstream, a package archived) — offer the catalog's current replacement for that entry before anything new. Ask the user (AskUserQuestion) about:
 
 1. **MCPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/mcp-catalog.md`; offer only the entries relevant to the detected stack (e.g. don't offer Postgres to a project with no database).
 2. **LSPs** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/lsp-catalog.md`; offer code intelligence for the languages detected in the repo (or planned in the stack).
@@ -164,7 +164,6 @@ When re-running this step on an already-initialized project, first diff against 
 
    **Re-running on an already-initialized project**: if `extraKnownMarketplaces` is there but `autoUpdate` is missing, offer to add just that field — it is the single most common gap, since it did not exist when earlier projects were initialized.
 6. **Official plugins** (multiSelect) — read `${CLAUDE_PLUGIN_ROOT}/references/plugin-catalog.md`; offer the entries relevant to the detected stack/team, watching the overlap rules it documents (LSPs live in their own catalog; integrations must not be offered both as plugin and raw MCP). You cannot install plugins yourself — print the exact `/plugin install <name>@claude-plugins-official` commands for the user, and point them to the `/plugin` Discover tab as the browsable catalog.
-7. **rtk (token savings)** — only if `which rtk` finds nothing. The plugin already ships a PreToolUse hook that rewrites Bash commands through [rtk](https://www.rtk-ai.app) (60-90% token savings on dev operations) and silently no-ops when the binary is absent — so the only thing to set up is the binary itself: offer to install it (`brew install rtk-ai/tap/rtk`, or `cargo install rtk`). If rtk is already installed, skip this item entirely (the hook is already working). If the user's global `~/.claude/settings.json` also wires an rtk hook, mention the duplication is harmless (the second rewrite is a no-op) but they can remove the global one.
 
 ### 7. Apply choices
 
@@ -183,7 +182,6 @@ Current system behavior is documented in `sdd/specs/`; in-flight changes live in
 <!-- sdd:end -->
 ```
 
-- **rtk**: if chosen, install the binary with user approval and verify with `rtk --version`.
 - **Usage metrics**: if selected, verify the plugin's helper prerequisites (`jq` and Python 3) on the machine. Merge its environment into the project's `.claude/settings.json` (preserving existing keys): `CLAUDE_CODE_ENABLE_TELEMETRY: "1"`, `OTEL_METRICS_EXPORTER: "otlp"`, `OTEL_EXPORTER_OTLP_PROTOCOL: "http/json"`, `OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318"` (pick another port if 4318 is taken — check with `lsof -i :4318`), `OTEL_METRIC_EXPORT_INTERVAL: "10000"`. Add `.sdd-usage/` to `.gitignore`. Tell the user telemetry starts on the **next session** (env applies at session start); the sink autostarts when the first phase runs. This optional helper is plugin infrastructure, not a project test requirement.
 - Record enabled MCPs/LSPs/metrics in the **Context** section of `sdd/project.md`.
 

@@ -36,7 +36,7 @@ Tienes un PRD/plan en markdown y un directorio vacío.
 /sdd:init docs/plan.md
 ```
 
-El init lee el plan y te propone un **triaje** (confirmas antes de que escriba nada): visión y principios → `steering/product.md`; stack y decisiones ya tomadas → `project.md` + `steering/architecture.md`; la lista de features → `roadmap.md`, una línea por futuro change agrupada en stages (metas, no categorías) y con las dependencias que el plan declare; el análisis largo de una entrada, a `roadmap/<feature>.md`. Después pregunta qué **steering docs** crear (architecture, security, testing, documentation, por componente…), y qué **extras** activar: MCPs según tu stack, LSPs, puntero en CLAUDE.md, métricas de uso, rtk si falta el binario.
+El init lee el plan y te propone un **triaje** (confirmas antes de que escriba nada): visión y principios → `steering/product.md`; stack y decisiones ya tomadas → `project.md` + `steering/architecture.md`; la lista de features → `roadmap.md`, una línea por futuro change agrupada en stages (metas, no categorías) y con las dependencias que el plan declare; el análisis largo de una entrada, a `roadmap/<feature>.md`. Después pregunta qué **steering docs** crear (architecture, security, testing, documentation, por componente…), y qué **extras** activar: MCPs según tu stack, LSPs, puntero en CLAUDE.md, métricas de uso.
 
 Importante: el init **no** convierte el plan en proposals. Los proposals se escriben uno a uno, cuando les llega el turno — así el proposal de la feature 5 se escribe contra las specs reales de las features 1-4, no contra lo que el plan imaginaba.
 
