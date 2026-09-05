@@ -91,6 +91,17 @@ tool, and `--autocompact` only moves the compaction threshold. What exists:
    "`/clear` before the next phase" costs one line; the measurement above says
    it is followed about a third of the time, which is why (1) exists.
 
+## What still costs on every request
+
+Tool Search (Claude Code ≥ 2.1.215) discovers MCP tool schemas on demand, so the
+"every server adds its schemas to every request" cost that the 42k-token
+preamble measurement captured has largely moved. What remains fixed per request
+is what hooks inject, one description line per skill, and MCP server
+instructions; what grows is tool *output* once a server is used. That is the
+order in which `/sdd:init` weighs extras: a hook or an always-on skill needs a
+stronger reason than an MCP server, and the rtk hook this plugin used to ship
+was retired on exactly that reasoning (see the FAQ).
+
 ## Reading the result, not the prose
 
 When a phase runs in a sub-session, do **not** parse its text to decide what
