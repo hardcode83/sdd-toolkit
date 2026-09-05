@@ -106,6 +106,26 @@ PHASE_OUTCOME_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "At most ~10 lines for the human; no diffs, no logs.",
         },
+        "findings": {
+            "type": "array",
+            "description": (
+                "On a FAILED review: the panel's surviving findings, one per item, so the "
+                "caller can run the fix ladder without re-reading any prose."
+            ),
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["reviewer", "severity", "file", "referent", "what", "fix"],
+                "properties": {
+                    "reviewer": {"type": "string"},
+                    "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "file": {"type": "string", "description": "file:line when known"},
+                    "referent": {"type": "string", "description": "R#, D# or the quoted steering rule"},
+                    "what": {"type": "string"},
+                    "fix": {"type": "string", "description": "fix direction, one sentence"},
+                },
+            },
+        },
     },
 }
 
@@ -212,6 +232,7 @@ def classify(result: Any) -> dict[str, Any]:
         "next_command": "",
         "decisions": [],
         "summary": "",
+        "findings": [],
         "denied_commands": [],
         "session_id": None,
         "cost_usd": None,
@@ -244,6 +265,8 @@ def classify(result: Any) -> dict[str, Any]:
         decisions = structured.get("decisions")
         verdict["decisions"] = decisions if isinstance(decisions, list) else []
         verdict["summary"] = str(structured.get("summary") or "")
+        findings = structured.get("findings")
+        verdict["findings"] = [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else []
 
     # Denials come first: a phase that was refused a command and still reports
     # PASS is describing work it could not have verified.
@@ -290,6 +313,12 @@ def format_verdict(verdict: dict[str, Any]) -> str:
                 lines.append(f"  - {option}")
             if decision.get("recommendation"):
                 lines.append(f"  recommended: {decision['recommendation']}")
+    for finding in verdict.get("findings") or []:
+        lines.append(
+            f"finding: [{finding.get('reviewer', '?')}/{finding.get('severity', '?')}] "
+            f"{finding.get('file', '?')} — {finding.get('what', '')} → {finding.get('fix', '')} "
+            f"({finding.get('referent', '')})"
+        )
     for command in verdict.get("denied_commands") or []:
         lines.append(f"denied: {command}")
     if verdict.get("summary"):

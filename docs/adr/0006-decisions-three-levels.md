@@ -158,9 +158,33 @@ Codex aplica la misma escalera con el modelo de su sesión.
   fases) queda para después: el pico de 923k de contexto en el hilo de `run`
   del primer run real es su argumento.
 
+## Adenda (2026-09-05, v0.49.0) — la escalera también a escala de review
+
+D4 se apoyaba en una medida incompleta: las segundas rondas se contaron solo
+en los paneles de sección de `run`. Medido después sobre OTel de AutoHostAI
+(84 features con fase review): **52 necesitaron más de una sesión de review**
+(27 con dos, 10 con tres, 9 con cuatro, 3 con cinco, y una con ocho, nueve y
+once), 68 commits de remediación tras review con `ci-runner-oci` en la ronda
+10, y **1.905 $ de los 3.291 $** de review fueron re-review. A escala de
+feature el FAIL es el caso normal, y bajo auto un FAIL de review iba directo a
+BLOCK sin intentar nada.
+
+Cambios: el objeto de veredicto de la receta headless lleva `findings`
+(revisor, severidad, `file:line`, referente, qué, dirección del fix) que review
+rellena en FAIL; el paso 6 de auto aplica la misma escalera de D4 — ronda 1
+`sonnet`, ronda 2 `opus` con el informe anterior, re-review delegada tras cada
+una, `decision` con ambas posiciones al tercer FAIL — leyendo los findings del
+objeto y nunca de la prosa. Review sigue siendo report-only: quien vuelve es
+el llamante.
+
+Con 13 features más allá de la segunda ronda, el árbitro en Fable ya tiene el
+caso medido que le faltaba: se diseña activable en la ola siguiente, opt-in en
+`sdd/project.md`, con seguridad y `DESIGN-CONFLICT` siempre fuera de su
+alcance.
+
 ## Implementación
 
-Se entrega con v0.48.0. `scripts/sdd_lifecycle.py`, `scripts/sdd_roadmap.py`,
+Se entrega con v0.48.0; la adenda, con v0.49.0 (`scripts/sdd_auto_outcome.py`, `skills/auto`, `skills/review`, tests). `scripts/sdd_lifecycle.py`, `scripts/sdd_roadmap.py`,
 `scripts/sdd-doctor.py`, `scripts/sdd_auto_outcome.py`,
 `tests/test_blocked_queue.py` (17 tests) + `tests/test_decisions_contract.py`,
 `rules.md`, las skills citadas, `templates/tasks-template.md`,

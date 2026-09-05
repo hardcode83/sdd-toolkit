@@ -148,7 +148,7 @@ disk (`STATE.md`, `BLOCKED.md`, `tasks.md`) before acting on it:
 |---|---|---|
 | `PASS` | the phase reports success | verify on disk; continue the pipeline |
 | `BLOCKED` | the sub-session wrote `BLOCKED.md` | adopt it; next feature |
-| `FAILED` | the phase ran and its verdict is negative | BLOCK the feature |
+| `FAILED` | the phase ran and its verdict is negative | for review: run the **fix ladder** of step 6 (two rounds, then `decision`); for any other phase: BLOCK the feature |
 | `DENIED` | `permission_denials` is non-empty | **not a decision — configuration**: `deferred` entry with the exact denied command(s) so the user adds the rule; never retry blind |
 | `ERROR` | API error, budget or turn limit, abnormal end | if the reason names a rate limit or usage window, wait for it (the message says when) and retry the same launch **once**; otherwise retry once immediately; then `deferred` with the reason |
 | `INCOMPLETE` | ended without an outcome object | read the disk; if it does not prove the phase's milestone, treat as `FAILED` |
@@ -281,8 +281,34 @@ Then, for the feature at hand:
    and rule 8's evidence-over-claims): `STATE.md` at `READY_FOR_PR` with a
    recorded `implementation_sha` is the pass. A `BLOCKED.md` written by the
    sub-session is a real block — adopt it and move on to the next feature.
-   `DENIED`, `ERROR` and `INCOMPLETE` follow the headless-recipe table. Any
-   other outcome is a failed verdict: BLOCK.
+   `DENIED`, `ERROR` and `INCOMPLETE` follow the headless-recipe table.
+
+   **`FAILED` is not a block yet — it is the start of the review fix ladder.**
+   Measured on 84 features of a real project, 52 needed more than one review
+   session and one needed ten remediation rounds; more than half of all review
+   spend was re-review. A FAIL at feature scale is the normal case, so auto
+   fixes it the way `/sdd:run` fixes a section (step 3 of that skill), from the
+   `findings` the outcome object carries — never from the review's prose:
+   1. **Round 1** — one `Agent` implementer, `model: sonnet`, in the feature's
+      worktree, scoped to those findings (file:line, referent, what, fix
+      direction), with the same contract as a run implementer: fix only what
+      the findings name, verify, no diffs in the report. Commit
+      `sdd(<feature>): review fixes — round 1`. Then **re-run the delegated
+      review** (the same `sdd_auto_outcome.py run` line): review is report-only
+      and the fix must be seen by the panel; `mark-recertified` handles a
+      change already at `PR_OPEN`.
+   2. **Round 2** — on `FAILED` again: implementer on `model: opus`, given the
+      new findings **and the round-1 implementer's report**; commit
+      `… — round 2`; re-run review.
+   3. **Still `FAILED`** — stop climbing. Read what persists: the same finding
+      with the implementer stating it is wrong is a reviewer/implementer
+      disagreement; new findings each round in the same area is a rule too
+      vague to converge on. Either way it is a `decision` for the human with
+      **both** positions written (`block … --type decision`), and the feature
+      is BLOCKED. Two rounds is the cap; a third round of edits would only
+      cost.
+   Every round runs in the same session budget: if a round returns `ERROR` or
+   `DENIED`, the headless-recipe table applies before the ladder continues.
 
    The sub-session marks its own usage and exports to the same per-repository
    sink, so metrics stay attributed (`${CLAUDE_PLUGIN_ROOT}/references/metrics.md`).
