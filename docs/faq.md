@@ -185,6 +185,14 @@ Estaban rotas antes de esto, y los worktrees lo empeoraban en silencio. Dos caus
 
 El arreglo salió barato porque el sink ya recibía `session.id` en cada datapoint: **un sink y un log por repositorio** (resuelto al worktree principal) y **atribución por sesión**. El `current-task` sigue existiendo como fallback para datapoints sin sesión identificable, así que nada que se atribuía antes deja de atribuirse.
 
+## Review pasó y ship me volvió a lanzar el panel — ¿por qué, y qué es el recibo del panel?
+
+Porque el veredicto vivía en la prosa del fork y `STATE.md` seguía en `ACTIVE`. Medido en `auth-session-persistence`: ocho paneles de siete revisores en PASS, cero llamadas a `mark-local-verified` (los forks terminaban el turno "esperando notificaciones"), ship encontraba `ACTIVE` y devolvía a review, review fresco relanzaba los siete. 101 $ de review para no certificar nada. Desde la 0.50.0 el gate `reviewer_panel.py` escribe un **recibo** en el directorio git común (`sdd/receipts/<feature>.json`: gate, HEAD juzgado, veredicto por revisor), `mark-local-verified` se niega sin recibo PASS en HEAD, ship registra los hitos él mismo cuando el recibo certifica HEAD en vez de devolver a review, y un re-review relanza solo los revisores que no pasaron (`--carry` reutiliza los PASS cuando solo cambiaron documentos; si cambió código, todos otra vez). Un revisor cortado por su límite de turnos se relanza solo, nunca el panel. [ADR 0007](adr/0007-panel-receipt-and-directory-check.md).
+
+## Abro la sesión en un worktree de Orca y el flujo me crea otro worktree — ¿por qué?
+
+Porque el check de aislamiento contaba como conflicto a **cualquier** sesión viva del registro compartido, aunque trabajara en otro worktree que no comparte tu HEAD. Cuatro sesiones en cuatro worktrees hacían que un quinto worktree limpio dijera `CONFLICT` y se creara un `.claude/worktrees/sdd+<feature>` al lado: la feature en dos sitios, dos stacks de Docker, y el host sin memoria para la comprobación manual. Desde la 0.50.0 el check describe *este directorio*: otra sesión en otro worktree es información, no conflicto; un worktree enlazado ya satisface `isolation: always` (`WORK HERE — already is the isolation`); y si la feature ya tiene dos worktrees, `check` lo dice (`NOTE — … never a third`). El detalle en `references/isolation.md`.
+
 ## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
 
 Porque una lista plana no puede responder a "¿qué puedo atacar ya?" ni a "¿qué features convergen hacia el mismo fin?". La información de dependencias se escribía igualmente — pero en prosa dentro de la entrada, donde es inerte: nada podía calcular un orden.

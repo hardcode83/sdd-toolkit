@@ -75,6 +75,27 @@ read it without the rest of the check:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . policy
 ```
 
+## Already in a linked worktree (Orca, `claude -w`, a worktree you made)
+
+An external tool may have given the session a worktree before the flow saw the
+feature: Orca opens one per session, `claude -w` does the same. That worktree
+**is** the isolation rule 10 asks for — its own HEAD, its own files — so the
+check treats it as such (ADR 0007):
+
+- Another live session in **another** worktree is listed as information, not
+  as a conflict: it cannot drag this directory's files onto its branch.
+- `isolation: always` is satisfied by the linked worktree itself: `check` says
+  `WORK HERE — this linked worktree already is the isolation the project
+  declares`. Never nest a second worktree inside or beside it.
+- `claim <feature> --worktree <this path>` binds the feature here; `/sdd:new`
+  creates `sdd/<feature>` in place (the external tool's branch name is not the
+  team claim — the remote `sdd/<feature>` branch is).
+- If `check` prints `NOTE — <path> already holds a worktree for this feature`,
+  the feature already has two homes: work in the one git names and retire the
+  other before going on. Two worktrees mean two stacks, two transcripts and a
+  host that runs out of memory (measured: five features, ten stacks, 192 MB
+  free, a manual check that could not run).
+
 ## Creating the worktree
 
 **Before anything else is written.** Isolation comes before the branch exists and

@@ -100,6 +100,38 @@ class ReviewFixLadderContractTests(unittest.TestCase):
         self.assertIn("auto runs the fix\n   ladder", review)
 
 
+class PanelReceiptContractTests(unittest.TestCase):
+    """ADR 0007: eight passing panels certified nothing because the verdict lived
+    in a fork's prose. The receipt is the mechanical link."""
+
+    def test_review_writes_the_receipt_and_records_milestones_in_the_same_turn(self) -> None:
+        review = read("skills", "review", "SKILL.md")
+        self.assertIn("The gate writes the receipt", review)
+        self.assertIn("relaunched alone", review)
+        self.assertIn("--carry", review)
+        self.assertIn("**in this same turn**", review)
+
+    def test_ship_certifies_from_the_receipt_instead_of_bouncing_to_review(self) -> None:
+        ship = read("skills", "ship", "SKILL.md")
+        self.assertIn("RECEIPT: CERTIFIES_HEAD", ship)
+        self.assertIn("RECEIPT: STALE_OR_MISSING", ship)
+        self.assertIn("no human needed", ship)
+
+    def test_a_cut_reviewer_is_relaunched_alone_everywhere(self) -> None:
+        self.assertIn("relaunched alone", read("skills", "run", "SKILL.md"))
+        for agent, cap in (("sdd-qa", "100"), ("sdd-architect", "60"), ("sdd-security", "60")):
+            text = read("agents", f"{agent}.md")
+            self.assertIn(f"maxTurns: {cap}", text)
+            self.assertIn("## Budget:", text)
+
+    def test_rules_make_the_check_per_directory_and_the_fork_write_before_ending(self) -> None:
+        rules = read("rules.md")
+        self.assertIn("describes **this directory**", rules)
+        self.assertIn("already\n      isolated", rules)
+        self.assertIn("A fork ends with its evidence on disk, or not at all", rules)
+        self.assertIn("Already in a linked worktree", read("references", "isolation.md"))
+
+
 class ForegroundForkContractTests(unittest.TestCase):
     def test_review_and_the_panel_wait_in_the_foreground(self) -> None:
         self.assertIn("In the foreground, and wait in this turn", read("skills", "review", "SKILL.md"))

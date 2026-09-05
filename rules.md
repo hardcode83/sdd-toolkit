@@ -92,13 +92,17 @@
     corrupting the very evidence rule 8 depends on. So:
     - Before creating or switching to a feature branch, ask
       `${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py --root . check --feature <f>`.
-      Its verdict describes the clone (`CLEAR`/`CONFLICT`); its **last line** is
-      the instruction (`ISOLATE`/`WORK HERE`), because the project decides what a
-      `CLEAR` clone means: `isolation: always` in `sdd/project.md` gives every
-      feature its own worktree, and the default `on-conflict` isolates only on
-      evidence. Obey the last line and follow
-      `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` — it says when to offer it
-      and when to just do it.
+      Its verdict describes **this directory** (`CLEAR`/`CONFLICT`); its **last
+      line** is the instruction (`ISOLATE`/`WORK HERE`), because the project
+      decides what a `CLEAR` directory means: `isolation: always` in
+      `sdd/project.md` gives every feature its own worktree, and the default
+      `on-conflict` isolates only on evidence. A session working in **another**
+      worktree is not evidence — it does not share this HEAD — and a session
+      already standing in a linked worktree (Orca, `claude -w`) is already
+      isolated: `check` says `WORK HERE` there even under `isolation: always`,
+      and notes any second worktree the feature already has. Obey the last line
+      and follow `${CLAUDE_PLUGIN_ROOT}/references/isolation.md` — it says when
+      to offer it and when to just do it.
     - A feature's worktree is recorded once (`claim`) and every later phase finds
       it with `resolve` — never by guessing a path. The registry is machine-local
       state in the shared git directory; the **remote** `sdd/<feature>` branch is
@@ -139,6 +143,11 @@
       the feature's worktree once (`sdd_session.py … resolve`), then prefix
       every command with `cd <path> &&` or pass `--root <path>` to the SDD
       scripts, and read files by absolute path.
+    - **A fork ends with its evidence on disk, or not at all.** A forked phase
+      whose contract writes something (`review`: the panel receipt and, on
+      PASS, the lifecycle milestones) does not end its turn before that is
+      written; "the panel passed" in prose is not a verdict, and
+      `mark-local-verified` now refuses without the receipt at HEAD.
     - **A fork waits in the foreground.** Ending the turn ends the fork: there
       is no later notification to resume on. So a forked phase never launches
       its panel or implementers in the background and never "pauses until the

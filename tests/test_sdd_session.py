@@ -126,7 +126,29 @@ class CheckTests(SessionTestCase):
         self.assertFalse(report["conflict"])
         self.assertEqual([], report["reasons"])
 
-    def test_another_live_session_is_a_conflict(self) -> None:
+    def test_another_live_session_in_this_directory_is_a_conflict(self) -> None:
+        self.write_registry(
+            {
+                "schema": 1,
+                "sessions": {
+                    "session-b": {
+                        "pid": os.getpid(),
+                        "feature": "beta",
+                        "worktree": str(self.root),
+                    }
+                },
+                "worktrees": {},
+            }
+        )
+        report = sdd_session.check(self.root, "alpha")
+        self.assertTrue(report["conflict"])
+        self.assertIn("another live session", report["reasons"][0])
+        self.assertIn("this same directory", report["reasons"][0])
+
+    def test_a_live_session_in_another_worktree_is_not_a_conflict(self) -> None:
+        """Measured (ADR 0007): four sessions in four Orca worktrees made a clean
+        fifth worktree report CONFLICT and spawn a second worktree for itself.
+        Another directory does not share this HEAD; it is the isolation working."""
         self.write_registry(
             {
                 "schema": 1,
@@ -141,8 +163,32 @@ class CheckTests(SessionTestCase):
             }
         )
         report = sdd_session.check(self.root, "alpha")
-        self.assertTrue(report["conflict"])
-        self.assertIn("another live session", report["reasons"][0])
+        self.assertFalse(report["conflict"])
+        self.assertEqual([], report["reasons"])
+        self.assertEqual("beta", report["sessions_elsewhere"][0]["feature"])
+        rendered = sdd_session.render_check(report)
+        self.assertIn("not a conflict here", rendered)
+        self.assertIn("WORK HERE", rendered)
+
+    def test_a_linked_worktree_is_already_the_isolation_always_asks_for(self) -> None:
+        (self.root / "sdd" / "project.md").write_text("# Project\n\nisolation: always\n", encoding="utf-8")
+        self.git("add", "sdd/project.md")
+        self.git("commit", "-m", "policy")
+        linked = self.root / ".claude" / "worktrees" / "alpha"
+        self.git("worktree", "add", "-b", "orca/alpha", str(linked))
+        self.assertTrue(sdd_session.check(self.root, "alpha")["isolate"])
+        report = sdd_session.check(linked, "alpha")
+        self.assertFalse(report["isolate"])
+        self.assertIn("already is the isolation", sdd_session.render_check(report))
+
+    def test_a_second_worktree_for_the_same_feature_is_noted(self) -> None:
+        linked = self.root / ".claude" / "worktrees" / "alpha"
+        self.git("worktree", "add", "-b", "sdd/alpha", str(linked))
+        report = sdd_session.check(self.root, "alpha")
+        self.assertEqual(1, len(report["duplicate_worktrees"]))
+        self.assertEqual("sdd/alpha", report["duplicate_worktrees"][0]["branch"])
+        self.assertIn("never a third", sdd_session.render_check(report))
+        self.assertEqual([], sdd_session.check(linked, "alpha")["duplicate_worktrees"])
 
     def test_a_dead_session_is_not_a_conflict(self) -> None:
         self.write_registry(

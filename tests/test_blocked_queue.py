@@ -64,6 +64,16 @@ class QueueFixture(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-q", "-m", "update")
 
+    def stamp_receipt(self) -> None:
+        """A PASS panel receipt at HEAD, as reviewer_panel.py would leave it."""
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        path = sdd_lifecycle.panel_receipt_path(self.root, FEATURE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "schema": 1, "phase": "review", "feature": FEATURE, "sha": head, "gate": "PASS",
+            "errors": [], "reviewers": [],
+        }), encoding="utf-8")
+
 
 class BlockedParsingTests(QueueFixture):
     """Months of hand-written BLOCKED.md files used several shapes; the parser
@@ -120,6 +130,7 @@ class LocalGateTests(QueueFixture):
         )
         self.commit_all()
         ensure_local_gates(self.change)
+        self.stamp_receipt()
         self.assertIn("LOCAL_VERIFIED", mark_local_verified(self.root, FEATURE))
 
     def test_a_decision_entry_still_blocks(self) -> None:

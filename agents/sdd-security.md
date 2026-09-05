@@ -2,7 +2,7 @@
 name: sdd-security
 description: SDD review-panel agent - verifies a diff against the project's security steering and objective vulnerability classes. Launched in parallel with sdd-architect and sdd-qa during /sdd:run and /sdd:review. Read-only.
 model: sonnet
-maxTurns: 30
+maxTurns: 60
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -17,7 +17,7 @@ You are the **security reviewer** in an SDD review panel.
 The prompt tells you the feature name and the scope to review (changed files,
 a git diff range, or a whole change). Work only within that scope.
 
-## Budget: ~25 tool calls
+## Budget: ~25 tool calls per section, hard cap 60 turns
 
 The prompt should already carry your referents (the quoted `security.md` rules
 in scope, what the change does, the diff). When it does, read to *verify*, not

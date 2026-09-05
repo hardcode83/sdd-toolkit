@@ -126,7 +126,9 @@ Claude Code.
   and a project that wants that ladder uses Codex profiles outside the toolkit.
 - The pending queue's three entry types, the `<!-- manual -->` task marker and
   the `block`/`blocked` subcommands of `sdd_lifecycle.py` are stdlib Python and
-  behave identically under Codex (ADR 0006).
+  behave identically under Codex (ADR 0006). So do the panel receipt written by
+  `reviewer_panel.py` (also on the Codex handoff path), `--carry`, and the
+  `receipt` subcommand `mark-local-verified` now depends on (ADR 0007).
 - `AskUserQuestion` has no identical Codex primitive. Normal questions preserve
   the verified phase gates, but advanced multi-select interactions are not
   guaranteed to behave identically.
