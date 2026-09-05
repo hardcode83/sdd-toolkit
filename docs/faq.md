@@ -87,6 +87,27 @@ repositorio/ramas/SHA revisado, estado `MERGED` y merge commit. Los archives
 históricos sin metadata se conservan; a un change activo legacy se le exige
 asociar evidencia real, nunca inventarla.
 
+## ¿Por qué auto lanza sus sub-sesiones con `--permission-mode auto` y nunca en Haiku?
+
+Porque es lo único que funciona sin nadie delante, y lo sabemos por haberlo
+medido. Las tres primeras ejecuciones reales de `/sdd:auto` (agosto 2026)
+murieron en menos de dos minutos con «This command requires approval» sobre
+`python3 …/sdd_roadmap.py`: la receta decía `--permission-mode acceptEdits`, que
+aprueba ediciones de ficheros y comandos de sistema de ficheros, pero ningún
+otro comando de shell — ni los scripts del toolkit, ni `git push`, ni los tests
+del proyecto. En una sesión `-p` no hay nadie que responda al prompt, así que
+todo se deniega. `dontAsk` hace lo mismo sin una allowlist explícita. Con
+`--permission-mode auto` el clasificador aprueba los scripts, git y los tests
+(y sigue bloqueando force-push, exfiltración y despliegues), y
+`--permission-prompts none` quita `AskUserQuestion` de la sesión: «auto nunca
+pregunta» deja de ser una instrucción y pasa a ser un hecho.
+
+Haiku queda fuera como modelo de *sesión* porque el modo auto no está
+disponible para él: la sesión arranca en Manual **sin avisar** y deniega todo.
+`scripts/sdd_auto_outcome.py` es el único sitio donde vive la receta, se niega
+a lanzar con Haiku y resume lo que volvió en una última línea `AUTO_OUTCOME`.
+Medidas y alternativas descartadas en [ADR 0005](adr/0005-auto-headless-recipe.md).
+
 ## ¿Por qué los modelos por fase son del plugin y no por proyecto?
 
 Porque el plugin se instala una vez por usuario y las skills se comparten: editar frontmatter afectaría a todos los proyectos igualmente — así que se asume y se documenta (editar `skills/<fase>/SKILL.md` o `agents/*.md`, commit, subir versión). El perfil por-proyecto existió en la era pre-plugin y se sacrificó a cambio de distribución centralizada. Las **reglas** sí son por proyecto (steering) — y son el mando de calibración que de verdad importa.

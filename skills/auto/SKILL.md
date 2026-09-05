@@ -88,6 +88,54 @@ Everywhere a phase skill says "ask the user", "wait for approval", or
   the roadmap) → never applies either: auto only consumes roadmap entries and
   never invents scope.
 
+## The headless recipe
+
+Every session auto delegates — a whole feature when `N > 1`, the review of
+step 6 always — is a fresh `claude -p` session, and it is launched through
+**one** script so the flags live in one place and are tested there:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "<prompt>" --cwd <dir> [--model sonnet|opus] [--effort …] [--max-budget-usd …]
+```
+
+What the recipe does, and why each part is there (measured on Claude Code
+2.1.261, `docs/adr/0005-auto-headless-recipe.md`):
+
+- `--permission-mode auto --permission-prompts none`. Until v0.46 the skill said
+  `acceptEdits`, and every real auto run died within two minutes on a
+  permission prompt for `python3 …/sdd_roadmap.py`: `acceptEdits` approves file
+  edits, not shell commands, and a headless session has nobody to answer the
+  prompt. In `auto` mode the classifier approves the toolkit's scripts, git and
+  the project's tests; `--permission-prompts none` removes `AskUserQuestion`
+  from the session and denies, without waiting, anything that would still have
+  prompted. That turns "auto never asks" from an instruction into a fact.
+- **Never Haiku as the session model.** Auto permission mode is unavailable for
+  it: the session silently starts in Manual and denies every command. The
+  script refuses `--model haiku`; Sonnet is the default, Opus when the phase
+  deserves it.
+- `--json-schema`: the sub-session ends with an **outcome object** (`outcome`
+  PASS/BLOCKED/FAILED, `next_command`, `decisions`, `summary`). That is what
+  reaches this conversation — not its prose, not its diffs.
+- `SDD_AUTO_DELEGATED=1` and `SDD_AUTO=1` in the environment, plus a system
+  prompt that says the session runs unattended. Any phase skill's "under
+  `/sdd:auto`" clause applies when either is present (shared rule 11).
+
+**Obey the script's last line**, `AUTO_OUTCOME: <kind>`, then confirm it on
+disk (`STATE.md`, `BLOCKED.md`, `tasks.md`) before acting on it:
+
+| last line | what it means | what auto does |
+|---|---|---|
+| `PASS` | the phase reports success | verify on disk; continue the pipeline |
+| `BLOCKED` | the sub-session wrote `BLOCKED.md` | adopt it; next feature |
+| `FAILED` | the phase ran and its verdict is negative | BLOCK the feature |
+| `DENIED` | `permission_denials` is non-empty | **not a decision — configuration**: `deferred` entry with the exact denied command(s) so the user adds the rule; never retry blind |
+| `ERROR` | API error, budget or turn limit, abnormal end | retry the same launch **once**; then `deferred` with the reason |
+| `INCOMPLETE` | ended without an outcome object | read the disk; if it does not prove the phase's milestone, treat as `FAILED` |
+| `UNAVAILABLE` | no `claude` on PATH, or it could not start | run that phase **inline** and say so in the report — a cost optimisation never aborts a run |
+
+A `PASS` that the disk does not confirm (no `STATE.md` milestone, unchecked
+tasks) is `FAILED`: evidence over claims, as in rule 8.
+
 ## Per-feature pipeline
 
 Take the next **un-started entry from the frontier**, in the order the frontier
@@ -113,19 +161,24 @@ So when `N > 1`, run **each feature in its own session** and stay a thin
 orchestrator here:
 
 ```bash
-SDD_AUTO_DELEGATED=1 claude -p "/sdd:auto <feature>" --permission-mode acceptEdits
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:auto <feature>" --cwd .
 ```
 
-- **The guard matters**: `SDD_AUTO_DELEGATED` is what stops a delegated run from
-  delegating again. If it is already set in the environment, you *are* the
+(the headless recipe above: a fresh `claude -p` session in `auto` permission
+mode, no prompts, outcome object at the end).
+
+- **The guard matters**: the script exports `SDD_AUTO_DELEGATED=1`, and that is
+  what stops a delegated run from delegating again. If it is already set in the
+  environment, you *are* the
   delegated run — execute the pipeline below inline and never spawn another.
 - **Read the outcome from disk**, never from the sub-session's prose:
   `STATE.md` (`PR_OPEN`, `READY_FOR_PR`, `MERGED`) and `BLOCKED.md` are the
-  facts; its final text is a summary for the human. Fold both into your report.
+  facts; the outcome object is a summary for the human. Fold both into your
+  report, and act on the `AUTO_OUTCOME` line per the table above.
 - **Between features, re-read the frontier here** — that is the orchestration
   that cannot be delegated, since closing one feature opens others.
-- **Fallback**: no `claude` on PATH, or the command fails before touching
-  `STATE.md` → run that feature's pipeline inline and say so in the report. This
+- **Fallback**: `AUTO_OUTCOME: UNAVAILABLE` (no `claude` on PATH, or it could
+  not start) → run that feature's pipeline inline and say so in the report. This
   is a cost optimisation; it never blocks a feature and never aborts a run.
 
 A single-feature run (`/sdd:auto` with `N = 1` or a named feature) is already one
@@ -200,20 +253,21 @@ Then, for the feature at hand:
    feature's working directory:
 
    ```bash
-   claude -p "/sdd:review <feature>. The base branch is <BASE>; do not ask about it." --permission-mode acceptEdits
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:review <feature>. The base branch is <BASE>; do not ask about it." --cwd <feature working directory>
    ```
 
    Then **read the result from disk, not from the prose it printed** (rule 11,
    and rule 8's evidence-over-claims): `STATE.md` at `READY_FOR_PR` with a
    recorded `implementation_sha` is the pass. A `BLOCKED.md` written by the
-   sub-session is a real block — adopt it and move on to the next feature. Any
+   sub-session is a real block — adopt it and move on to the next feature.
+   `DENIED`, `ERROR` and `INCOMPLETE` follow the headless-recipe table. Any
    other outcome is a failed verdict: BLOCK.
 
    The sub-session marks its own usage and exports to the same per-repository
    sink, so metrics stay attributed (`${CLAUDE_PLUGIN_ROOT}/references/metrics.md`).
 
-   **Fallback, stated in the report**: if `claude` is not on PATH, the command
-   fails, or it returns without touching `STATE.md`, do the review inline right
+   **Fallback, stated in the report**: on `AUTO_OUTCOME: UNAVAILABLE` (no
+   `claude` on PATH, or it could not start), do the review inline right
    here — a degraded, expensive review beats an abandoned feature. Never let this
    optimisation abort a run.
 
