@@ -18,9 +18,14 @@ context per request (`${CLAUDE_PLUGIN_ROOT}/references/context-budget.md`).
 The review panel is the shared logical plan and closed-world gate of
 `${CLAUDE_PLUGIN_ROOT}/skills/reviewer-panel/SKILL.md`: build one plan per
 section (`build_reviewer_plan`), dispatch it through the runtime's boundary,
-and write `panel: PASS` only after `scripts/reviewer_panel.py --phase run`
-exits 0. A missing, unavailable or malformed reviewer result fails closed and
-is never replaced inline.
+and the gate — `scripts/reviewer_panel.py --phase run --section N` — is the
+**only writer** of `panel: PASS`: on exit 0 it annotates the section heading
+itself with the id of the receipt it leaves in the shared git directory. A
+missing, unavailable or malformed reviewer result fails closed and is never
+replaced inline; a `panel: PASS` written by hand is an unverified annotation
+(`/sdd:doctor` reports it as `SDD032`, `/sdd:review` treats the section as
+unreviewed) — three sections of the first dense auto run were annotated that
+way after the gate never ran (ADR 0008).
 
 Arguments: the feature name (if omitted and exactly one non-archived change
 exists in `sdd/changes/`, use it), plus an optional scope/mode (addresses
@@ -76,12 +81,23 @@ refer to the numbering in the change's `tasks.md`):
    agent files tell them to read these; a prompt that already carries them turns
    reading into verifying.
 
+   **Ask the gate for the plan before launching, then feed it the results.**
+   Never read the gate's source to learn its shapes (the first dense auto run
+   spent turns grepping it). The sequence is three commands:
+
+   ```bash
+   G="${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py"
+   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '{"feature":"<feature>","scope_id":"run:<feature>:<N>","files":[<the section's files>]}' --plan
+   # → launch one Agent per entry of `launch`, all in ONE message, foreground; each returns its JSON envelope
+   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '<same scope>' --results '[{"invocation_id":"<tool_use id>","reviewer_id":"…","payload":<the reviewer's JSON>}, …]'
+   ```
+
    **Results are JSON, not reports.** Each reviewer's final message is the result
    envelope of `reviewer_plan.py` (`reviewer_id`, `scope_id`, `lens`, `verdict`,
    `findings`, `evidence`, `status`) and nothing else — the agent files carry the
-   exact shape. Feed the envelopes to `scripts/reviewer_panel.py --phase run`
-   with the section's scope; its exit code is the gate. Read the findings from
-   the JSON; never ask a reviewer to explain itself in prose.
+   exact shape; `--plan` prints an `example_results` list you fill in. The gate's
+   exit code is the verdict; on 0 it has already annotated the heading. Read the
+   findings from the JSON; never ask a reviewer to explain itself in prose.
    - **Referent filter**: a finding without its referent (R#, design decision D#, or a quoted steering rule) is discarded — the agents are instructed this way, enforce it when synthesizing.
    - **Fix rounds are delegated too, and they climb a ladder.** Give the accepted findings (file:line, referent, what, fix direction) to a fresh implementer with the same contract as step 2, scoped to those findings; then re-run **only the reviewer(s) whose findings were fixed**, scoped to the fix.
      - **Round 1**: implementer on `model: sonnet` (the section's tier).
@@ -91,7 +107,8 @@ refer to the numbering in the change's `tasks.md`):
    - A `DESIGN-CONFLICT` finding from the architect is not a code fix — it goes through the deviation rule (step 4).
    - If a reviewer cannot be resolved, spawned, waited on, or collected, record an explicit unavailable result. The shared reviewer-panel gate fails closed; do not substitute an inline reviewer for a missing mandatory or applicable reviewer.
    - **A reviewer cut by its turn limit is relaunched alone**, with the same prompt plus "resume from what you already established" — never the whole panel. The others' envelopes are already in hand; only the missing one is re-collected before the gate runs.
-   - **Persist the verdict**: when the section ends in PASS, annotate its heading in `tasks.md` with an HTML comment — `## 2. <título> <!-- panel: PASS 2026-07-17 -->` (invisible in rendered markdown; keep any `<!-- hard -->` marker next to it). This is what lets `/sdd:review` be incremental instead of re-auditing everything.
+   - **Tests run in the foreground, with a time budget, and never as something to "wait for".** Implementers and reviewers run the project's test commands as ordinary foreground calls with an explicit timeout (`--timeout`/`timeout` of the runner, or the Bash call's own), scoped to what the section touches; the full suite runs once, in the Verification section. On a host under contention (the run above: six stacks on one Docker VM, a QA pass of 80 minutes, two implementers of one section ending their turn to "wait for the background pytest") the rule is: shrink the scope to the change's own tests, record `command · sha · result` in `## Implementation Notes`, and move on. Ending a turn to wait for a background test is how a subagent ends for good.
+   - **The verdict is persisted by the gate, not by you.** On PASS, `reviewer_panel.py --section N` writes `<!-- panel: PASS <date> receipt:<id> -->` on the section heading (keeping `<!-- hard -->`) and the receipt next to the feature's in `<git common dir>/sdd/receipts/`. Never write that marker yourself. A section you skip on purpose — pure scaffolding, docs or config — gets `<!-- panel: skipped — <reason> -->` written by you, so the skip is a decision on record and not an omission. **No section N+1 starts while section N's heading carries neither marker**: an unannotated completed section is a panel that did not happen (the first dense auto run skipped section 1's panel with "84 tests passing" as the whole justification).
 4. **On deviation:** if implementation reveals the design or a requirement is wrong, STOP. Explain the conflict, agree the fix with the user, update `proposal.md`/`design.md`/`tasks.md` to match reality, then continue. Never silently diverge from the spec — the documents must stay true.
 5. **On blockers** (failing environment, missing credentials, ambiguous requirement): stop and ask rather than guessing around it. Whatever remains unresolved when the turn ends — including a panel that couldn't run or complete (usage limits, unavailable agents) — goes to `BLOCKED.md` per shared rule 5 through `sdd_lifecycle.py block` (never by hand), with the exact resume command (an interrupted section panel is best resumed as `/sdd:review <feature>`, which covers everything at feature scale). Type it honestly: a question for the user is a `decision`; an interrupted panel or a task the environment prevents is `deferred`.
 6. **Finish.** When every task that is not `<!-- manual -->` is checked, run the full Verification section yourself (its commands come from `project.md`; report results honestly, including anything skipped or failing), then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> run` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). For each `<!-- manual -->` task still open, record it — `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . block <feature> --phase run --type deferred --title "<task>" --why "<why it cannot be done from here>" --resume "/sdd:run <feature> <N.M>" --task <N.M>` — so `mark-local-verified` lets it travel with the PR (the archive will still require it done); the user does it at the PR. Suggest `/sdd:review <feature>` to establish local approval and `READY_FOR_PR`; never suggest archive before PR merge. Review runs forked (shared rule 11), so it will not inherit this context — but the conversation that calls it keeps paying for whatever accumulated here, on every later turn. **Recommend `/clear` first** when the user is going to keep working in this session.

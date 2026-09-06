@@ -402,6 +402,39 @@ def base_facts(root: Path, runner: Runner = subprocess.run) -> dict:
     }
 
 
+PLUGIN_VERSION_RE = re.compile(r"/sdd/(\d+\.\d+\.\d+)(?:/|$)")
+INSTALLED_PLUGINS_ENV = "SDD_INSTALLED_PLUGINS"
+
+
+def plugin_versions(root: Path, main_worktree: Path) -> tuple[str, str]:
+    """(version this session runs, version installed for the project), "" when unknown.
+
+    A session pins the plugin at start: one that stayed open across releases
+    kept running skills four versions old while `main` moved on (ADR 0008).
+    The running version comes from `CLAUDE_PLUGIN_ROOT`; the installed one from
+    Claude Code's `installed_plugins.json` (overridable for tests).
+    """
+    running = ""
+    match = PLUGIN_VERSION_RE.search(os.environ.get("CLAUDE_PLUGIN_ROOT", ""))
+    if match:
+        running = match.group(1)
+    installed = ""
+    registry = Path(os.environ.get(INSTALLED_PLUGINS_ENV) or Path.home() / ".claude" / "plugins" / "installed_plugins.json")
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        entries = (data.get("plugins") or {}).get("sdd@sdd-toolkit") or []
+        wanted = {str(root.resolve()), str(main_worktree.resolve())}
+        for entry in entries:
+            if str(Path(entry.get("projectPath", "")).resolve()) in wanted:
+                installed = str(entry.get("version") or "")
+                break
+        if not installed and entries:
+            installed = str(entries[0].get("version") or "")
+    except (OSError, ValueError, AttributeError):
+        installed = ""
+    return running, installed
+
+
 def feature_worktrees(
     root: Path, feature: str, runner: Runner = subprocess.run
 ) -> list[dict]:
@@ -492,6 +525,8 @@ def check(
         # in a linked worktree must not nest another one inside it.
         "main_worktree": str(common_dir(root, runner).parent.resolve()),
         "in_linked_worktree": linked,
+        "plugin_version": plugin_versions(root, common_dir(root, runner).parent)[0],
+        "installed_plugin_version": plugin_versions(root, common_dir(root, runner).parent)[1],
         "sessions_elsewhere": elsewhere,
         "duplicate_worktrees": duplicates,
         "branch": branch,
@@ -1746,6 +1781,13 @@ def render_check(report: dict) -> str:
         lines.append(
             f"NOTE — {entry['path']} already holds a worktree for this feature "
             f"(branch {entry['branch']}). Work there or retire it; never a third."
+        )
+    running, installed = report.get("plugin_version"), report.get("installed_plugin_version")
+    if running and installed and running != installed:
+        lines.append(
+            f"NOTE — this session runs sdd-toolkit {running} but {installed} is installed: "
+            "the plugin is pinned at session start, so end this session and start a new one "
+            "to pick it up (phases resume from disk)."
         )
     # The verdict describes the evidence; this line is the decision. They are
     # printed apart because CLEAR + isolate is a real, and now common, combination.

@@ -48,7 +48,9 @@ class LifecycleSkillContractTests(unittest.TestCase):
 
     def test_ship_records_pr_before_its_single_final_push(self) -> None:
         ship = self.read_skill("ship")
-        bootstrap = ship.index("branch-claim/bootstrap")
+        # Since ADR 0008 ship publishes an unpublished head branch itself instead
+        # of handing the push to a human; the step still precedes record-pr.
+        bootstrap = ship.index("Publish the head branch if nobody has")
         record = ship.index("record-pr <feature> --url <PR-URL>")
         # The single push now carries the sync merge as well as the lifecycle
         # commit, which is why the step no longer names only the latter.

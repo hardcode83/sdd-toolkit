@@ -19,6 +19,25 @@ from pathlib import Path
 # receipt the lifecycle reads (ADR 0007). `run` certifies one section and keeps
 # its record in tasks.md (`panel: PASS`), so it writes none.
 RECEIPT_PHASES = {"review", "auto"}
+# A section's receipt sits next to the feature's: <feature>-run-<section>.json.
+SECTION_HEADING_RE = re.compile(r"^(## (\d+)\.[^\n]*?)(\s*<!--\s*panel:[^>]*-->)?\s*$")
+EPILOG = """
+Shapes the gate accepts (build them from `--plan`, never by reading this file):
+
+  --scope   '{"feature": "<f>", "scope_id": "run:<f>:<N>", "files": ["src/a.py", ...]}'
+            (`scope_id` is free text; use run:<feature>:<section> per section and
+             review:<feature> at feature scale; `files` is the diff's file list)
+  --results '[{"invocation_id": "<Agent tool_use id>", "reviewer_id": "sdd-qa",
+               "payload": {"reviewer_id": "sdd-qa", "scope_id": "run:<f>:<N>", "lens": "qa",
+                           "verdict": "PASS", "findings": [], "evidence": ["src/a.py"],
+                           "status": "complete"}}, ...]'
+            (one envelope per planned reviewer; `payload` is the reviewer's final JSON)
+
+  --plan    prints the planned reviewers for the scope and an example --results,
+            and exits without evaluating anything.
+  --section N   (phase run) writes the section's receipt and, on PASS, annotates
+            the `## N.` heading of tasks.md itself — the orchestrator never does.
+"""
 # Paths whose change never invalidates a reviewer's PASS on the code: the
 # review documents themselves, docs, and images. Anything else is code.
 NON_CODE_RE = re.compile(r"^(sdd/|docs/)|\.(md|txt|svg|png|jpg|jpeg|gif)$", re.IGNORECASE)
@@ -40,8 +59,8 @@ def git_out(args: list[str], cwd: Path) -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def receipt_path(root: Path, feature: str) -> Path | None:
-    """`<git common dir>/sdd/receipts/<feature>.json`.
+def receipt_path(root: Path, feature: str, section: int | None = None) -> Path | None:
+    """`<git common dir>/sdd/receipts/<feature>.json` (or `<feature>-run-<N>.json`).
 
     Machine-local state next to the session registry: every worktree of the
     clone sees it, `git status` never does — a file inside `sdd/changes/` would
@@ -50,10 +69,31 @@ def receipt_path(root: Path, feature: str) -> Path | None:
     common = git_out(["rev-parse", "--git-common-dir"], root)
     if common is None:
         return None
-    return (root / common).resolve() / "sdd" / "receipts" / f"{feature}.json"
+    name = f"{feature}.json" if section is None else f"{feature}-run-{section}.json"
+    return (root / common).resolve() / "sdd" / "receipts" / name
 
 
-def write_receipt(root: Path, feature: str, phase: str, scope: dict, panel, head: str | None) -> Path | None:
+def annotate_section(tasks: Path, section: int, marker: str) -> bool:
+    """Set the `<!-- panel: … -->` marker on the `## N.` heading, keeping any other
+    marker (`<!-- hard -->`) in place. Returns whether a heading was found."""
+    if not tasks.is_file():
+        return False
+    lines = tasks.read_text(encoding="utf-8").splitlines(keepends=True)
+    done = False
+    for index, line in enumerate(lines):
+        match = SECTION_HEADING_RE.match(line.rstrip("\n"))
+        if not match or int(match.group(2)) != section:
+            continue
+        lines[index] = f"{match.group(1).rstrip()} {marker}\n"
+        done = True
+        break
+    if done:
+        tasks.write_text("".join(lines), encoding="utf-8")
+    return done
+
+
+def write_receipt(root: Path, feature: str, phase: str, scope: dict, panel, head: str | None,
+                  section: int | None = None) -> tuple[Path | None, str | None, bool]:
     """Persist the gate's verdict next to the change, one reviewer per row.
 
     A fresh fork cannot remember which reviewers already passed; the receipt
@@ -62,9 +102,9 @@ def write_receipt(root: Path, feature: str, phase: str, scope: dict, panel, head
     can refuse a certification that does not describe the current commit.
     """
     change = root / "sdd" / "changes" / feature
-    path = receipt_path(root, feature)
-    if phase not in RECEIPT_PHASES or not change.is_dir() or path is None:
-        return None
+    path = receipt_path(root, feature, section if phase == "run" else None)
+    if not change.is_dir() or path is None or (phase == "run" and section is None):
+        return None, None, False
     reviewers = []
     for result in panel.results:
         row = {
@@ -78,11 +118,21 @@ def write_receipt(root: Path, feature: str, phase: str, scope: dict, panel, head
                               "evidence": list(result.evidence), "status": "complete"}
         reviewers.append(row)
     receipt = {"schema": 1, "phase": phase, "feature": feature, "scope_id": scope.get("scope_id"),
-               "sha": head, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "section": section, "sha": head,
+               "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "gate": panel.gate, "errors": list(panel.errors), "reviewers": reviewers}
+    import hashlib
+    receipt_id = hashlib.sha256(json.dumps(receipt, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+    receipt["id"] = receipt_id
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+    annotated = False
+    if phase == "run" and section is not None and panel.gate == "PASS":
+        # The gate is the only writer of its own verdict: a hand-written
+        # `panel: PASS` is indistinguishable from a real one otherwise (ADR 0008).
+        marker = f"<!-- panel: PASS {time.strftime('%Y-%m-%d', time.gmtime())} receipt:{receipt_id} -->"
+        annotated = annotate_section(change / "tasks.md", section, marker)
+    return path, receipt_id, annotated
 
 
 def carried_envelopes(receipt: dict, plan, present: set[str], feature: str, phase: str,
@@ -120,12 +170,16 @@ def carried_envelopes(receipt: dict, plan, present: set[str], feature: str, phas
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--phase", choices=sorted(reviewer_plan.VALID_PHASES), required=True)
     parser.add_argument("--feature", required=True)
-    parser.add_argument("--scope", required=True, help="JSON scope object")
-    parser.add_argument("--results", required=True, help="JSON list of normalized transport results")
+    parser.add_argument("--scope", required=True, help="JSON scope object (see epilog)")
+    parser.add_argument("--results", help="JSON list of result envelopes (see epilog); required unless --plan")
+    parser.add_argument("--plan", action="store_true", help="print the planned reviewers and an example --results, then exit")
+    parser.add_argument("--section", type=int, help="(phase run) section number: writes its receipt and annotates tasks.md on PASS")
     parser.add_argument("--codex-handoff", help="JSON top-level Codex harness handoff")
     parser.add_argument("--worktree", type=Path, help="feature worktree for a Codex handoff")
     parser.add_argument("--referents", default="{}", help="JSON referent mapping for a Codex handoff")
@@ -141,10 +195,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         scope = json.loads(args.scope)
-        raw_results = json.loads(args.results)
-        if not isinstance(scope, dict) or not isinstance(raw_results, list):
-            raise ValueError("scope must be an object and results must be a list")
+        if not isinstance(scope, dict):
+            raise ValueError("scope must be an object")
         plan = reviewer_plan.build_reviewer_plan(args.root, args.phase, scope, solo=args.solo)
+        if args.plan:
+            required = [item for item in plan if item.required]
+            print(json.dumps({
+                "phase": args.phase, "feature": args.feature, "scope_id": scope.get("scope_id"),
+                "reviewers": [item.to_dict() for item in plan],
+                "launch": [{"agent": item.reviewer_id, "lens": item.lens, "scope_id": item.scope_id} for item in required],
+                "example_results": [{
+                    "invocation_id": f"<tool_use id of the {item.reviewer_id} Agent call>",
+                    "reviewer_id": item.reviewer_id,
+                    "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
+                                "verdict": "PASS", "findings": [], "evidence": list(scope.get("files", []))[:1],
+                                "status": "complete"},
+                } for item in required],
+            }, indent=2, sort_keys=True))
+            return 0
+        if args.results is None:
+            raise ValueError("--results is required (use --plan to see the expected shape)")
+        raw_results = json.loads(args.results)
+        if not isinstance(raw_results, list):
+            raise ValueError("results must be a list")
+        if args.phase == "run" and args.section is None:
+            raise ValueError("--section N is required for phase run: the gate writes the section's receipt and annotation")
         git_cwd = args.worktree or args.root
         head = git_out(["rev-parse", "HEAD"], git_cwd)
         if args.carry and not args.solo and not args.codex_handoff:
@@ -186,9 +261,13 @@ def main(argv: list[str] | None = None) -> int:
             for item in required_items:
                 results.append(reviewer_plan.normalize_reviewer_result(by_identity[item.reviewer_id]["payload"], item))
             panel = reviewer_plan.evaluate_panel_gate(plan, results)
-        receipt = write_receipt(args.root, args.feature, args.phase, scope, panel, head)
+        receipt, receipt_id, annotated = write_receipt(
+            args.root, args.feature, args.phase, scope, panel, head, section=args.section
+        )
         output = panel.to_dict()
         output["receipt"] = str(receipt) if receipt else None
+        output["receipt_id"] = receipt_id
+        output["annotated"] = annotated
         output["sha"] = head
         print(json.dumps(output, sort_keys=True))
         return 0 if panel.passed else 1

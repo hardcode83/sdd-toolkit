@@ -27,7 +27,9 @@ class ReviewerPanelCliTests(unittest.TestCase):
                 for i, item in enumerate(plan)]
 
     def invoke(self, phase, results):
-        return subprocess.run(self.command + ["--root", str(ROOT), "--phase", phase, "--feature", "x", "--scope", json.dumps(self.scope(phase)), "--results", json.dumps(results)], capture_output=True, text=True)
+        # Phase run certifies one section, so the gate demands which (ADR 0008).
+        section = ["--section", "1"] if phase == "run" else []
+        return subprocess.run(self.command + ["--root", str(ROOT), "--phase", phase, "--feature", "x", "--scope", json.dumps(self.scope(phase)), "--results", json.dumps(results), *section], capture_output=True, text=True)
 
     def test_run_review_auto_gate_passes_only_with_complete_results(self):
         for phase in ("run", "review", "auto"):
@@ -37,7 +39,7 @@ class ReviewerPanelCliTests(unittest.TestCase):
                 self.assertEqual(self.invoke(phase, self.results(phase) + self.results(phase)[:1]).returncode, 1)
 
     def test_solo_cli_cannot_pass(self):
-        result = subprocess.run(self.command + ["--root", str(ROOT), "--phase", "run", "--feature", "x", "--scope", json.dumps(self.scope()), "--results", "[]", "--solo"], capture_output=True, text=True)
+        result = subprocess.run(self.command + ["--root", str(ROOT), "--phase", "run", "--feature", "x", "--scope", json.dumps(self.scope()), "--results", "[]", "--solo", "--section", "1"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
 
     def test_cli_rejects_unassociated_self_labeled_results(self):

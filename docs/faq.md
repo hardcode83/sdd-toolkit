@@ -197,6 +197,18 @@ Porque el check de aislamiento contaba como conflicto a **cualquier** sesión vi
 
 Porque sus precondiciones se comprobaban una a una, cada una al fallar el paso que la necesitaba, y el bucle agéntico iba encontrando el arreglo. Medido: 31 de 64 sesiones de archive en AutoHostAI fallaron al menos una vez, siempre por cosas conocibles antes de tocar nada — `main` local sin integrar el remoto, árbol sucio, el change no presente donde se lanzó archive, una tarea o una entrada de la cola sin cerrar, el PR aún abierto, sin entrada de roadmap. Desde la 0.51.0 el paso 1 de archive es `sdd_lifecycle.py preflight-archive <feature>`: comprueba todo de una vez, sin escribir nada, imprime el arreglo exacto de cada fallo y termina en `PREFLIGHT: READY` o `PREFLIGHT: BLOCKED (n)`. La skill no sigue hasta el READY. [ADR 0007](adr/0007-panel-receipt-and-directory-check.md), adenda.
 
+## ¿Quién escribe `panel: PASS` en tasks.md?
+
+El gate, y solo el gate. En el primer run denso de auto el orquestador anotó tres secciones a mano sin haber ejecutado `reviewer_panel.py` (su único intento fue con un scope vacío y después estuvo leyendo el código del script para adivinar las formas). Una anotación manual es indistinguible de una real, así que desde la 0.52.0 `reviewer_panel.py --phase run --section N` deja el recibo de la sección en el directorio git común y, si el gate da PASS, escribe él mismo `<!-- panel: PASS <fecha> receipt:<id> -->` en el heading. Review solo cuenta las anotaciones con recibo; el doctor avisa de las demás (`SDD032`). Un skip deliberado se escribe como `panel: skipped — <motivo>`, y ninguna sección arranca mientras la anterior no lleve uno u otro. Las formas del gate las da `--plan`, no el código. [ADR 0008](adr/0008-run-gate-writes-its-verdict.md).
+
+## Ship me pidió hacer el push de la rama a mano — ¿por qué?
+
+Por una regla antigua: "el push inicial lo hace `/sdd:new`, ship no lo esconde". Una rama que llegó a `READY_FOR_PR` sin ese push (el change era anterior a la regla) dejaba a ship devolviéndote `git push -u origin <rama>` y esperando a que lo teclearas. Desde la 0.52.0 ship comprueba `git ls-remote`: si la rama no existe en el remoto, nadie la ha reclamado y la publica él; si existe y es ancestro de tu HEAD, es tuya; solo si existe y diverge, alguien más trabaja bajo ese nombre, y eso sí es una `decision`. Nunca force-push.
+
+## Mi sesión lleva abierta desde antes de una release — ¿está corriendo la versión nueva?
+
+No. El plugin se fija al arrancar la sesión: una sesión abierta el día 5 seguía ejecutando la 0.44.0 el día 6 con la 0.51.0 instalada, y ninguna de las correcciones de esos días aplicaba dentro de ella. Desde la 0.52.0 `sdd_session.py check`, que toda fase ejecuta al empezar, avisa cuando la versión que corre y la instalada no coinciden. Cierra la sesión y abre otra: las fases reanudan desde disco, así que no se pierde nada.
+
 ## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
 
 Porque una lista plana no puede responder a "¿qué puedo atacar ya?" ni a "¿qué features convergen hacia el mismo fin?". La información de dependencias se escribía igualmente — pero en prosa dentro de la entrada, donde es inerte: nada podía calcular un orden.
