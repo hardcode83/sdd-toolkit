@@ -139,6 +139,8 @@ Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **es
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md` (`sdd_lifecycle.py blocked <feature>` lo lista con tipos), decide, borra la entrada y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos). Solo las entradas `decision` paran a auto; las `deferred` y `assumed` viajan con el PR y las resuelves allí. Y si contestas "adelante" sin elegir, auto toma la opción recomendada y la registra como `assumed` — no como decisión tuya.
 
+**Archive me falla** → `sdd_lifecycle.py preflight-archive <feature>` desde el worktree principal te da todos los fallos de una vez con su comando; la skill lo ejecuta primero y no sigue hasta `PREFLIGHT: READY`.
+
 **Review dio PASS pero ship dice que no puede publicar** → mira `sdd_lifecycle.py receipt <feature>`: si dice `CERTIFIES_HEAD`, ship registra los hitos solo y sigue; si dice `STALE_OR_MISSING`, hubo commits después del panel y toca `/sdd:review`, que relanza solo lo que no pasó. Nunca deberías ver el panel entero dos veces sobre el mismo HEAD.
 
 **Una tarea que solo puedes hacer tú** (un pase en navegador sin puerto libre, un paso de consola, un sistema externo) → márcala `<!-- manual -->` en `tasks.md`. `run` no la intenta ni la marca, la registra como `deferred`, y el change llega al PR con ella abierta para que la hagas allí; `archive` sigue exigiéndola hecha. Sin el marcador, una tarea abierta es trabajo sin terminar y el gate se niega.

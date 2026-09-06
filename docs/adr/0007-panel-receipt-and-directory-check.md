@@ -140,9 +140,34 @@ biblioteca estándar; el handoff nativo de Codex pasa por el mismo
 - Pendiente (segunda PR de esta depuración): `preflight-archive` y la
   re-atribución de métricas por sesión en `usage-sync`.
 
+## Adenda (2026-09-06, v0.51.0) — preflight de archive y atribución de métricas
+
+**Archive fallaba a la primera en 31 de 64 sesiones** (transcripts de AutoHostAI),
+siempre por precondiciones conocibles antes de escribir: `BLOCKED.md` sin
+resolver, tareas sin marcar, "Active change not found" (archive lanzado donde el
+change no está: `main` sin pull, worktree ya retirado), `origin/main` no
+integrado en `main`, árbol sucio (`sdd/`, `package-lock.json`), `SDD001` tras el
+archive, un commit con subject de lifecycle no autorizado. Cada una se comprobaba
+en el paso que la necesitaba y el bucle agéntico encontraba el arreglo por
+ensayo. `sdd_lifecycle.py preflight-archive <feature>` las comprueba todas de una
+vez, sin escribir nada, con el arreglo exacto por línea y `PREFLIGHT: READY |
+BLOCKED (n)` como última línea; la skill no pasa del paso 1 sin el READY. Reusa
+`require_merge(write=False)` para la evidencia de merge, así que no hay dos
+definiciones de "mergeado".
+
+**Las métricas cargaban los primeros datapoints de una sesión a otra feature.**
+El sink atribuía por `session.id` y, para una sesión aún sin marca (los turnos
+de carga de la skill), caía al puntero compartido `current-task` — el de la
+sesión que estuviera trabajando en ese momento. Medido: 0,14 $ de la review de
+`reservations-identity-web` y tres sesiones de `frontend-verification-fixes`
+aparecían dentro de `auth-session-persistence/review`. Ahora `usage-mark.sh`
+añade cada marca a `tasks/<sesión>.history`, el sink deja sin etiquetar a una
+sesión con id pero sin marca (el puntero compartido solo sirve a datapoints sin
+id), y `usage-sync` re-atribuye esas filas a la **primera** marca de la sesión.
+
 ## Implementación
 
-Se entrega con v0.50.0. `scripts/reviewer_panel.py`, `scripts/sdd_lifecycle.py`,
+Se entrega con v0.50.0; la adenda, con v0.51.0 (`preflight-archive`, `usage-mark.sh`, `usage-sink.py`, `usage-sync.py`, `tests/test_archive_preflight.py`, `references/metrics.md`). `scripts/reviewer_panel.py`, `scripts/sdd_lifecycle.py`,
 `scripts/sdd_session.py`, `agents/sdd-*.md`, las skills citadas, `rules.md`,
 `references/isolation.md`, `tests/test_panel_receipt.py` (11 tests),
 `tests/test_sdd_session.py` (+3, 1 reescrito), `tests/test_blocked_queue.py`,

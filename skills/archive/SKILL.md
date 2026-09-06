@@ -32,7 +32,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    the flow, for pure bookkeeping. If a runtime runs this skill inline anyway
    (Codex does) and the session already carries other work, say so and
    recommend `/clear` before continuing. Two consequences of the fork shape the
-   end of this flow: there is no `AskUserQuestion` here, so step 8 hands its two
+   end of this flow: there is no `AskUserQuestion` here, so step 9 hands its two
    questions to the calling conversation instead of asking them; and `cd` does
    not persist between Bash calls, so the `cd <main_worktree> &&` prefix below
    is the only way to stand somewhere.
@@ -65,10 +65,27 @@ Write spec updates in the same language as the existing specs (or the user's lan
    than a re-run.
 
    What is **no longer** a reason to stop is standing in the worktree that has to
-   be retired. Retirement relocates itself (step 7), so the feature's own session
+   be retired. Retirement relocates itself (step 8), so the feature's own session
    can close the loop instead of ending with an instruction for somebody else.
 
-1. **Verify objective merge evidence before any final-state write.** Run:
+1. **Preflight first — one command, every precondition, nothing written.**
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root <main_worktree> preflight-archive <feature>
+   ```
+
+   It checks, in order and all at once: main worktree · HEAD on the base ·
+   clean tree · `origin/<base>` integrated (it fetches; `--no-fetch` to skip) ·
+   the change present here · every task checked and the queue empty · local
+   review approved · merge evidence (the same proof step 2 records) · a roadmap
+   entry to tick; and it lists the feature's worktrees step 8 will retire. Each
+   failing line carries its exact fix. **Obey the last line**: on
+   `PREFLIGHT: BLOCKED (n)` apply the fixes it names and re-run; do not start
+   step 2 until it prints `PREFLIGHT: READY`. Measured (ADR 0007, adenda): 31 of
+   64 archive sessions failed at least once on conditions this command reports
+   up front, and found the fix only by trial.
+
+2. **Verify objective merge evidence before any final-state write.** Run:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . verify-merge <feature>
@@ -104,23 +121,23 @@ Write spec updates in the same language as the existing specs (or the user's lan
    from the base branch, incomplete task, or blocker has no override.
    A legacy active change without `STATE.md` must be reviewed and associated
    with its real PR; never invent evidence. Historical archives are untouched.
-2. **Start archive accounting.** Mark the phase for usage attribution:
+3. **Start archive accounting.** Mark the phase for usage attribution:
    `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> archive`
    (run unconditionally; the script no-ops when tracking is off).
    - **Steering**: if `sdd/steering/` exists, load the docs whose `phases` include `archive` and whose `applies_to` matches this change (e.g. `documentation.md`) and apply their archive-time rules/checklists before closing.
-3. **Update the living specs only now, after verified merge.** For each capability the change touched (see "Affected specs" in the proposal, plus anything discovered during implementation):
+4. **Update the living specs only now, after verified merge.** For each capability the change touched (see "Affected specs" in the proposal, plus anything discovered during implementation):
    - Create or update `sdd/specs/<capability>.md` following `${CLAUDE_PLUGIN_ROOT}/templates/spec-template.md`.
    - **Spec on first touch**: if the capability has no spec yet (common in projects that adopted SDD with existing code), create it covering the capability's full current behavior — the pre-existing parts this change interacted with plus what the change added — not just the delta. Don't document unrelated corners you didn't touch.
    - Specs describe the system **as it is now**, in present tense, with EARS requirements — merge the change's requirements into them, don't append a changelog.
    - Verify statements against the actual implementation, not just the proposal: the code is the source of truth for what was built.
-4. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> archive` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Do **not** consolidate by hand: step 6 recomputes both the ledger and the summary row from the captured log. The per-phase ledger travels with the change into the archive.
-5. **Finalize once.** After verifying the spec changes, run:
+5. **Metrics.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-phase.sh" <feature> archive` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Do **not** consolidate by hand: step 7 recomputes both the ledger and the summary row from the captured log. The per-phase ledger travels with the change into the archive.
+6. **Finalize once.** After verifying the spec changes, run:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . finalize-archive <feature> --specs-confirmed
    ```
 
-   It re-verifies the same evidence as step 1 (GitHub for `pr`, git for
+   It re-verifies the same evidence as step 2 (GitHub for `pr`, git for
    `ancestor`/`equivalent`), records `ARCHIVED` with that evidence and its merge
    SHA, moves the change to the dated archive, ticks the roadmap entry and
    updates its pointer. It is idempotent and never modifies living specs. If it
@@ -128,8 +145,8 @@ Write spec updates in the same language as the existing specs (or the user's lan
    report that verbatim and fix `sdd/roadmap.md` — never claim a closed loop the
    roadmap does not show. If it warns that files still link to the old
    `sdd/changes/<feature>/` path, fix those links now — the move just broke
-   them — and carry the files into the deliverables commit (step 9).
-6. **Consolidate metrics from the log, after the move.** Run it unconditionally
+   them — and carry the files into the deliverables commit (step 10).
+7. **Consolidate metrics from the log, after the move.** Run it unconditionally
    (no-ops when tracking is off):
 
    ```bash
@@ -142,13 +159,13 @@ Write spec updates in the same language as the existing specs (or the user's lan
    consolidated row in `sdd/metrics.md` with the archive date. Report its
    WARNING lines verbatim: they mean a recorded row holds more than the log can
    account for, and it was deliberately kept.
-7. **Retire the worktrees whose work has shipped.** Ask what git knows, not what the registry knows — a worktree created by hand never registered, and asking the registry is why one survived archive indefinitely:
+8. **Retire the worktrees whose work has shipped.** Ask what git knows, not what the registry knows — a worktree created by hand never registered, and asking the registry is why one survived archive indefinitely:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . worktrees
    ```
 
-   Each line is marked `RETIRABLE` or `en uso` with its blockers. `RETIRABLE` means all of it is proven: the change is archived, the branch is contained in its base, the tree is clean, nothing is unpushed, and **no other live session is inside**. Note which ones are retirable and **carry the decision to the closing question in step 8** — do not spend a separate turn on it. Retiring is one command per worktree:
+   Each line is marked `RETIRABLE` or `en uso` with its blockers. `RETIRABLE` means all of it is proven: the change is archived, the branch is contained in its base, the tree is clean, nothing is unpushed, and **no other live session is inside**. Note which ones are retirable and **carry the decision to the closing question in step 9** — do not spend a separate turn on it. Retiring is one command per worktree:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_session.py" --root . retire <feature>
@@ -174,7 +191,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
      into the — now deleted — worktree on every call, so after this retirement
      **no command will run again in this session**. Not the doctor, not `git`,
      nothing: the shell itself fails to start, with errors that name neither the
-     worktree nor the retirement. That is why step 9 runs the entire close-out
+     worktree nor the retirement. That is why step 10 runs the entire close-out
      — commit, publish, deliverables, doctor, closing summary — **before** this
      one retirement, and makes retiring the worktree you stand in the session's
      **final tool call**: when its result arrives, relay its lines
@@ -183,7 +200,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
      closed on disk, nobody told.
    - **a stack nobody declared how to stop** now comes with the exact line to
      declare, derived from what docker reported (`declare it to unblock:
-     teardown: …`). That line is the answer to the closing question in step 8,
+     teardown: …`). That line is the answer to the closing question in step 9,
      not a homework assignment for the user.
 
    Two of those lines need relaying, not just printing:
@@ -210,7 +227,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
      --remove-orphans`, plus `--rmi local` when it also built images; a container
      with no compose project gets no suggestion, because nothing here knows what
      started it). Do not turn that into a separate turn: show the inventory and
-     **carry the suggested line into the step 8 question**, which offers to record
+     **carry the suggested line into the step 9 question**, which offers to record
      it in `sdd/project.md` and retire in the same answer. Whether `--volumes` may
      run at all is still the project's call (shared rule 9 — never guess it over
      somebody's database), which is why it is asked once and never assumed.
@@ -225,7 +242,7 @@ Write spec updates in the same language as the existing specs (or the user's lan
    closed loop. Every other blocker names work that did not reach the merge, or a
    session that would break. Full protocol in
    `${CLAUDE_PLUGIN_ROOT}/references/isolation.md`.
-8. **Summarize, then hand the close to the caller in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then end the turn with a `HANDOFF` block (shared rule 11 — a forked phase cannot ask): the two questions below, recommending yes to both, and the step 9 sequence written out with its exact commands, `<feature>`, `<base>` and worktree paths filled in. The calling conversation asks **once** (`AskUserQuestion` there, both questions in the same call) and then executes step 9 itself. The answers are **executed in step 9's order**, not in the order asked. Nothing below this step is committed, pushed or retired by the forked phase: an archive that stops here leaves the move staged and the specs edited, which is exactly what `git status` shows the caller before it commits.
+9. **Summarize, then hand the close to the caller in one question.** List the spec files created/updated, PR URL, merge SHA, and archive location. Then end the turn with a `HANDOFF` block (shared rule 11 — a forked phase cannot ask): the two questions below, recommending yes to both, and the step 10 sequence written out with its exact commands, `<feature>`, `<base>` and worktree paths filled in. The calling conversation asks **once** (`AskUserQuestion` there, both questions in the same call) and then executes step 10 itself. The answers are **executed in step 10's order**, not in the order asked. Nothing below this step is committed, pushed or retired by the forked phase: an archive that stops here leaves the move staged and the specs edited, which is exactly what `git status` shows the caller before it commits.
 
    1. **Commit the archive and publish it on `<base>`?** — and if yes, do both:
       stage with `git add -A sdd/`, commit, then
@@ -274,11 +291,11 @@ Write spec updates in the same language as the existing specs (or the user's lan
       for a later turn. In the measured corpus that second commit was forgotten
       three runs in a row; each time it left the base dirty, broke the next
       session's fast-forward, and cost a separate cleanup session.
-   2. **Retire the worktrees step 7 marked `RETIRABLE`?** — and if yes, run
-      `retire` for each — in step 9's order: after the doctor and the closing
+   2. **Retire the worktrees step 8 marked `RETIRABLE`?** — and if yes, run
+      `retire` for each — in step 10's order: after the doctor and the closing
       summary, and the worktree this session is standing in the very last.
 
-      When step 7 found a worktree whose only blocker was an **undeclared
+      When step 8 found a worktree whose only blocker was an **undeclared
       teardown**, this is the same question, with the line it derived already in
       it: "record `teardown: <command>` in `sdd/project.md` and retire?". A yes
       writes that line into the **Worktree bootstrap** section, commits it with the
@@ -287,15 +304,15 @@ Write spec updates in the same language as the existing specs (or the user's lan
       back and ask for the cleanup a second time.
 
    Never pass `--force` on the user's behalf, and never retire a worktree the command refuses for any other reason. A decline on either question is an answer: leave everything as is, say what remains and that `/sdd:doctor` will keep reporting it.
-9. **The caller executes the close in this order — a self-retirement is the
+10. **The caller executes the close in this order — a self-retirement is the
    session's last act.** This step runs in the calling conversation, from the
-   `HANDOFF` of step 8 (in a runtime that ran the skill inline, in the same
+   `HANDOFF` of step 9 (in a runtime that ran the skill inline, in the same
    session). Retirement destroys the directory a pinned session runs from, and a
    doctor run before the commit proves nothing; the order is what makes the
    close both verifiable and survivable:
 
    1. **Commit** the archive (`git add -A sdd/`, commit), then run
-      `publish-archive` (step 8, question 1).
+      `publish-archive` (step 9, question 1).
    2. **Push the deliverables outside `sdd/`** as their own commit (question
       1's second half). The tree must be clean before anything is retired.
    3. **Doctor — verify the commit, not the working tree.** Run
@@ -319,5 +336,5 @@ Write spec updates in the same language as the existing specs (or the user's lan
       session is standing in for the very end. That self-retirement is the
       session's **final tool call**: when its result arrives, relay its lines
       (`runtime` / `git` / `plugins` / `disk` / `branches`) and end the turn.
-      Any command issued after it fails before it starts (step 7), so nothing —
+      Any command issued after it fails before it starts (step 8), so nothing —
       not even a `git status` — comes after it.

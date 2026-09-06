@@ -161,6 +161,20 @@ class UsageSyncTests(unittest.TestCase):
         self.assertIn("22.8200", (archived / "metrics.md").read_text(encoding="utf-8"))
         self.assertIn("| 2026-07-24 |\n", self.summary())
 
+    def test_untagged_rows_of_a_session_go_to_its_first_mark(self) -> None:
+        tasks = usage_sync.usage_dir(self.root) / "tasks"
+        tasks.mkdir(parents=True, exist_ok=True)
+        (tasks / "s1.history").write_text(f"{STAMP} {FEATURE}/review\n{STAMP + 60} {FEATURE}/ship\n", encoding="utf-8")
+        rows = [
+            {"ts": STAMP - 5, "metric": "cost", "session": "s1", "task": "", "value": 1.0},
+            {"ts": STAMP + 1, "metric": "cost", "session": "s1", "task": f"{FEATURE}/review", "value": 2.0},
+            {"ts": STAMP + 2, "metric": "cost", "session": "s2", "task": "", "value": 4.0},
+        ]
+        out = usage_sync.reattribute(rows, tasks)
+        self.assertEqual(f"{FEATURE}/review", out[0]["task"], "the pre-mark row joins the first phase")
+        self.assertEqual(f"{FEATURE}/review", out[1]["task"])
+        self.assertEqual("", out[2]["task"], "a session that never marked stays untagged")
+
     def test_untagged_spend_is_never_attributed_to_a_phase(self) -> None:
         row = self.datapoint("run", metric="cost", value=9.99)
         row["task"] = ""
@@ -261,11 +275,14 @@ class SinkAttributionTests(unittest.TestCase):
         self.assertEqual("alpha/run", self.sink.task_for("session-a", cache))
         self.assertEqual("beta/design", self.sink.task_for("session-b", cache))
 
-    def test_an_unknown_session_falls_back_to_the_shared_pointer(self) -> None:
+    def test_only_a_datapoint_without_a_session_falls_back_to_the_shared_pointer(self) -> None:
+        """A session that has not marked yet stays untagged (usage-sync re-attributes it
+        from its mark history); borrowing the shared pointer billed its first requests to
+        another session's feature (ADR 0007, adenda)."""
         (self.usage / "current-task").write_text("alpha/run", encoding="utf-8")
         cache: dict[str, str] = {}
         self.assertEqual("alpha/run", self.sink.task_for(None, cache))
-        self.assertEqual("alpha/run", self.sink.task_for("never-marked", cache))
+        self.assertEqual("", self.sink.task_for("never-marked", cache))
 
     def test_nothing_marked_at_all_attributes_to_nothing(self) -> None:
         self.assertEqual("", self.sink.task_for("session-a", {}))

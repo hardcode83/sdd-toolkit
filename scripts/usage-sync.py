@@ -145,7 +145,39 @@ def load_log(root: Path) -> list[dict]:
             continue  # a truncated tail must not lose the rest of the history
         if isinstance(payload, dict):
             rows.append(payload)
-    return rows
+    return reattribute(rows, usage_dir(root) / "tasks")
+
+
+def first_marks(tasks_dir: Path) -> dict[str, str]:
+    """session id → the first feature/phase it marked, from `tasks/<id>.history`."""
+    marks: dict[str, str] = {}
+    if not tasks_dir.is_dir():
+        return marks
+    for history in tasks_dir.glob("*.history"):
+        try:
+            for line in history.read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.split(" ", 1)
+                if len(parts) == 2 and "/" in parts[1]:
+                    marks[history.name[: -len(".history")]] = parts[1].strip()
+                    break
+        except OSError:
+            continue
+    return marks
+
+
+def reattribute(rows: list[dict], tasks_dir: Path | None) -> list[dict]:
+    """Untagged rows of a session that marked later belong to its first phase."""
+    if tasks_dir is None:
+        return rows
+    marks = first_marks(tasks_dir)
+    if not marks:
+        return rows
+    out = []
+    for row in rows:
+        if not row.get("task") and row.get("session") in marks:
+            row = {**row, "task": marks[str(row["session"])]}
+        out.append(row)
+    return out
 
 
 def totals_by_feature(rows: list[dict]) -> dict[str, dict[str, PhaseTotals]]:

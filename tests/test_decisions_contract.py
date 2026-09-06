@@ -132,6 +132,15 @@ class PanelReceiptContractTests(unittest.TestCase):
         self.assertIn("Already in a linked worktree", read("references", "isolation.md"))
 
 
+class ArchivePreflightContractTests(unittest.TestCase):
+    def test_archive_runs_the_preflight_before_writing_anything(self) -> None:
+        archive = read("skills", "archive", "SKILL.md")
+        self.assertIn("preflight-archive <feature>", archive)
+        self.assertIn("PREFLIGHT: READY", archive)
+        self.assertIn("PREFLIGHT: BLOCKED", archive)
+        self.assertLess(archive.index("preflight-archive"), archive.index("verify-merge"))
+
+
 class ForegroundForkContractTests(unittest.TestCase):
     def test_review_and_the_panel_wait_in_the_foreground(self) -> None:
         self.assertIn("In the foreground, and wait in this turn", read("skills", "review", "SKILL.md"))

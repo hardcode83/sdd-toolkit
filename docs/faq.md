@@ -193,6 +193,10 @@ Porque el veredicto vivía en la prosa del fork y `STATE.md` seguía en `ACTIVE`
 
 Porque el check de aislamiento contaba como conflicto a **cualquier** sesión viva del registro compartido, aunque trabajara en otro worktree que no comparte tu HEAD. Cuatro sesiones en cuatro worktrees hacían que un quinto worktree limpio dijera `CONFLICT` y se creara un `.claude/worktrees/sdd+<feature>` al lado: la feature en dos sitios, dos stacks de Docker, y el host sin memoria para la comprobación manual. Desde la 0.50.0 el check describe *este directorio*: otra sesión en otro worktree es información, no conflicto; un worktree enlazado ya satisface `isolation: always` (`WORK HERE — already is the isolation`); y si la feature ya tiene dos worktrees, `check` lo dice (`NOTE — … never a third`). El detalle en `references/isolation.md`.
 
+## El archive casi siempre falla la primera vez y luego se arregla solo — ¿por qué?
+
+Porque sus precondiciones se comprobaban una a una, cada una al fallar el paso que la necesitaba, y el bucle agéntico iba encontrando el arreglo. Medido: 31 de 64 sesiones de archive en AutoHostAI fallaron al menos una vez, siempre por cosas conocibles antes de tocar nada — `main` local sin integrar el remoto, árbol sucio, el change no presente donde se lanzó archive, una tarea o una entrada de la cola sin cerrar, el PR aún abierto, sin entrada de roadmap. Desde la 0.51.0 el paso 1 de archive es `sdd_lifecycle.py preflight-archive <feature>`: comprueba todo de una vez, sin escribir nada, imprime el arreglo exacto de cada fallo y termina en `PREFLIGHT: READY` o `PREFLIGHT: BLOCKED (n)`. La skill no sigue hasta el READY. [ADR 0007](adr/0007-panel-receipt-and-directory-check.md), adenda.
+
 ## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
 
 Porque una lista plana no puede responder a "¿qué puedo atacar ya?" ni a "¿qué features convergen hacia el mismo fin?". La información de dependencias se escribía igualmente — pero en prosa dentro de la entrada, donde es inerte: nada podía calcular un orden.
