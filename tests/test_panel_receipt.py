@@ -110,6 +110,8 @@ class ReceiptWritingTests(ReceiptFixture):
         qa = next(r for r in receipt["reviewers"] if r["reviewer_id"] == "sdd-qa")
         self.assertEqual("FAIL", qa["verdict"])
         self.assertNotIn("payload", qa)
+        self.assertEqual([{"what": "x"}], qa["findings"], "FAIL findings travel in the receipt")
+        self.assertEqual(1, qa["findings_count"])
 
     def test_no_receipt_is_written_for_a_change_that_does_not_exist(self) -> None:
         result = subprocess.run(
@@ -164,8 +166,14 @@ class CertificationNeedsTheReceiptTests(ReceiptFixture):
     def test_a_stale_receipt_does_not_certify_a_later_commit(self) -> None:
         self.run_panel(self.all_pass())
         self.commit("src/a.py", "print('c')\n", "later code")
-        with self.assertRaisesRegex(LifecycleError, "commits landed after the panel"):
+        with self.assertRaisesRegex(LifecycleError, "code changed in between"):
             mark_local_verified(self.root, FEATURE)
+
+    def test_a_docs_only_commit_after_the_receipt_still_certifies(self) -> None:
+        """The review's own metrics commit moves HEAD; the panel judged code."""
+        self.run_panel(self.all_pass())
+        self.commit("sdd/changes/example/metrics.md", "| review | 1.0 |\n", "sdd(example): review metrics")
+        self.assertIn("LOCAL_VERIFIED", mark_local_verified(self.root, FEATURE))
 
     def test_a_pass_receipt_at_head_certifies(self) -> None:
         self.run_panel(self.all_pass())
@@ -189,6 +197,9 @@ class CertificationNeedsTheReceiptTests(ReceiptFixture):
         self.assertEqual("RECEIPT: CERTIFIES_HEAD", run())
         self.commit("src/a.py", "print('d')\n", "later")
         self.assertEqual("RECEIPT: STALE_OR_MISSING", run())
+        self.run_panel(self.all_pass())
+        self.commit("docs/x.md", "# x\n", "docs")
+        self.assertEqual("RECEIPT: CERTIFIES_HEAD", run(), "non-code changes do not stale the receipt")
 
     def test_the_receipt_is_shared_by_every_worktree_of_the_clone(self) -> None:
         linked = self.root / ".claude" / "worktrees" / "example"

@@ -7,7 +7,8 @@
      panel passes — never by hand; "panel: skipped — <reason>" records a
      deliberate skip (scaffolding, docs, config). On a task line:
      "manual" marks a task only a human can perform — run leaves it to you and
-     it may travel with the PR as a deferred entry. -->
+     it may travel with the PR as a deferred entry; it may sit on any line of
+     the task item, not only the checkbox line. -->
 
 ## 1. <section, e.g. Data layer>
 

@@ -59,6 +59,12 @@ ship never reviews, never merges the PR and never archives.
 
 2. **Verify the anchored lifecycle suffix before publishing.** Run:
 
+   **Never rewrite history to satisfy this step.** `git reset`, `--amend`,
+   `rebase` and `--force` are not tools of this phase, whatever a note or a
+   memory says worked once: an unauthorized commit after the anchor is either a
+   metrics-only commit the gate now accepts, or functional drift that needs
+   `/sdd:review` — record it as a `decision` entry naming the commit and stop.
+
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
    ```

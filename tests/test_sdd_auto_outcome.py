@@ -175,6 +175,55 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(len(set(codes.values())), 5)
 
 
+class DiskFallbackTests(unittest.TestCase):
+    """Every headless review of the first dense auto run came back INCOMPLETE with
+    zero turns while the receipt and STATE.md said exactly what happened."""
+
+    def setUp(self) -> None:
+        import subprocess
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.change = self.root / "sdd" / "changes" / "demo"
+        self.change.mkdir(parents=True)
+        (self.change / "proposal.md").write_text("# P\n", encoding="utf-8")
+        (self.change / "tasks.md").write_text("# T\n\n- [x] 1.1 ok\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", "-b", "sdd/demo"], cwd=self.root, check=True)
+        subprocess.run(["git", "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "f"], cwd=self.root, check=True)
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import sdd_lifecycle
+        self.lc = sdd_lifecycle
+        sdd_lifecycle.write_state(self.change, sdd_lifecycle.initial_state())
+
+    def receipt(self, gate: str, findings: list) -> None:
+        path = self.lc.panel_receipt_path(self.root, "demo")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"schema": 1, "phase": "review", "feature": "demo", "gate": gate, "sha": "x",
+                                    "reviewers": [{"reviewer_id": "sdd-review-documentation", "verdict": "FAIL" if findings else "PASS",
+                                                   "findings": findings}]}), encoding="utf-8")
+
+    def test_a_fail_receipt_rebuilds_a_failed_verdict_with_its_findings(self) -> None:
+        self.receipt("FAIL", [{"severity": "low", "file": "docs/a.md:3", "referent": "proposal Affected specs", "what": "spec not updated", "fix": "apply the commitment"}])
+        verdict = sdd_auto_outcome.verdict_from_disk(self.root, "demo")
+        self.assertEqual("FAILED", verdict["outcome"])
+        self.assertEqual("sdd-review-documentation", verdict["findings"][0]["reviewer"])
+        self.assertEqual("apply the commitment", verdict["findings"][0]["fix"])
+
+    def test_a_certified_state_rebuilds_a_pass(self) -> None:
+        state = self.lc.read_state(self.change); state["state"] = "READY_FOR_PR"; self.lc.write_state(self.change, state)
+        verdict = sdd_auto_outcome.verdict_from_disk(self.root, "demo")
+        self.assertEqual(("PASS", "/sdd:ship demo"), (verdict["outcome"], verdict["next_command"]))
+
+    def test_a_decision_entry_rebuilds_a_blocked(self) -> None:
+        (self.change / "BLOCKED.md").write_text("## Secrets\n\n- **type**: decision\n", encoding="utf-8")
+        verdict = sdd_auto_outcome.verdict_from_disk(self.root, "demo")
+        self.assertEqual("BLOCKED", verdict["outcome"])
+        self.assertEqual("Secrets", verdict["decisions"][0]["question"])
+
+    def test_nothing_on_disk_stays_incomplete(self) -> None:
+        self.assertIsNone(sdd_auto_outcome.verdict_from_disk(self.root, "demo"))
+
+
 class RunTests(unittest.TestCase):
     """`run` never raises for a missing or broken `claude`: that would turn a cost
     optimisation into something that aborts a run."""

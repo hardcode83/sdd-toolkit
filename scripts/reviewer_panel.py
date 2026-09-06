@@ -110,7 +110,11 @@ def write_receipt(root: Path, feature: str, phase: str, scope: dict, panel, head
         row = {
             "reviewer_id": result.reviewer_id, "lens": result.lens, "verdict": result.verdict,
             "status": result.status, "collection_status": result.collection_status,
-            "findings": len(result.findings) if isinstance(result.findings, list) else None,
+            "findings_count": len(result.findings) if isinstance(result.findings, list) else None,
+            # The findings themselves travel in the receipt: when the headless
+            # session ends without its outcome object, the fix ladder starts from
+            # disk (ADR 0008, adenda).
+            "findings": list(result.findings) if isinstance(result.findings, list) and result.verdict != "PASS" else [],
         }
         if result.verdict == "PASS" and result.status == "complete":
             row["payload"] = {"reviewer_id": result.reviewer_id, "scope_id": result.scope_id,

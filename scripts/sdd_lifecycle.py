@@ -96,6 +96,18 @@ FEATURE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LIFECYCLE_SUBJECT_RE = re.compile(
     r"^chore\(sdd\): lifecycle (?P<feature>[^ ]+) (?P<transition>[^ ]+)$"
 )
+# Bookkeeping the flow itself writes after the anchor: the usage ledgers. A
+# review that synced its metrics after `mark-ready` used to produce a commit the
+# suffix rejected, and the fix on record was `git reset --soft HEAD~1` (ADR 0008,
+# adenda). A metrics-only commit — these two paths and nothing else — is
+# authorized instead, whatever its subject says about metrics.
+METRICS_SUBJECT_RE = re.compile(r"^(sdd|chore)\((?:sdd|(?P<feature>[^)]+))\):.*\bmetrics\b.*$", re.IGNORECASE)
+
+
+def metrics_paths(feature: str) -> set[str]:
+    return {f"sdd/changes/{feature}/metrics.md", "sdd/metrics.md"}
+
+
 # The one commit on a feature branch that is neither implementation nor a
 # lifecycle transition: the base branch merged in, so an open PR stays mergeable
 # while other features land. Merge and never rebase — `implementation_sha` is the
@@ -439,17 +451,44 @@ def archived_change(root: Path, feature: str) -> Path | None:
     return matches[0] if matches else None
 
 
+def task_blocks(lines: list[str]) -> list[tuple[int, str, str]]:
+    """(line number, checkbox line, whole item) for every task in tasks.md.
+
+    A task item is its `- [ ]` line plus the indented continuation lines under
+    it — real tasks wrap over several lines, and a marker like `<!-- manual -->`
+    at the end of the description is still the task's marker (a review fork had
+    to move one onto the checkbox line for the gate to see it, ADR 0008).
+    """
+    blocks: list[tuple[int, str, str]] = []
+    current: list[str] | None = None
+    start = 0
+    for line_number, line in enumerate(lines, start=1):
+        if TASK_RE.match(line):
+            if current is not None:
+                blocks.append((start, current[0].strip(), "\n".join(current)))
+            current, start = [line], line_number
+        elif current is not None and line.strip() and line[:1].isspace() and not line.lstrip().startswith("#"):
+            current.append(line)
+        else:
+            if current is not None:
+                blocks.append((start, current[0].strip(), "\n".join(current)))
+            current = None
+    if current is not None:
+        blocks.append((start, current[0].strip(), "\n".join(current)))
+    return blocks
+
+
 def incomplete_tasks(change: Path) -> list[tuple[int, str]]:
+    """Open tasks as (line number, whole item text) — see `task_blocks`."""
     tasks = change / "tasks.md"
     if not tasks.is_file():
         raise LifecycleError(f"{tasks} is required before lifecycle verification.")
     pending: list[tuple[int, str]] = []
-    for line_number, line in enumerate(
-        tasks.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
-    ):
-        match = TASK_RE.match(line)
+    lines = tasks.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line_number, first, block in task_blocks(lines):
+        match = TASK_RE.match(first)
         if match and match.group(1) == " ":
-            pending.append((line_number, line.strip()))
+            pending.append((line_number, block))
     return pending
 
 
@@ -562,7 +601,7 @@ def ensure_local_gates(change: Path, *, strict: bool = False) -> None:
     deferred = [entry for entry in entries if entry.kind == "deferred"]
     uncovered: list[tuple[int, str]] = []
     for line_number, text in incomplete_tasks(change):
-        task = TASK_ID_RE.match(text)
+        task = TASK_ID_RE.match(text.splitlines()[0] if text else text)
         covered = (
             not strict
             and MANUAL_RE.search(text) is not None
@@ -650,14 +689,35 @@ def ensure_panel_receipt(change: Path, root: Path, runner: Runner = subprocess.r
             + ". Fix the findings and re-run the panel; the gate is what certifies."
         )
     head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
-    if receipt.get("sha") != head:
+    if not receipt_covers(root, receipt, head, runner):
         raise LifecycleError(
             f"The panel receipt certifies {str(receipt.get('sha'))[:12]} but HEAD is "
-            f"{head[:12]}: commits landed after the panel. Re-run the panel on HEAD "
+            f"{head[:12]} and code changed in between. Re-run the panel on HEAD "
             "(`reviewer_panel.py --phase review --carry` reuses the PASS verdicts when only "
             "documents changed)."
         )
     return receipt
+
+
+NON_CODE_PATH_RE = re.compile(r"^(sdd/|docs/)|\.(md|txt|svg|png|jpg|jpeg|gif)$", re.IGNORECASE)
+
+
+def receipt_covers(root: Path, receipt: dict, head: str, runner: Runner = subprocess.run) -> bool:
+    """Whether a receipt's verdict still describes HEAD.
+
+    Exactly HEAD, or an ancestor of it with only non-code paths changed since
+    (the review's own metrics commit, a documentation fix): the panel judged
+    code, and code did not move. Anything else needs a new panel.
+    """
+    sha = str(receipt.get("sha") or "")
+    if not sha:
+        return False
+    if sha == head:
+        return True
+    if try_command(["git", "merge-base", "--is-ancestor", sha, head], root, runner) is None:
+        return False
+    changed = run_command(["git", "diff", "--name-only", sha, head], root, runner).stdout.split()
+    return all(NON_CODE_PATH_RE.search(path) for path in changed)
 
 
 def git_text(args: list[str], root: Path, runner: Runner = subprocess.run) -> str | None:
@@ -1229,6 +1289,17 @@ def classify_lifecycle_commit(
     return commit_feature, transition
 
 
+def is_metrics_commit(root: Path, commit: str, feature: str, runner: Runner = subprocess.run) -> bool:
+    """A single-parent commit that only touches the feature's metrics ledgers."""
+    subject = run_command(["git", "show", "-s", "--format=%s", commit], root, runner).stdout.strip()
+    if not METRICS_SUBJECT_RE.fullmatch(subject):
+        return False
+    paths = run_command(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit], root, runner
+    ).stdout.split()
+    return bool(paths) and set(paths) <= metrics_paths(feature)
+
+
 def validate_ship_suffix(
     root: Path,
     feature: str,
@@ -1274,6 +1345,8 @@ def validate_ship_suffix(
         ).stdout.split()
         if len(parents) == 2:
             validate_sync_commit(root, commit, feature, data.get("base_branch", ""), runner)
+        elif is_metrics_commit(root, commit, feature, runner):
+            continue
         else:
             classify_lifecycle_commit(root, commit, feature, runner)
     return commits
@@ -2704,8 +2777,8 @@ def main(argv: list[str] | None = None) -> int:
             change = active_change(root, args.feature)
             data = panel_receipt(root, args.feature) or {}
             head = run_command(["git", "rev-parse", "HEAD"], root).stdout.strip()
-            certifies = bool(data) and data.get("gate") == "PASS" and data.get("sha") == head \
-                and data.get("phase") in PANEL_RECEIPT_PHASES
+            certifies = bool(data) and data.get("gate") == "PASS" \
+                and data.get("phase") in PANEL_RECEIPT_PHASES and receipt_covers(root, data, head)
             summary = {
                 "feature": args.feature, "present": bool(data), "phase": data.get("phase"),
                 "gate": data.get("gate"), "sha": data.get("sha"), "head": head, "at": data.get("at"),

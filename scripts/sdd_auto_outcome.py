@@ -360,10 +360,63 @@ def parse_result(text: str) -> Any:
     return None
 
 
+def verdict_from_disk(cwd: Path, feature: str) -> dict[str, Any] | None:
+    """Rebuild the phase's verdict from what it left on disk.
+
+    Measured on the first dense auto run: every headless review returned
+    `INCOMPLETE` with zero turns — the skill ran in a fork and the outer session
+    never emitted the outcome object — while the receipt, `STATE.md` and
+    `BLOCKED.md` said exactly what happened. Evidence over claims (rule 8), so
+    the disk is the primary source and the object a convenience.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import sdd_lifecycle  # noqa: PLC0415
+    except ImportError:
+        return None
+    change = cwd / "sdd" / "changes" / feature
+    if not change.is_dir():
+        return None
+    verdict: dict[str, Any] = {"outcome": None, "next_command": "", "decisions": [], "summary": "", "findings": []}
+    try:
+        state = sdd_lifecycle.read_state(change) or {}
+    except Exception:  # noqa: BLE001 — a broken STATE.md is still "no verdict"
+        state = {}
+    entries = sdd_lifecycle.blocked_entries(change)
+    decisions = [e for e in entries if e.blocks_locally]
+    if decisions:
+        verdict.update(outcome="BLOCKED", next_command=f"/sdd:status {feature}",
+                       decisions=[{"question": e.title, "options": [], "recommendation": ""} for e in decisions],
+                       summary=f"{len(decisions)} decision entr{'y' if len(decisions) == 1 else 'ies'} in BLOCKED.md (read from disk).")
+        return verdict
+    if state.get("state") in {"READY_FOR_PR", "PR_OPEN", "MERGED"}:
+        nxt = {"READY_FOR_PR": f"/sdd:ship {feature}", "PR_OPEN": "merge the PR", "MERGED": f"/sdd:archive {feature}"}[state["state"]]
+        verdict.update(outcome="PASS", next_command=nxt, summary=f"STATE.md at {state['state']} (read from disk).")
+        return verdict
+    receipt = sdd_lifecycle.panel_receipt(cwd, feature)
+    if receipt:
+        findings = []
+        for row in receipt.get("reviewers", []):
+            for f in row.get("findings") or []:
+                if isinstance(f, dict):
+                    findings.append({"reviewer": row.get("reviewer_id", "?"), "severity": str(f.get("severity", "medium")),
+                                     "file": str(f.get("file") or f.get("location") or "?"), "referent": str(f.get("referent", "")),
+                                     "what": str(f.get("what") or f.get("reason") or ""), "fix": str(f.get("fix", ""))})
+        if receipt.get("gate") == "PASS":
+            verdict.update(outcome="PASS", next_command=f"/sdd:review {feature}",
+                           summary="Panel receipt PASS but no lifecycle milestone recorded (read from disk).")
+        else:
+            verdict.update(outcome="FAILED", findings=findings,
+                           summary=f"Panel receipt FAIL: {', '.join(r['reviewer_id'] for r in receipt.get('reviewers', []) if r.get('verdict') != 'PASS')} (read from disk).")
+        return verdict
+    return None
+
+
 def run(
     prompt: str,
     *,
     cwd: Path | None = None,
+    feature: str | None = None,
     model: str = DEFAULT_MODEL,
     effort: str | None = None,
     max_budget_usd: float | None = None,
@@ -408,6 +461,12 @@ def run(
             f"exit {completed.returncode}, no JSON result"
             + (f": {stderr[-1][:160]}" if stderr else "")
         )
+    if verdict["kind"] == "INCOMPLETE" and feature:
+        disk = verdict_from_disk(cwd or Path.cwd(), feature)
+        if disk and disk.get("outcome"):
+            verdict.update(disk)
+            verdict["kind"] = disk["outcome"]
+            verdict["reason"] = "outcome object missing; verdict rebuilt from disk (receipt, STATE.md, BLOCKED.md)"
     return verdict
 
 
@@ -424,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     launch = sub.add_parser("run", help="launch a delegated phase with the headless recipe")
     launch.add_argument("prompt", help='e.g. "/sdd:review <feature>. The base branch is main."')
     launch.add_argument("--cwd", type=Path, help="working directory of the delegated session")
+    launch.add_argument("--feature", help="feature name: lets the verdict be rebuilt from disk when the session ends without its outcome object")
     launch.add_argument("--model", default=DEFAULT_MODEL, help="session model (sonnet|opus; never haiku)")
     launch.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     launch.add_argument("--max-budget-usd", type=float)
@@ -460,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         verdict = run(
             args.prompt,
             cwd=args.cwd,
+            feature=args.feature,
             model=args.model,
             effort=args.effort,
             max_budget_usd=args.max_budget_usd,
