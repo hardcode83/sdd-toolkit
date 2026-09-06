@@ -254,10 +254,14 @@ Then, for the feature at hand:
    entry (and its source doc, if referenced) and respect `product.md`.
    Commit: `sdd(<feature>): proposal`.
 3. **design** — follow the design skill (skip if trivial, as it says).
-   Approval substitute: launch `sdd-architect` to review the **design
-   document** against `architecture.md` and the proposal before any code.
-   Any open question the design surfaces → BLOCK (no one can answer it).
-   Commit: `sdd(<feature>): design`.
+   Approval substitute: launch `sdd-architect` (an `Agent` call with
+   `model: sonnet` explicit — every launch names its alias,
+   `${CLAUDE_PLUGIN_ROOT}/references/models.md`; the first dense auto run
+   launched it twice without one) to review the **design document** against
+   `architecture.md` and the proposal before any code; its findings are fixed
+   in the document and re-reviewed by the same agent, at most twice. An open
+   question with a recommendation → `assumed` (gate-conversion rule above);
+   without one → BLOCK. Commit: `sdd(<feature>): design`.
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.

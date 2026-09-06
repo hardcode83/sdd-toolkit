@@ -548,6 +548,64 @@ def active_document_checks(root: Path, active_changes: list[Path]) -> list[Diagn
                 )
             )
         diagnostics.extend(blocked_queue_checks(root, change))
+        diagnostics.extend(panel_annotation_checks(root, change))
+    return diagnostics
+
+
+PANEL_ANNOTATION_RE = re.compile(r"^## (\d+)\..*<!--\s*panel:\s*PASS([^>]*)-->")
+RECEIPT_TOKEN_RE = re.compile(r"receipt:([0-9a-f]{8})")
+
+
+def receipts_dir(root: Path) -> Path | None:
+    try:
+        done = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=root, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if done.returncode:
+        return None
+    return (root / done.stdout.strip()).resolve() / "sdd" / "receipts"
+
+
+def panel_annotation_checks(root: Path, change: Path) -> list[Diagnostic]:
+    """SDD032 — a `panel: PASS` on a section heading that the gate did not write.
+
+    Since ADR 0008 `reviewer_panel.py --section N` is the only writer of that
+    marker and stamps it with `receipt:<id>` matching the section's receipt in
+    the shared git directory. Measured before it: three sections of one change
+    annotated by hand after the gate was never run. Review treats an unstamped
+    or unmatched annotation as unverified (full scope), the doctor says so.
+    """
+    diagnostics: list[Diagnostic] = []
+    tasks = change / "tasks.md"
+    receipts = receipts_dir(root)
+    for line_number, line in enumerate(read_lines(tasks), start=1):
+        match = PANEL_ANNOTATION_RE.match(line)
+        if not match:
+            continue
+        section = int(match.group(1))
+        token = RECEIPT_TOKEN_RE.search(match.group(2) or "")
+        reason = None
+        if token is None:
+            reason = "carries no `receipt:` id, so the gate did not write it"
+        elif receipts is not None:
+            receipt = receipts / f"{change.name}-run-{section}.json"
+            try:
+                data = json.loads(receipt.read_text(encoding="utf-8"))
+                if data.get("id") != token.group(1) or data.get("gate") != "PASS":
+                    reason = f"names receipt {token.group(1)} but the section's receipt does not match it"
+            except (OSError, ValueError):
+                reason = f"names receipt {token.group(1)} but no receipt for section {section} exists on this machine"
+        if reason:
+            diagnostics.append(
+                Diagnostic(
+                    "SDD032",
+                    "WARNING",
+                    relative(tasks, root),
+                    line_number,
+                    f"Section {section} is annotated `panel: PASS` but the annotation {reason}.",
+                    "Run the section's panel through `reviewer_panel.py --phase run --section N`, which writes the receipt and the annotation; until then review treats the section as unreviewed.",
+                )
+            )
     return diagnostics
 
 

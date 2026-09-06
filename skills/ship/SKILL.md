@@ -122,13 +122,23 @@ ship never reviews, never merges the PR and never archives.
    If the conflict reveals that the change itself is wrong rather than merely
    behind, `git merge --abort` is the way back — then `/sdd:run <feature>`.
 
-4. **Require the claimed head branch to exist remotely.** PR creation needs a
-   remote head. The branch-claim/bootstrap step in `/sdd:new` or `/sdd:auto`
-   owns that initial publication; ship does not hide a bootstrap push. If
-   `origin/<head_branch>` is absent, leave the change at `READY_FOR_PR` untouched and hand
-   off the exact `git push -u origin <head_branch>` command. If it exists,
-   continue; the only push performed by this ship flow is the final push in
-   step 7, after `record-pr` has committed `PR_OPEN`.
+4. **Publish the head branch if nobody has.** PR creation needs a remote head.
+   Check `git ls-remote --heads origin <head_branch>`:
+   - **Absent** → nobody claimed this feature remotely; publish it yourself:
+     `git push -u origin <head_branch>`. This is the bootstrap push `/sdd:new`
+     offers and `/sdd:auto` performs; a branch that reached `READY_FOR_PR`
+     without it (the change predates the rule, or the user declined then) is
+     not a reason to hand the push to a human — ship is the phase that pushes.
+     The first `/sdd:ship` of `auth-session-persistence` did exactly that
+     handoff and the user had to type the push and re-run ship (ADR 0008).
+   - **Present and an ancestor of local HEAD** → it is our claim; continue.
+   - **Present and diverged** (not an ancestor, `git merge-base --is-ancestor
+     origin/<head_branch> HEAD` fails) → somebody else's work sits on our branch
+     name. That is the real conflict: leave the change at `READY_FOR_PR`,
+     record a `decision` entry (`block … --type decision`) naming both heads,
+     and stop. Never force-push.
+   After this step the branch exists remotely; step 7's final push publishes the
+   `PR_OPEN` commit on top of it.
 
 5. **Open or validate the Pull Request** with `gh pr create`, base `base_branch`, head `head_branch`:
    - Title: `SDD: <feature>`.

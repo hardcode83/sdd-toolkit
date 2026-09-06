@@ -115,7 +115,8 @@ reason. Then:
    steering rules, diff range) **inline in the prompt** rather than going to find
    them.
    **Incremental scope — don't pay twice for what already PASSed**: read the `<!-- panel: PASS ... -->` annotations on `tasks.md` section headings first.
-   - Sections **with** a PASS annotation: instruct the reviewers to NOT re-audit them line by line — for those, the scope is only what section-level review structurally can't see: interactions *between* sections, global design coherence (D# consistency across the whole change), and anything a later section changed in files an earlier PASSed section owned.
+   - A PASS annotation counts only when the gate wrote it: it carries `receipt:<id>` and `<git common dir>/sdd/receipts/<feature>-run-<N>.json` exists with that `id` and `gate: PASS`. An annotation without the id, or whose receipt is missing, was written by hand (ADR 0008; `/sdd:doctor` `SDD032`): treat that section as **without** PASS.
+   - Sections **with** a verified PASS annotation: instruct the reviewers to NOT re-audit them line by line — for those, the scope is only what section-level review structurally can't see: interactions *between* sections, global design coherence (D# consistency across the whole change), and anything a later section changed in files an earlier PASSed section owned.
    - Sections **without** PASS (panel skipped, interrupted, or `solo` mode): full review scope, as if the section panel were running now.
    - Always at feature scale regardless of annotations: the R# completeness matrix (met/partially/unmet with `file:line` — qa) and cumulative scope creep.
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).

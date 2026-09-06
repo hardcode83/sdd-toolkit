@@ -38,6 +38,11 @@ capability or worktree mutation failures are unavailable results.
 Do not use `.codex/agents`, `~/.codex/agents`, copied prompts, symlinks, or
 project Codex configuration.
 
+`scripts/reviewer_panel.py --plan` prints the planned reviewers and an example
+`--results` for a scope, so no caller reads the gate's source to learn its
+shapes. With `--phase run --section N` the gate writes the section's receipt
+(`<feature>-run-<N>.json`) and, on PASS, the `panel: PASS … receipt:<id>` marker
+on the section heading — it is the only writer of that marker (ADR 0008).
 `scripts/reviewer_panel.py` persists every feature-scale evaluation (`review`,
 `auto`) as a **receipt** in `<git common dir>/sdd/receipts/<feature>.json`:
 gate, HEAD, one row per reviewer with its verdict and, for a PASS, the payload.

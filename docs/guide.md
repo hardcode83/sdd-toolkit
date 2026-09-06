@@ -139,6 +139,10 @@ Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **es
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md` (`sdd_lifecycle.py blocked <feature>` lo lista con tipos), decide, borra la entrada y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos). Solo las entradas `decision` paran a auto; las `deferred` y `assumed` viajan con el PR y las resuelves allí. Y si contestas "adelante" sin elegir, auto toma la opción recomendada y la registra como `assumed` — no como decisión tuya.
 
+**El panel de una sección dio PASS pero review la revisa entera** → la anotación no la escribió el gate (mira `sdd-doctor`, `SDD032`). El PASS válido lleva `receipt:<id>`; se obtiene ejecutando `reviewer_panel.py --phase run --section N` con los sobres de los revisores, y `--plan` te da la forma exacta.
+
+**Ship me pide comandos** → ya no debería: publica la rama él mismo si nadie la ha publicado y certifica desde el recibo si review no marcó. Si lo hace, mira si la sesión corre una versión vieja del plugin (`sdd_session.py check` lo avisa) y reinicia la sesión.
+
 **Archive me falla** → `sdd_lifecycle.py preflight-archive <feature>` desde el worktree principal te da todos los fallos de una vez con su comando; la skill lo ejecuta primero y no sigue hasta `PREFLIGHT: READY`.
 
 **Review dio PASS pero ship dice que no puede publicar** → mira `sdd_lifecycle.py receipt <feature>`: si dice `CERTIFIES_HEAD`, ship registra los hitos solo y sigue; si dice `STALE_OR_MISSING`, hubo commits después del panel y toca `/sdd:review`, que relanza solo lo que no pasó. Nunca deberías ver el panel entero dos veces sobre el mismo HEAD.

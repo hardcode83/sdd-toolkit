@@ -2,8 +2,10 @@
 
 <!-- Markers, read by /sdd:run and the lifecycle gates (HTML comments, invisible
      when rendered). On a section heading: "hard" makes that section's
-     implementer run on the stronger model; "panel: PASS <date>" is written by
-     run itself when the section's review panel passes. On a task line:
+     implementer run on the stronger model; "panel: PASS <date> receipt:<id>"
+     is written by the panel gate (reviewer_panel.py) when the section's review
+     panel passes — never by hand; "panel: skipped — <reason>" records a
+     deliberate skip (scaffolding, docs, config). On a task line:
      "manual" marks a task only a human can perform — run leaves it to you and
      it may travel with the PR as a deferred entry. -->
 

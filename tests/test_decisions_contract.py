@@ -141,6 +141,35 @@ class ArchivePreflightContractTests(unittest.TestCase):
         self.assertLess(archive.index("preflight-archive"), archive.index("verify-merge"))
 
 
+class RunGateContractTests(unittest.TestCase):
+    """ADR 0008: the gate writes its own verdict; nobody reads its source."""
+
+    def test_run_never_writes_the_annotation_and_asks_the_gate_for_the_plan(self) -> None:
+        run = read("skills", "run", "SKILL.md")
+        self.assertIn("**only writer** of `panel: PASS`", run)
+        self.assertIn("Never write that marker yourself", run)
+        self.assertIn("--plan", run)
+        self.assertIn("--section <N>", run)
+        self.assertIn("panel: skipped", run)
+        self.assertIn("No section N+1 starts", run)
+        self.assertIn("Tests run in the foreground", run)
+
+    def test_review_counts_only_gate_written_annotations(self) -> None:
+        review = read("skills", "review", "SKILL.md")
+        self.assertIn("counts only when the gate wrote it", review)
+        self.assertIn("SDD032", review)
+
+    def test_ship_publishes_the_branch_itself(self) -> None:
+        ship = read("skills", "ship", "SKILL.md")
+        self.assertIn("publish it yourself", ship)
+        self.assertIn("git push -u origin <head_branch>", ship)
+        self.assertNotIn("ship does not hide a bootstrap push", ship)
+        self.assertIn("Never force-push", ship)
+
+    def test_auto_launches_the_architect_with_a_model(self) -> None:
+        self.assertIn("`sdd-architect` (an `Agent` call with\n   `model: sonnet` explicit", read("skills", "auto", "SKILL.md"))
+
+
 class ForegroundForkContractTests(unittest.TestCase):
     def test_review_and_the_panel_wait_in_the_foreground(self) -> None:
         self.assertIn("In the foreground, and wait in this turn", read("skills", "review", "SKILL.md"))
