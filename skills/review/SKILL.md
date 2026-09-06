@@ -231,7 +231,13 @@ reason. Then:
 
    `sync` rebuilds every phase row from the captured log and refreshes the
    consolidated row in `sdd/metrics.md`, so a change waiting for its merge
-   already has complete metrics instead of none until archive.
+   already has complete metrics instead of none until archive. **Commit the
+   result as a metrics-only commit** — `git add sdd/changes/<feature>/metrics.md
+   sdd/metrics.md && git commit -m "sdd(<feature>): review metrics"` — nothing
+   else in it: the ship gate authorizes exactly that shape after the lifecycle
+   milestones (ADR 0008, adenda). Never leave the diff dirty and never fold it
+   into another commit; a metrics commit that also touched code once made ship
+   rewrite history to get past its own gate.
 
 7. **Offer to publish — one question, not five instructions.** On a passing
    verdict, `READY_FOR_PR` is a change that is finished locally and invisible to

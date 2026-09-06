@@ -28,6 +28,7 @@ from sdd_lifecycle import (
     LifecycleError,
     blocked_entries,
     read_state,
+    task_blocks,
 )
 
 
@@ -640,11 +641,11 @@ def blocked_queue_checks(root: Path, change: Path) -> list[Diagnostic]:
         task for entry in entries if entry.kind == "deferred" for task in entry.tasks
     }
     tasks = change / "tasks.md"
-    for line_number, line in enumerate(read_lines(tasks), start=1):
-        match = TASK_RE.match(line)
-        if not (match and match.group(1) == " " and MANUAL_RE.search(line)):
+    for line_number, first, block in task_blocks(read_lines(tasks)):
+        match = TASK_RE.match(first)
+        if not (match and match.group(1) == " " and MANUAL_RE.search(block)):
             continue
-        task = TASK_ID_RE.match(line)
+        task = TASK_ID_RE.match(first)
         task_id = task.group("id") if task else None
         if task_id in deferred_tasks:
             continue
@@ -730,12 +731,12 @@ def open_tasks_not_carried(change: Path) -> list[int]:
         task for entry in blocked_entries(change) if entry.kind == "deferred" for task in entry.tasks
     }
     lines: list[int] = []
-    for line_number, line in enumerate(read_lines(change / "tasks.md"), start=1):
-        match = TASK_RE.match(line)
+    for line_number, first, block in task_blocks(read_lines(change / "tasks.md")):
+        match = TASK_RE.match(first)
         if not (match and match.group(1) == " "):
             continue
-        task = TASK_ID_RE.match(line)
-        if MANUAL_RE.search(line) and task and task.group("id") in deferred_tasks:
+        task = TASK_ID_RE.match(first)
+        if MANUAL_RE.search(block) and task and task.group("id") in deferred_tasks:
             continue
         lines.append(line_number)
     return lines

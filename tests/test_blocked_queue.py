@@ -164,6 +164,16 @@ class LocalGateTests(QueueFixture):
         with self.assertRaisesRegex(LifecycleError, "incomplete task.*archive requires"):
             ensure_local_gates(self.change, strict=True)
 
+    def test_a_manual_marker_on_a_continuation_line_counts(self) -> None:
+        """Real tasks wrap; a review fork once had to move the marker onto the
+        checkbox line for the gate to see it."""
+        self.tasks(
+            "- [x] 1.1 Done [R1]\n- [ ] 1.2 Manual browser check with two\n"
+            "      concurrent sessions <!-- manual -->\n"
+        )
+        self.blocked("## Browser\n\n- **type**: deferred\n- **tasks**: 1.2\n")
+        ensure_local_gates(self.change)
+
     def test_an_open_task_without_the_marker_blocks_even_if_deferred(self) -> None:
         self.tasks("- [x] 1.1 Done [R1]\n- [ ] 1.2 Not manual at all\n")
         self.blocked("## Whatever\n\n- **type**: deferred\n- **tasks**: 1.2\n")

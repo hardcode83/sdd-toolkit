@@ -103,9 +103,39 @@ valen igual bajo Codex; el panel nativo de Codex pasa por el mismo gate.
   postgres/redis entre worktrees o limitar las features en paralelo es decisión
   del proyecto.
 
+## Adenda (2026-09-06, v0.53.0) — lo que enseñó la review y el ship de `guest-link-delivery`
+
+Con la 0.50.0 el run completó sus seis secciones, registró la tarea manual como
+`deferred`, y la review delegada dejó el recibo con cinco PASS y documentación en
+FAIL. Cuatro cosas más salieron a la luz, todas mecánicas:
+
+1. **Las tres sesiones headless de review devolvieron `INCOMPLETE` con cero
+   turnos**: la skill corre en fork dentro de `claude -p` y la sesión externa
+   nunca emite el objeto de veredicto. Auto sobrevivió leyendo el disco y la
+   escalera cerró en dos rondas, pero a ciegas. `sdd_auto_outcome.py run
+   --feature <f>` reconstruye el veredicto desde el recibo, `STATE.md` y
+   `BLOCKED.md`; el recibo guarda ahora los findings de los revisores en FAIL.
+2. **El commit de métricas de review mueve HEAD** y el recibo quedaba
+   "caducado": `ensure_panel_receipt` y `receipt` aceptan un recibo cuyo diff
+   hasta HEAD no toque código, la misma regla de `--carry`.
+3. **Ship rebobinó un commit**: la review commiteó sus métricas después de
+   `mark-ready`, `validate-ship` lo rechazó como sujeto no autorizado, y el fork
+   aplicó el "arreglo" que una memoria de AutoHostAI del 2 de septiembre
+   guardaba: `git reset --soft HEAD~1` y descartar el diff. El fallo llevaba
+   cuatro días conocido fuera del toolkit. Un commit que toque solo los dos
+   ledgers de métricas es ahora un commit autorizado del sufijo, review lo hace
+   con sujeto `sdd(<feature>): review metrics`, y ship tiene prohibido reescribir
+   historia: un commit no autorizado es una `decision`.
+4. **El marcador `<!-- manual -->` en una línea de continuación** no lo veía el
+   gate (las tareas reales ocupan varias líneas); el fork lo movió a mano. El
+   gate y el doctor leen ahora el bloque entero de la tarea.
+
+Coste del run a las 12:13: 110 $, de los que 96 en `run` — sobre todo espera de
+suites en un host con seis stacks. Eso sigue siendo del entorno.
+
 ## Implementación
 
-Se entrega con v0.52.0. `scripts/reviewer_panel.py`, `scripts/sdd-doctor.py`,
+Se entrega con v0.52.0; la adenda, con v0.53.0 (`sdd_auto_outcome.py`, `reviewer_panel.py`, `sdd_lifecycle.py`, `sdd-doctor.py`, skills review/ship/auto, plantilla, FAQ, tests). `scripts/reviewer_panel.py`, `scripts/sdd-doctor.py`,
 `scripts/sdd_session.py`, `skills/run`, `skills/review`, `skills/ship`,
 `skills/auto`, `skills/reviewer-panel`, `templates/tasks-template.md`,
 `tests/test_run_gate.py` (12 tests), `tests/test_reviewer_panel_cli.py`

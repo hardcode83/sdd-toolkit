@@ -746,6 +746,20 @@ class LifecycleTests(unittest.TestCase):
                 runner=self.gh_runner(self.pr_payload("MERGED")),
             )
 
+    def test_a_metrics_only_commit_is_an_authorized_suffix_commit(self) -> None:
+        """ADR 0008, adenda: review's metrics sync after mark-ready used to make
+        ship fail and the recorded fix was `git reset --soft HEAD~1`."""
+        self.ready()
+        (self.change / "metrics.md").write_text("| review | 1.0 |\n", encoding="utf-8")
+        self.git("add", "sdd/changes/example/metrics.md")
+        self.git("commit", "-m", "sdd(example): review usage metrics")
+        validate_ship_suffix(self.root, FEATURE)
+        (self.root / "code.py").write_text("x = 1\n", encoding="utf-8")
+        self.git("add", "code.py")
+        self.git("commit", "-m", "sdd(example): metrics and code")
+        with self.assertRaisesRegex(LifecycleError, "unauthorized lifecycle subject"):
+            validate_ship_suffix(self.root, FEATURE)
+
     def test_incomplete_tasks_cannot_advance(self) -> None:
         (self.change / "tasks.md").write_text("# Tasks\n\n- [ ] 1.1 Pending [R1]\n")
         with self.assertRaisesRegex(LifecycleError, "incomplete task"):

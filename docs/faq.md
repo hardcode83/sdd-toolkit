@@ -209,6 +209,14 @@ Por una regla antigua: "el push inicial lo hace `/sdd:new`, ship no lo esconde".
 
 No. El plugin se fija al arrancar la sesión: una sesión abierta el día 5 seguía ejecutando la 0.44.0 el día 6 con la 0.51.0 instalada, y ninguna de las correcciones de esos días aplicaba dentro de ella. Desde la 0.52.0 `sdd_session.py check`, que toda fase ejecuta al empezar, avisa cuando la versión que corre y la instalada no coinciden. Cierra la sesión y abre otra: las fases reanudan desde disco, así que no se pierde nada.
 
+## La sesión headless de review devuelve `INCOMPLETE` — ¿se ha perdido el veredicto?
+
+No: está en disco. Cuando la skill de review corre en fork dentro de `claude -p`, la sesión externa termina con cero turnos y nunca emite el objeto de veredicto; en el primer run denso pasó en las tres reviews. Desde la 0.53.0 `sdd_auto_outcome.py run --feature <f>` reconstruye el veredicto desde el recibo del panel (que ahora guarda los findings de los revisores en FAIL), `STATE.md` y `BLOCKED.md`: `FAILED` con findings, `PASS` con el siguiente comando, o `BLOCKED` con las decisiones. Un `INCOMPLETE` a secas significa que no hay evidencia en disco.
+
+## Review dejó un commit de métricas y ship se negó a publicar — ¿qué hago?
+
+Nada ya: desde la 0.53.0 un commit que toque **solo** los dos ledgers de métricas es un commit autorizado del sufijo, y review lo hace así (`sdd(<feature>): review metrics`). Antes, el orden de la skill (métricas después de los hitos) producía un commit que `validate-ship` rechazaba, y el arreglo que se encontró fue `git reset --soft HEAD~1`; ship tiene ahora prohibido reescribir historia por ese motivo. Si el commit tocó algo más que los ledgers, es deriva y toca `/sdd:review`. [ADR 0008](adr/0008-run-gate-writes-its-verdict.md), adenda.
+
 ## ¿Por qué el roadmap tiene stages y una sub-línea de metadatos, y no es una lista plana?
 
 Porque una lista plana no puede responder a "¿qué puedo atacar ya?" ni a "¿qué features convergen hacia el mismo fin?". La información de dependencias se escribía igualmente — pero en prosa dentro de la entrada, donde es inerte: nada podía calcular un orden.

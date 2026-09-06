@@ -151,7 +151,7 @@ disk (`STATE.md`, `BLOCKED.md`, `tasks.md`) before acting on it:
 | `FAILED` | the phase ran and its verdict is negative | for review: run the **fix ladder** of step 6 (two rounds, then `decision`); for any other phase: BLOCK the feature |
 | `DENIED` | `permission_denials` is non-empty | **not a decision — configuration**: `deferred` entry with the exact denied command(s) so the user adds the rule; never retry blind |
 | `ERROR` | API error, budget or turn limit, abnormal end | if the reason names a rate limit or usage window, wait for it (the message says when) and retry the same launch **once**; otherwise retry once immediately; then `deferred` with the reason |
-| `INCOMPLETE` | ended without an outcome object | read the disk; if it does not prove the phase's milestone, treat as `FAILED` |
+| `INCOMPLETE` | ended without an outcome object **and** nothing on disk says otherwise | with `--feature`, the script already rebuilt the verdict from the receipt, `STATE.md` and `BLOCKED.md` (measured: every headless review of a real run ended with zero turns and a complete receipt); a bare `INCOMPLETE` means no evidence at all — treat as `FAILED` |
 | `UNAVAILABLE` | no `claude` on PATH, or it could not start | run that phase **inline** and say so in the report — a cost optimisation never aborts a run |
 
 A `PASS` that the disk does not confirm (no `STATE.md` milestone, unchecked
@@ -182,7 +182,7 @@ So when `N > 1`, run **each feature in its own session** and stay a thin
 orchestrator here:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:auto <feature>" --cwd .
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:auto <feature>" --cwd . --feature <feature>
 ```
 
 (the headless recipe above: a fresh `claude -p` session in `auto` permission
@@ -278,7 +278,7 @@ Then, for the feature at hand:
    feature's working directory:
 
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:review <feature>. The base branch is <BASE>; do not ask about it." --cwd <feature working directory>
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_auto_outcome.py" run "/sdd:review <feature>. The base branch is <BASE>; do not ask about it." --cwd <feature working directory> --feature <feature>
    ```
 
    Then **read the result from disk, not from the prose it printed** (rule 11,
