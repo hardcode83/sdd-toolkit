@@ -65,7 +65,8 @@ class ReceiptFixture(unittest.TestCase):
         payload = {"reviewer_id": reviewer_id, "scope_id": f"review:{FEATURE}", "lens": lens,
                    "verdict": verdict, "findings": [] if verdict == "PASS" else [{"what": "x"}],
                    "evidence": ["src/a.py"] if verdict == "PASS" else [], "status": "complete"}
-        return {"invocation_id": f"agent-{reviewer_id}", "reviewer_id": reviewer_id, "payload": payload}
+        return {"invocation_id": f"agent-{reviewer_id}", "planned_reviewer_id": reviewer_id,
+                "reviewer_id": reviewer_id, "payload": payload}
 
     CORE = (("sdd-architect", "architecture"), ("sdd-security", "security"), ("sdd-qa", "qa"))
 

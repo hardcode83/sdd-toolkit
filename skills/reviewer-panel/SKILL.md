@@ -26,6 +26,12 @@ forked phase ending the turn ends the phase (shared rule 11), so a panel
 launched in the background is a panel whose results nobody collects.
 MiniMax-through-Claude uses this same boundary. An unavailable or malformed
 response is synthesized as an explicit unavailable result and cannot pass.
+The same trusted-binding rule as the Codex boundary applies here too: a
+result's identity is `planned_reviewer_id` — which `Agent` call (subagent
+type) produced it — never the `reviewer_id` the reviewer's own JSON declares.
+`scripts/reviewer_panel.py --results` enforces this at the shell boundary; two
+reviewers self-reporting the same or swapped identity must fail closed,
+attributed per reviewer, not merge into one another's slot.
 
 `build_codex_handoff()` is the native boundary. It emits one request per
 planned item and the exact capability contract for the top-level Codex

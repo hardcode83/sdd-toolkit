@@ -20,7 +20,8 @@ class ReviewerPanelCliTests(unittest.TestCase):
 
     def results(self, phase="run"):
         plan = self.rp.build_reviewer_plan(ROOT, phase, self.scope(phase))
-        return [{"invocation_id": f"agent-{i}", "reviewer_id": item.reviewer_id,
+        return [{"invocation_id": f"agent-{i}", "planned_reviewer_id": item.reviewer_id,
+                 "reviewer_id": item.reviewer_id,
                  "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id,
                              "lens": item.lens, "verdict": "PASS", "findings": [],
                              "evidence": ["src/a.py"], "status": "complete"}}
@@ -46,6 +47,23 @@ class ReviewerPanelCliTests(unittest.TestCase):
         raw = self.results()
         result = self.invoke("run", [entry["payload"] for entry in raw])
         self.assertEqual(result.returncode, 1)
+
+    def test_cli_fails_closed_on_swapped_self_declared_identity(self):
+        # Regression: two reviewers (e.g. sdd-architect and sdd-security) return
+        # JSON whose self-declared `reviewer_id`/`lens` are swapped with each
+        # other. The trusted `planned_reviewer_id` (which Agent call this is)
+        # still names the right slots, so the gate must fail closed on exactly
+        # those two reviewers instead of crashing the whole collection or
+        # silently accepting the cross-wired verdicts.
+        raw = self.results("review")
+        a, b = raw[0], raw[1]
+        a["payload"], b["payload"] = dict(b["payload"]), dict(a["payload"])
+        result = self.invoke("review", raw)
+        self.assertEqual(result.returncode, 1)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["gate"], "FAIL")
+        self.assertTrue(any(a["planned_reviewer_id"] in err for err in output["errors"]))
+        self.assertTrue(any(b["planned_reviewer_id"] in err for err in output["errors"]))
 
 
 if __name__ == "__main__":

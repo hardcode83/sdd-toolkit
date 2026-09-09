@@ -56,7 +56,8 @@ class GateFixture(unittest.TestCase):
         out = []
         for item in plan:
             verdict = "FAIL" if item.reviewer_id == fail else "PASS"
-            out.append({"invocation_id": f"agent-{item.reviewer_id}", "reviewer_id": item.reviewer_id,
+            out.append({"invocation_id": f"agent-{item.reviewer_id}", "planned_reviewer_id": item.reviewer_id,
+                        "reviewer_id": item.reviewer_id,
                         "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
                                     "verdict": verdict, "findings": [] if verdict == "PASS" else [{"what": "x"}],
                                     "evidence": ["src/a.py"] if verdict == "PASS" else [], "status": "complete"}})

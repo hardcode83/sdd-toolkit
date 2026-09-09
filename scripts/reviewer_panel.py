@@ -27,11 +27,19 @@ Shapes the gate accepts (build them from `--plan`, never by reading this file):
   --scope   '{"feature": "<f>", "scope_id": "run:<f>:<N>", "files": ["src/a.py", ...]}'
             (`scope_id` is free text; use run:<feature>:<section> per section and
              review:<feature> at feature scale; `files` is the diff's file list)
-  --results '[{"invocation_id": "<Agent tool_use id>", "reviewer_id": "sdd-qa",
+  --results '[{"invocation_id": "<Agent tool_use id>", "planned_reviewer_id": "sdd-qa",
+               "reviewer_id": "sdd-qa",
                "payload": {"reviewer_id": "sdd-qa", "scope_id": "run:<f>:<N>", "lens": "qa",
                            "verdict": "PASS", "findings": [], "evidence": ["src/a.py"],
                            "status": "complete"}}, ...]'
-            (one envelope per planned reviewer; `payload` is the reviewer's final JSON)
+            (one envelope per planned reviewer; `payload` is the reviewer's final JSON.
+             `planned_reviewer_id` is the TRUSTED identity: set it to which reviewer you
+             launched (the `subagent_type`/agent name of that `Agent` call), never by
+             reading a `reviewer_id` field out of the JSON the reviewer returned. The
+             top-level `reviewer_id` and the one inside `payload` are both self-declared
+             by the reviewer and are validated against the plan, but never used to decide
+             which planned slot a result fills — a reviewer that mislabels its own output
+             must not be able to swap places with another reviewer.)
 
   --plan    prints the planned reviewers for the scope and an example --results,
             and exits without evaluating anything.
@@ -168,7 +176,8 @@ def carried_envelopes(receipt: dict, plan, present: set[str], feature: str, phas
             continue
         row = next((r for r in receipt.get("reviewers", []) if r.get("reviewer_id") == item.reviewer_id), None)
         if row and row.get("verdict") == "PASS" and isinstance(row.get("payload"), dict):
-            carried.append({"invocation_id": f"carried:{base}", "reviewer_id": item.reviewer_id,
+            carried.append({"invocation_id": f"carried:{base}", "planned_reviewer_id": item.reviewer_id,
+                            "reviewer_id": item.reviewer_id,
                             "payload": row["payload"], "carried_from": base})
     return carried
 
@@ -210,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 "launch": [{"agent": item.reviewer_id, "lens": item.lens, "scope_id": item.scope_id} for item in required],
                 "example_results": [{
                     "invocation_id": f"<tool_use id of the {item.reviewer_id} Agent call>",
+                    "planned_reviewer_id": item.reviewer_id,
                     "reviewer_id": item.reviewer_id,
                     "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
                                 "verdict": "PASS", "findings": [], "evidence": list(scope.get("files", []))[:1],
@@ -253,17 +263,24 @@ def main(argv: list[str] | None = None) -> int:
             by_identity = {}
             for envelope in raw_results:
                 if (not isinstance(envelope, dict) or not envelope.get("invocation_id")
-                        or not isinstance(envelope.get("reviewer_id"), str)
+                        or not isinstance(envelope.get("planned_reviewer_id"), str)
                         or not isinstance(envelope.get("payload"), dict)):
                     raise ValueError("result collection lacks trusted Claude invocation identity")
-                identity = envelope["reviewer_id"]
+                # Trusted binding is which Agent call this is (`planned_reviewer_id`,
+                # set by the caller from the subagent it launched) — never the
+                # reviewer's own self-declared `reviewer_id`, which two reviewers
+                # can report identically or swapped without either being malicious.
+                identity = envelope["planned_reviewer_id"]
                 if identity in by_identity:
                     raise ValueError("duplicate reviewer identity")
                 by_identity[identity] = envelope
             if set(by_identity) != {item.reviewer_id for item in required_items}:
                 raise ValueError("result collection contains an unexpected or missing reviewer")
             for item in required_items:
-                results.append(reviewer_plan.normalize_reviewer_result(by_identity[item.reviewer_id]["payload"], item))
+                try:
+                    results.append(reviewer_plan.normalize_reviewer_result(by_identity[item.reviewer_id]["payload"], item))
+                except (TypeError, ValueError) as exc:
+                    results.append(reviewer_plan.synthesize_unavailable_result(item, str(exc)))
             panel = reviewer_plan.evaluate_panel_gate(plan, results)
         receipt, receipt_id, annotated = write_receipt(
             args.root, args.feature, args.phase, scope, panel, head, section=args.section
