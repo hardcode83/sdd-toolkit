@@ -35,6 +35,12 @@ reviewer coverage, scope, identity, and the fail-closed certification boundary.
 - Malformed or unevaluable applicability metadata remains `UNKNOWN` and
   runnable rather than becoming a definitive skip.
 - Core reviewers are unconditional wherever the lifecycle requires a panel.
+- The toolkit itself ships one specialized, first-class example of an
+  additive project reviewer — the UI/UX review lens
+  (`templates/reviewer-ui-ux.md`, materialized via `/sdd:init`; see
+  `sdd/specs/ui-ux-review-lens.md`) — built entirely on this same project
+  reviewer contract. It does not widen this contract, does not join the core
+  registry, and matches/skips like any other project reviewer.
 
 ### R3 — Runtime adapter parity
 
