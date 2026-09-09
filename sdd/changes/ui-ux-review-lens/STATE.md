@@ -5,7 +5,7 @@ local_review: APPROVED
 repository: hardcode83/sdd-toolkit
 base_branch: main
 head_branch: sdd/ui-ux-review-lens
-implementation_sha: cc2937e1f00ce575d9bf4671f288bc25c58904f1
+implementation_sha: 82759ae654e8e7f285407b0e27a14f9f81c935bc
 pr_number: 70
 pr_url: https://github.com/hardcode83/sdd-toolkit/pull/70
 pr_state: OPEN
