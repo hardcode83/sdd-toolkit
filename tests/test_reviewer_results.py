@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -86,6 +87,92 @@ class ReviewerResultTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 result = self.rp.synthesize_unavailable_result(self.item, reason)
                 self.assertFalse(self.rp.evaluate_panel_gate([self.item], [result]).passed)
+
+
+class UiUxLensGateTests(unittest.TestCase):
+    """Task 5.2: a lens present in the plan cannot be laundered into a PASS.
+
+    unavailable / malformed / out-of-scope results for the UI/UX lens must all
+    fail the existing closed-world gate (`evaluate_panel_gate`) with no inline
+    substitution, exactly like a core reviewer would.
+    """
+
+    UI_UX_AGENT = (
+        "---\n"
+        "name: sdd-review-ui-ux\n"
+        "description: UI/UX and design-system reviewer for the panel.\n"
+        "model: sonnet\n"
+        "tools: Read, Grep, Glob, Bash\n"
+        "phases: [run, review, auto]\n"
+        "applies_to: [\"**/*.tsx\", \"**/*.jsx\", \"**/*.vue\", \"**/*.svelte\", \"**/*.css\", \"**/*.scss\", \"components/**\", \"app/**\"]\n"
+        "---\n"
+        "You are the UI/UX reviewer.\n"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rp = load_module()
+
+    def build_plan_with_lens(self, root: Path):
+        directory = root / ".claude" / "agents"
+        directory.mkdir(parents=True)
+        (directory / "sdd-review-ui-ux.md").write_text(self.UI_UX_AGENT, encoding="utf-8")
+        scope = {"feature": "x", "scope_id": "run:x", "files": ["src/components/App.tsx"]}
+        return self.rp.build_reviewer_plan(root, "run", scope), scope
+
+    def core_pass_results(self, plan, scope):
+        return [
+            self.rp.normalize_reviewer_result(
+                {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
+                 "verdict": "PASS", "findings": [], "evidence": scope["files"], "status": "complete"},
+                item,
+            )
+            for item in plan if item.source == "core"
+        ]
+
+    def test_unavailable_malformed_and_out_of_scope_lens_result_fails_the_gate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan, scope = self.build_plan_with_lens(root)
+            lens_item = next(item for item in plan if item.reviewer_id == "sdd-review-ui-ux")
+            # The lens is genuinely in the plan (MATCH on a frontend file), not skipped.
+            self.assertEqual(lens_item.applicability, self.rp.Applicability.MATCH)
+            self.assertEqual(lens_item.dispatch_status, "planned")
+            self.assertTrue(lens_item.required)
+
+            with self.subTest("unavailable"):
+                results = self.core_pass_results(plan, scope) + [
+                    self.rp.synthesize_unavailable_result(lens_item, "lens spawn failed")
+                ]
+                panel = self.rp.evaluate_panel_gate(plan, results)
+                self.assertFalse(panel.passed)
+                self.assertIn("reviewer did not pass: sdd-review-ui-ux", " ".join(panel.errors))
+
+            with self.subTest("malformed"):
+                results = self.core_pass_results(plan, scope) + [
+                    self.rp.ReviewerResult(lens_item.reviewer_id, lens_item.scope_id, "PASS", [], [None],
+                                           lens=lens_item.lens)
+                ]
+                panel = self.rp.evaluate_panel_gate(plan, results)
+                self.assertFalse(panel.passed)
+                self.assertIn("reviewer evidence entries are malformed: sdd-review-ui-ux", " ".join(panel.errors))
+
+            with self.subTest("out-of-scope"):
+                results = self.core_pass_results(plan, scope) + [
+                    self.rp.ReviewerResult(lens_item.reviewer_id, lens_item.scope_id, "PASS", [],
+                                           ["src/other-project/secret.md"], lens=lens_item.lens)
+                ]
+                panel = self.rp.evaluate_panel_gate(plan, results)
+                self.assertFalse(panel.passed)
+                self.assertIn("reviewer evidence is outside scope: sdd-review-ui-ux", " ".join(panel.errors))
+
+            # A malformed payload can never be normalized into a passing result either.
+            with self.subTest("malformed payload cannot be normalized"):
+                malformed_payload = {"reviewer_id": lens_item.reviewer_id, "scope_id": lens_item.scope_id,
+                                     "lens": lens_item.lens, "verdict": "PASS", "findings": [], "evidence": [],
+                                     "status": "incomplete"}
+                with self.assertRaises(ValueError):
+                    self.rp.normalize_reviewer_result(malformed_payload, lens_item)
 
 
 if __name__ == "__main__":

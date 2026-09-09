@@ -208,5 +208,65 @@ class CertificationNeedsTheReceiptTests(ReceiptFixture):
         self.assertIsNotNone(panel_receipt(linked, FEATURE))
 
 
+UI_UX_AGENT = (
+    "---\n"
+    "name: sdd-review-ui-ux\n"
+    "description: UI/UX and design-system reviewer for the panel.\n"
+    "model: sonnet\n"
+    "tools: Read, Grep, Glob, Bash\n"
+    "phases: [run, review, auto]\n"
+    "applies_to: [\"**/*.tsx\", \"**/*.jsx\", \"**/*.vue\", \"**/*.svelte\", \"**/*.css\", \"**/*.scss\", \"components/**\", \"app/**\"]\n"
+    "---\n"
+    "You are the UI/UX reviewer.\n"
+)
+
+
+class UiUxLensReceiptFixture(ReceiptFixture):
+    """Task 5.3: the same fixture, plus the UI/UX lens present alongside the core panel."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        agents = self.root / ".claude" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "sdd-review-ui-ux.md").write_text(UI_UX_AGENT, encoding="utf-8")
+        frontend = self.root / "src" / "components" / "App.tsx"
+        frontend.parent.mkdir(parents=True, exist_ok=True)
+        frontend.write_text("export const App = () => null;\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "add ui-ux lens and a frontend file")
+
+    def scope(self) -> dict:
+        return {"feature": FEATURE, "scope_id": f"review:{FEATURE}",
+                "files": ["src/a.py", "src/components/App.tsx"]}
+
+
+class UiUxLensReceiptTests(UiUxLensReceiptFixture):
+    def test_receipt_includes_the_lens_alongside_the_core_panel(self) -> None:
+        lenses = self.lenses()
+        self.assertIn("sdd-review-ui-ux", lenses)
+        result = self.run_panel(self.all_pass())
+        self.assertEqual(0, result.returncode, result.stdout)
+        receipt = panel_receipt(self.root, FEATURE)
+        self.assertEqual("PASS", receipt["gate"])
+        self.assertEqual({"sdd-architect", "sdd-security", "sdd-qa", "sdd-review-ui-ux"},
+                          {r["reviewer_id"] for r in receipt["reviewers"]})
+
+
+class UiUxLensCarryTests(UiUxLensReceiptFixture):
+    def test_carry_works_with_the_lens_present_alongside_the_core_panel(self) -> None:
+        lenses = self.lenses()
+        self.assertIn("sdd-review-ui-ux", lenses)
+        self.assertEqual(1, self.run_panel(
+            [self.envelope(rid, lens, "FAIL" if rid == "sdd-qa" else "PASS") for rid, lens in lenses.items()]
+        ).returncode)
+        self.commit("sdd/changes/example/design.md", "# Design\n\nD1 fixed wording.\n", "docs fix")
+        result = self.run_panel([self.envelope("sdd-qa", lenses["sdd-qa"])], "--carry")
+        self.assertEqual(0, result.returncode, result.stdout)
+        receipt = panel_receipt(self.root, FEATURE)
+        self.assertEqual(("PASS", self.head()), (receipt["gate"], receipt["sha"]))
+        self.assertEqual({"sdd-architect", "sdd-security", "sdd-qa", "sdd-review-ui-ux"},
+                          {r["reviewer_id"] for r in receipt["reviewers"]})
+
+
 if __name__ == "__main__":
     unittest.main()
