@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from validate_toolkit import (  # noqa: E402
+    STACK_COMMAND_RE,
+    parse_frontmatter,
     release_guard_errors,
     validate_codex_manifests,
     validate_manifests,
@@ -35,6 +37,34 @@ class ToolkitStructureTests(unittest.TestCase):
         """The adapter exposes these skills, so it cannot announce another release."""
         errors = validate_codex_manifests(ROOT, "9.9.9")
         self.assertTrue(any("must match" in error for error in errors), errors)
+
+    def test_frontend_steering_template_has_frontmatter_and_no_stack_command(
+        self,
+    ) -> None:
+        """The UI/UX lens needs a citable, stack-agnostic steering baseline."""
+        path = ROOT / "templates" / "steering" / "frontend.md"
+        errors: list[str] = []
+        data = parse_frontmatter(path, ROOT, errors)
+        self.assertEqual([], errors)
+        self.assertIn("applies_to", data)
+        content = path.read_text(encoding="utf-8")
+        self.assertIsNone(STACK_COMMAND_RE.search(content))
+
+    def test_ui_ux_reviewer_template_has_valid_frontmatter(self) -> None:
+        """The specialized UI/UX reviewer template must pass the same
+        frontmatter contract as every other reviewer/skill artifact, and
+        must ship phases/applies_to already filled so a generated agent
+        does not trip SDD028."""
+        path = ROOT / "templates" / "reviewer-ui-ux.md"
+        errors: list[str] = []
+        data = parse_frontmatter(path, ROOT, errors)
+        self.assertEqual([], errors)
+        self.assertEqual("sdd-review-ui-ux", data.get("name"))
+        self.assertTrue(data.get("description"))
+        self.assertTrue(data.get("model"))
+        self.assertTrue(data.get("tools"))
+        self.assertIn("phases", data)
+        self.assertIn("applies_to", data)
 
 
 class ReleaseGuardTests(unittest.TestCase):

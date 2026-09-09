@@ -152,6 +152,74 @@ class ReviewerPlanTests(unittest.TestCase):
             self.assertEqual(project.applicability, self.rp.Applicability.UNKNOWN)
             self.assertEqual(project.dispatch_status, "planned")
 
+    UI_UX_AGENT = (
+        "---\n"
+        "name: sdd-review-ui-ux\n"
+        "description: UI/UX and design-system reviewer for the panel.\n"
+        "model: sonnet\n"
+        "tools: Read, Grep, Glob, Bash\n"
+        "phases: [run, review, auto]\n"
+        "applies_to: [\"**/*.tsx\", \"**/*.jsx\", \"**/*.vue\", \"**/*.svelte\", \"**/*.css\", \"**/*.scss\", \"components/**\", \"app/**\"]\n"
+        "---\n"
+        "You are the UI/UX reviewer.\n"
+    )
+
+    UI_UX_AGENT_MISSING_METADATA = (
+        "---\n"
+        "name: sdd-review-ui-ux\n"
+        "description: UI/UX and design-system reviewer for the panel.\n"
+        "model: sonnet\n"
+        "tools: Read, Grep, Glob, Bash\n"
+        "---\n"
+        "You are the UI/UX reviewer.\n"
+    )
+
+    def test_ui_ux_lens_matches_frontend_scope_and_skips_backend_only_scope(self):
+        backend_scope = {"feature": "x", "scope_id": "review:x", "files": ["src/api.py", "src/backend/server.py"]}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            (directory / "sdd-review-ui-ux.md").write_text(self.UI_UX_AGENT, encoding="utf-8")
+
+            frontend_scope = {"feature": "x", "scope_id": "review:x", "files": ["src/components/App.tsx"]}
+            frontend_plan = self.rp.build_reviewer_plan(root, "review", frontend_scope)
+            lens = next(item for item in frontend_plan if item.reviewer_id == "sdd-review-ui-ux")
+            self.assertEqual(lens.applicability, self.rp.Applicability.MATCH)
+            self.assertEqual(lens.dispatch_status, "planned")
+            self.assertTrue(lens.required)
+
+            # Shallow (top-level-of-a-dir) frontend files must MATCH too. fnmatch's
+            # `*` crosses `/`, so a `src/**/*.tsx` shape would silently NO_MATCH the
+            # canonical Next.js App Router entry points; the shipped globs use
+            # `app/**` / `**/*.tsx` shapes precisely so these match. This guards
+            # against a regression back to the double-separator shape.
+            for shallow in ("app/page.tsx", "app/layout.tsx"):
+                shallow_scope = {"feature": "x", "scope_id": "review:x", "files": [shallow]}
+                shallow_plan = self.rp.build_reviewer_plan(root, "review", shallow_scope)
+                shallow_lens = next(item for item in shallow_plan if item.reviewer_id == "sdd-review-ui-ux")
+                self.assertEqual(shallow_lens.applicability, self.rp.Applicability.MATCH, shallow)
+                self.assertEqual(shallow_lens.dispatch_status, "planned", shallow)
+
+            backend_plan = self.rp.build_reviewer_plan(root, "review", backend_scope)
+            lens = next(item for item in backend_plan if item.reviewer_id == "sdd-review-ui-ux")
+            self.assertEqual(lens.applicability, self.rp.Applicability.NO_MATCH)
+            self.assertEqual(lens.dispatch_status, "skipped")
+            self.assertFalse(lens.required)
+            # NO MATCH is registered, never silently dropped from the plan.
+            self.assertEqual([item.reviewer_id for item in backend_plan[:3]], list(self.rp.MANDATORY_CORE))
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / ".claude" / "agents"
+            directory.mkdir(parents=True)
+            (directory / "sdd-review-ui-ux.md").write_text(self.UI_UX_AGENT_MISSING_METADATA, encoding="utf-8")
+            plan = self.rp.build_reviewer_plan(root, "review", backend_scope)
+            lens = next(item for item in plan if item.reviewer_id == "sdd-review-ui-ux")
+            self.assertEqual(lens.applicability, self.rp.Applicability.UNKNOWN)
+            self.assertEqual(lens.dispatch_status, "planned")
+            self.assertTrue(lens.required)
+
     def test_prompt_binds_scope_and_identity(self):
         item = self.rp.build_reviewer_plan(ROOT, "review", {"feature": "x", "scope_id": "implementation..HEAD", "files": ["src/a.py"]})[0]
         prompt = self.rp.build_reviewer_prompt(item, "x", {"requirements": "R1 requirement", "design": "D1 decision", "steering": "read-only", "scope": "src/a.py"})

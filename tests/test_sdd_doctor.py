@@ -423,5 +423,31 @@ class ProjectReviewerMetadataTests(unittest.TestCase):
             self.assertEqual(0, run_doctor(root).returncode)
 
 
+class UiUxReviewerTemplateTests(unittest.TestCase):
+    """The specialized UI/UX reviewer template ships phases/applies_to
+    already filled, so an agent generated from it must not trip SDD028
+    (`sdd-review-*.md` with no `phases`/`applies_to` runs on every panel)."""
+
+    def diagnose(self, root: Path) -> list[str]:
+        result = run_doctor(root)
+        return [line for line in result.stdout.splitlines() if "SDD028" in line]
+
+    def test_generated_agent_does_not_trigger_sdd028(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "sdd").mkdir()
+            (root / "sdd" / "project.md").write_text("# Project\n", encoding="utf-8")
+            agents = root / ".claude" / "agents"
+            agents.mkdir(parents=True)
+            template = (ROOT / "templates" / "reviewer-ui-ux.md").read_text(
+                encoding="utf-8"
+            )
+            (agents / "sdd-review-ui-ux.md").write_text(template, encoding="utf-8")
+            subprocess.run(
+                ["git", "init", "-q", "."], cwd=root, check=True, capture_output=True
+            )
+            self.assertEqual([], self.diagnose(root))
+
+
 if __name__ == "__main__":
     unittest.main()
