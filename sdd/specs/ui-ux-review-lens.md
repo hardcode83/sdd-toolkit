@@ -61,8 +61,8 @@ only on changes that touch visual surface.
 - WHEN `/sdd:init` detects a relevant frontend/design-system surface, THE
   SYSTEM SHALL offer (never impose) generating the UI/UX lens as one of the
   project reviewer lenses listed in `skills/init/SKILL.md`.
-- IF the user accepts, THEN THE SYSTEM SHALL generate
-  `.claude/agents/sdd-review-ui-ux.md` from `templates/reviewer-ui-ux.md`
+- IF the user accepts, THEN THE SYSTEM SHALL generate the UI/UX reviewer
+  lens from `templates/reviewer-ui-ux.md`
   and create the frontend/design-system steering if it does not already
   exist, with `applies_to` derived from the repo's actual frontend roots
   (not a fixed list).
