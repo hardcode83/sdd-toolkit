@@ -17,8 +17,14 @@ prohíbe comandos de stack en steering vía `STACK_COMMAND_RE:24-27` y exige que
 **sin tocar** ese núcleo. Los manifests (`.claude-plugin/plugin.json`,
 `.codex-plugin/plugin.json`) son metadata: no enumeran plantillas ni references
 (Codex hace glob `"skills": "./skills/"`), así que los artefactos nuevos no
-requieren registrarse; solo el bump de versión conjunto en release
-(`architecture.md`: "update both plugin manifests together").
+requieren registrarse. Lo que **sí** exige el repo es el bump de versión
+conjunto de ambos manifests **dentro de este mismo change**: `release-guard`
+(CI) rechaza tocar comportamiento distribuido sin mover `version` en
+`.claude-plugin/plugin.json` y `.codex-plugin/plugin.json` a la vez, porque el
+instalador solo ofrece actualización cuando la versión declarada cambia. Este
+change es una feature nueva ⇒ bump MINOR `0.53.0 → 0.54.0`. *(Corrección: una
+nota previa de este design asumía que el bump iba en un commit de release
+aparte; el CI real la refutó — ver Riesgos.)*
 
 ## Decisions
 
@@ -151,7 +157,7 @@ Rejected: copiar los tests al proyecto consumidor — prohibido por
 | Plantilla steering | `templates/steering/frontend.md` *(nuevo)* | Convenciones frontend + sección *Design system*: tokens/componentes/estados/responsive/a11y + baseline objetivo citable; agnóstica de stack (R2.3, R2.4, D6, OQ1) |
 | Init | `skills/init/SKILL.md` | Nombrar la lente UI/UX + garantizar steering + reafirmar solape frontend-design + fail-safe de globs (R3) |
 | Tests | `tests/test_reviewer_plan.py`, `test_reviewer_results.py`/`test_panel_contract.py`, `test_toolkit_validation.py`, `test_sdd_doctor.py`, `test_panel_receipt.py` | Cobertura de R7 (D8) |
-| Release (nota) | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` | Bump de versión **conjunto** en release, no en tasks de esta feature (ver Riesgos) |
+| Release (bump) | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` | Bump de versión **conjunto** `0.53.0 → 0.54.0` **en este mismo change**, exigido por `release-guard` (ver Riesgos) |
 
 ## Data & interfaces
 
@@ -163,11 +169,14 @@ eventos ni env vars.
 
 ## Risks & mitigations
 
-- **Bump de versión de manifests (architecture.md).** Un cambio de comportamiento
-  distribuido pide mover ambos manifests juntos. *Mitigación:* el repo bumpea
-  versión en un commit de release dedicado (p. ej. `chore(release): bump toolkit
-  to 0.53.0`); esta feature no toca los manifests en sus tasks, y el bump
-  conjunto se hace en release. Se registra como nota en "Changes by area".
+- **Bump de versión de manifests (architecture.md / `release-guard`).** Un cambio
+  de comportamiento distribuido exige mover ambos manifests juntos. *Nota previa
+  (refutada):* este design asumió que el bump viajaba en un commit de release
+  dedicado, fuera de esta feature. El `release-guard` del PR #70 lo desmintió: el
+  guard falla si un change toca archivos distribuidos sin subir `version` en
+  **ambos** manifests dentro del mismo change. *Mitigación real:* el bump conjunto
+  `0.53.0 → 0.54.0` (MINOR, feature nueva) forma parte de este change y se registra
+  en "Changes by area".
 - **`applies_to` incompleto ⇒ NO MATCH silencioso.** *Mitigación:* D4 (derivar
   del repo + fail-safe R3.5). Riesgo residual: globs correctos pero un archivo
   visual en ruta atípica; aceptable, mismo que cualquier project reviewer.

@@ -3,8 +3,10 @@
 <!-- Sin secciones `<!-- hard -->` (autoría de docs/plantillas + contract tests
      deterministas, sin varianza algorítmica). Sin tareas `<!-- manual -->`:
      todo se verifica con unittest, validate_toolkit y sdd-doctor. El bump de
-     versión conjunto de los manifests es una nota de release del design, NO una
-     tarea de esta feature. -->
+     versión conjunto de los manifests (`0.53.0 → 0.54.0`, MINOR) forma parte de
+     este change: lo exige `release-guard` para todo cambio distribuido. Una nota
+     previa que lo situaba fuera de esta feature quedó refutada por el CI (ver
+     design.md, Riesgos); se aplicó en la remediación del PR #70. -->
 
 ## 1. Referencia metodológica del toolkit <!-- panel: skipped — sección de documentación pura (references/ui-ux-review.md); no toca código de producción ni tests -->
 
