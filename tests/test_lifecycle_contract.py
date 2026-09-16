@@ -184,10 +184,18 @@ class LifecycleSkillContractTests(unittest.TestCase):
                 self.assertIn("do not \"fix\" it with a checkout", skill.lower())
 
     def test_review_persists_ready_for_pr(self) -> None:
+        """The canonical re-entry for the review milestone is `record-review`
+        — it walks mark-local-verified + mark-ready + the metrics commit
+        atomically, leaving a suffix the gate accepts. The skill must
+        invoke it explicitly and call out the READY_FOR_PR outcome.
+        """
         review = self.read_skill("review")
-        self.assertIn("mark-local-verified <feature>", review)
-        self.assertIn("mark-ready <feature>", review)
+        self.assertIn("record-review <feature>", review)
         self.assertIn("state: READY_FOR_PR", review)
+        # The recovery path is the canonical back-out for an already-bundled
+        # suffix; the review skill advertises it so the agent doesn't reach
+        # for `git reset`.
+        self.assertIn("repair-review-suffix", review)
 
     def test_new_initializes_active_lifecycle(self) -> None:
         new = self.read_skill("new")
