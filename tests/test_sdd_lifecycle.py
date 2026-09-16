@@ -27,6 +27,8 @@ from sdd_lifecycle import (  # noqa: E402
     publish_archive,
     read_state,
     record_pr,
+    record_review,
+    repair_review_suffix,
     require_merge,
     stage_archive_move,
     start_change,
@@ -2308,6 +2310,417 @@ class LifecycleRecertifyTests(unittest.TestCase):
             any(args[:2] == ["git", "push"] for args in commands),
             f"mark_recertified must not invoke git push, got: {commands}",
         )
+
+
+class RecordReviewTests(unittest.TestCase):
+    """Regression coverage for the review milestone bundle bug.
+
+    The original failure: an agent running ``/sdd:review`` bundled
+    ``STATE.md`` and ``metrics.md`` into a single commit with a non-canonical
+    subject. ``validate_ship_suffix`` correctly rejected it but no canonical
+    recovery existed: ``mark-local-verified`` refused to advance from
+    ``READY_FOR_PR``, ``mark-recertified`` required ``PR_OPEN``, ``record-pr``
+    required a PR, and ``/sdd:ship`` could not open a PR because
+    ``validate-ship`` was failing upstream. This suite locks down the new
+    ``record-review`` and ``repair-review-suffix`` paths so the bundle shape
+    can never leave a change stuck at ``READY_FOR_PR`` again.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.change = self.root / "sdd" / "changes" / FEATURE
+        self.change.mkdir(parents=True)
+        (self.change / "proposal.md").write_text(
+            "# Proposal\n\n## Requirements\n\n### R1 — Example\n",
+            encoding="utf-8",
+        )
+        (self.change / "tasks.md").write_text(
+            "# Tasks\n\n- [x] 1.1 Complete behavior [R1]\n",
+            encoding="utf-8",
+        )
+        (self.root / "sdd" / "specs").mkdir()
+        (self.root / "sdd" / "specs" / "example.md").write_text(
+            "# Example\n\nOld behavior.\n", encoding="utf-8"
+        )
+        (self.root / "sdd" / "roadmap.md").write_text(
+            "# Roadmap\n\n"
+            "- [ ] example — lifecycle fixture → changes/example/\n",
+            encoding="utf-8",
+        )
+        write_state(self.change, initial_state())
+        self.git("init", "-b", "sdd/example")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "SDD Test")
+        self.git("remote", "add", "origin", "https://github.com/example/project.git")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+        self.implementation_sha = self.git("rev-parse", "HEAD").stdout.strip()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def dirty_metrics(self) -> None:
+        """Simulate ``usage-sync.py sync`` updating the metrics ledgers."""
+        feature_metrics = self.change / "metrics.md"
+        feature_metrics.parent.mkdir(parents=True, exist_ok=True)
+        feature_metrics.write_text(
+            "| 2026-09-16 | review | sonnet | 1 | 1 | 0 | 0.0100 | |\n",
+            encoding="utf-8",
+        )
+        consolidated = self.root / "sdd" / "metrics.md"
+        consolidated.parent.mkdir(parents=True, exist_ok=True)
+        consolidated.write_text(
+            "# SDD metrics\n\n"
+            "| feature | phases | tokens in | tokens out | tokens cache | "
+            "cost USD (est) | started | archived |\n|---|---|---|---|---|---|---|---|\n"
+            f"| example | review | 1 | 1 | 0 | 0.0100 | 2026-09-16 | — |\n",
+            encoding="utf-8",
+        )
+
+    def test_record_review_produces_a_ship_ready_suffix_end_to_end(self) -> None:
+        """Happy path: implementation -> review PASS -> READY_FOR_PR -> validate-ship PASS.
+
+        The exact bug scenario the user reported: the review milestone must
+        leave a suffix that ``validate-suffix`` accepts, without the agent
+        having to know the commit shapes the gate allows.
+        """
+        # receipt is provided by the setUpModule patch (ensure_panel_receipt stub).
+        message = record_review(self.root, FEATURE, "main")
+        self.assertIn("READY_FOR_PR", message)
+        state = read_state(self.change)
+        self.assertEqual("READY_FOR_PR", state["state"])
+        self.assertEqual("APPROVED", state["local_review"])
+        self.assertEqual(self.implementation_sha, state["implementation_sha"])
+        # Suffix = the two canonical lifecycle commits. No metrics commit because
+        # nothing was dirty.
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(2, len(suffix))
+        self.assertEqual(
+            "chore(sdd): lifecycle example ACTIVE->LOCAL_VERIFIED",
+            self.git("show", "-s", "--format=%s", suffix[0]).stdout.strip(),
+        )
+        self.assertEqual(
+            "chore(sdd): lifecycle example LOCAL_VERIFIED->READY_FOR_PR",
+            self.git("show", "-s", "--format=%s", suffix[1]).stdout.strip(),
+        )
+        for commit in suffix:
+            paths = self.git(
+                "show", "--format=", "--name-only", commit
+            ).stdout.split()
+            self.assertEqual(["sdd/changes/example/STATE.md"], paths)
+
+    def test_record_review_commits_metrics_observationally(self) -> None:
+        """When the metrics ledgers are dirty at entry, ``record-review``
+        walks the lifecycle FIRST so the recorded ``implementation_sha``
+        stays anchored at the implementation commit, then commits the
+        metrics as a metrics-only commit on top. The suffix is therefore
+        two lifecycle commits followed by the metrics commit, in that
+        chronological order."""
+        self.dirty_metrics()
+        message = record_review(self.root, FEATURE, "main")
+        self.assertIn("metrics committed", message)
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(3, len(suffix))
+        # The two lifecycle commits go first (anchor + stable feature path).
+        self.assertEqual(
+            "chore(sdd): lifecycle example ACTIVE->LOCAL_VERIFIED",
+            self.git("show", "-s", "--format=%s", suffix[0]).stdout.strip(),
+        )
+        self.assertEqual(
+            "chore(sdd): lifecycle example LOCAL_VERIFIED->READY_FOR_PR",
+            self.git("show", "-s", "--format=%s", suffix[1]).stdout.strip(),
+        )
+        # The metrics commit comes last, with the canonical subject and
+        # metrics-only paths.
+        self.assertEqual(
+            "sdd(example): review metrics",
+            self.git("show", "-s", "--format=%s", suffix[2]).stdout.strip(),
+        )
+        metrics_paths = set(
+            self.git(
+                "show", "--format=", "--name-only", suffix[2]
+            ).stdout.split()
+        )
+        self.assertEqual(
+            {"sdd/changes/example/metrics.md", "sdd/metrics.md"}, metrics_paths
+        )
+
+    def test_record_review_is_idempotent_for_lifecycle_only(self) -> None:
+        """Re-running ``record-review`` after the first invocation does not
+        re-emit a lifecycle commit; the suffix stays at two commits plus, when
+        metrics later become dirty, the optional metrics commit."""
+        record_review(self.root, FEATURE, "main")
+        first_head = self.git("rev-parse", "HEAD").stdout.strip()
+        suffix_before = validate_ship_suffix(self.root, FEATURE)
+        # Second call with no dirty metrics: no new commits.
+        message = record_review(self.root, FEATURE, "main")
+        self.assertIn("no pending metrics", message)
+        self.assertEqual(first_head, self.git("rev-parse", "HEAD").stdout.strip())
+        suffix_after = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(suffix_before, suffix_after)
+        # Now dirty the metrics files and re-run: only the metrics commit is added.
+        self.dirty_metrics()
+        message = record_review(self.root, FEATURE, "main")
+        self.assertIn("metrics committed", message)
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(3, len(suffix))
+        self.assertEqual(
+            "sdd(example): review metrics",
+            self.git("show", "-s", "--format=%s", suffix[-1]).stdout.strip(),
+        )
+
+    def test_record_review_rejects_pr_open(self) -> None:
+        """State past READY_FOR_PR has its own commands; ``record-review``
+        must refuse rather than silently emit a lifecycle commit."""
+        # Walk to PR_OPEN through the canonical helpers.
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        record_pr(
+            self.root,
+            FEATURE,
+            PR_URL,
+            runner=self.gh_runner(self._pr_payload("OPEN")),
+        )
+        with self.assertRaisesRegex(LifecycleError, "past READY_FOR_PR"):
+            record_review(self.root, FEATURE, "main")
+
+    def test_record_review_refuses_when_state_md_is_unexpectedly_dirty(self) -> None:
+        """The agent's accidental STATE.md edit must not leak into the
+        metrics commit; the lifecycle helpers refuse, surfacing the contract
+        change as an explicit error rather than swallowing it."""
+        # Activate the change, then dirty STATE.md with non-canonical bytes
+        # before record-review runs.
+        mark_local_verified(self.root, FEATURE)
+        state_file = self.change / "STATE.md"
+        original = state_file.read_bytes()
+        state_file.write_bytes(original + b"agent edit\n")
+        with self.assertRaisesRegex(LifecycleError, "pre-existing edits"):
+            record_review(self.root, FEATURE, "main")
+
+    # _pr_payload mirrors LifecycleTests.pr_payload but reads ``implementation_sha``
+    # rather than baking it at fixture time.
+    def _pr_payload(self, state: str) -> dict[str, object]:
+        return {
+            "number": 17,
+            "url": PR_URL,
+            "state": state,
+            "mergedAt": None,
+            "mergeCommit": None,
+            "baseRefName": "main",
+            "headRefName": "sdd/example",
+            "headRefOid": self.implementation_sha,
+            "commits": [{"oid": self.implementation_sha}],
+        }
+
+    @staticmethod
+    def gh_runner(payload: dict[str, object]):
+        def run(
+            args: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[str]:
+            if args[0] == "git":
+                return subprocess.run(args, **kwargs)  # type: ignore[arg-type]
+            if args[:3] != ["gh", "pr", "view"]:
+                raise AssertionError(f"Unexpected external command: {args}")
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+        return run
+
+    # ----- Bug reproduction: a commit that touches STATE + metrics together is
+    # rejected by validate_ship_suffix, and ``repair-review-suffix`` rewinds it
+    # back into the canonical shape. -----
+
+    def write_ready_state(self) -> None:
+        """Mirror the agent's hand-crafted STATE.md: full READY_FOR_PR content
+        with implementation_sha anchored at the implementation commit, even
+        though no canonical lifecycle commits back it."""
+        intended = {
+            "schema": "1",
+            "state": "READY_FOR_PR",
+            "local_review": "APPROVED",
+            "repository": "example/project",
+            "base_branch": "main",
+            "head_branch": "sdd/example",
+            "implementation_sha": self.implementation_sha,
+            "pr_number": "",
+            "pr_url": "",
+            "pr_state": "",
+            "merge_evidence": "",
+            "merge_sha": "",
+        }
+        write_state(self.change, intended)
+
+    def test_a_mixed_state_and_metrics_commit_is_rejected_by_validate_ship(self) -> None:
+        """Negative test: the exact bug pattern (single commit after
+        ``implementation_sha`` whose paths are STATE.md + metrics files)
+        remains rejected by ``validate_ship_suffix`` — the fix is a
+        canonical re-entry, not a softer allowlist."""
+        self.dirty_metrics()
+        self.write_ready_state()
+        # Single commit bundling STATE.md and both metrics files.
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git("add", "sdd/changes/example/metrics.md")
+        self.git("add", "sdd/metrics.md")
+        self.git(
+            "commit",
+            "-m",
+            "sdd(example): record review PASS and mark READY_FOR_PR",
+        )
+        with self.assertRaisesRegex(
+            LifecycleError,
+            "outside the lifecycle allowlist|unauthorized lifecycle subject",
+        ):
+            validate_ship_suffix(self.root, FEATURE)
+
+    def test_repair_review_suffix_rewinds_a_mixed_commit_into_canonical(self) -> None:
+        """Recovery: a STATE+metrics bundle is repaired into one lifecycle
+        commit plus a metrics-only commit, with the original STATE.md content
+        preserved at the lifecycle commit and the metrics content preserved
+        at the metrics commit."""
+        self.dirty_metrics()
+        self.write_ready_state()
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git("add", "sdd/changes/example/metrics.md")
+        self.git("add", "sdd/metrics.md")
+        self.git(
+            "commit",
+            "-m",
+            "sdd(example): record review PASS and mark READY_FOR_PR",
+        )
+        message = repair_review_suffix(self.root, FEATURE)
+        self.assertIn("Repaired 1 mixed commit", message)
+        # Suffix is now: ACTIVE->LOCAL_VERIFIED, LOCAL_VERIFIED->READY_FOR_PR,
+        # metrics-only.
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(3, len(suffix))
+        self.assertEqual(
+            "chore(sdd): lifecycle example ACTIVE->LOCAL_VERIFIED",
+            self.git("show", "-s", "--format=%s", suffix[0]).stdout.strip(),
+        )
+        self.assertEqual(
+            "chore(sdd): lifecycle example LOCAL_VERIFIED->READY_FOR_PR",
+            self.git("show", "-s", "--format=%s", suffix[1]).stdout.strip(),
+        )
+        self.assertEqual(
+            "sdd(example): review metrics",
+            self.git("show", "-s", "--format=%s", suffix[2]).stdout.strip(),
+        )
+        # Each lifecycle commit touches STATE.md only.
+        for commit in suffix[:2]:
+            self.assertEqual(
+                ["sdd/changes/example/STATE.md"],
+                self.git(
+                    "show", "--format=", "--name-only", commit
+                ).stdout.split(),
+            )
+        # The metrics commit is metrics-only (STATE.md absent).
+        metrics_paths = set(
+            self.git(
+                "show", "--format=", "--name-only", suffix[2]
+            ).stdout.split()
+        )
+        self.assertEqual(
+            {"sdd/changes/example/metrics.md", "sdd/metrics.md"}, metrics_paths
+        )
+        self.assertNotIn("sdd/changes/example/STATE.md", metrics_paths)
+        # The recorded implementation_sha is preserved through the repair.
+        self.assertEqual(
+            self.implementation_sha, read_state(self.change)["implementation_sha"]
+        )
+
+    def test_repair_review_suffix_is_a_noop_when_suffix_is_already_canonical(self) -> None:
+        """A suffix made only of canonical lifecycle + metrics commits does
+        not need repair; the command reports so and does not rewrite history."""
+        # Walk to READY_FOR_PR via the canonical helpers, then dirty + commit
+        # the metrics files as a metrics-only commit.
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        self.dirty_metrics()
+        self.git("add", "sdd/changes/example/metrics.md")
+        self.git("add", "sdd/metrics.md")
+        self.git("commit", "-m", "sdd(example): review metrics")
+        head_before = self.git("rev-parse", "HEAD").stdout.strip()
+        message = repair_review_suffix(self.root, FEATURE)
+        self.assertIn("already ship-ready", message)
+        self.assertEqual(
+            head_before, self.git("rev-parse", "HEAD").stdout.strip()
+        )
+        # Sanity: validate_ship passes; the suffix is exactly what was there.
+        suffix = validate_ship_suffix(self.root, FEATURE)
+        self.assertEqual(3, len(suffix))
+
+    def test_repair_review_suffix_refuses_a_commit_with_functional_drift(self) -> None:
+        """Code/specs/archive paths in the suffix are genuine drift past
+        ``implementation_sha``. The repair must NOT normalize them away —
+        it must surface the fact and refuse."""
+        self.dirty_metrics()
+        self.write_ready_state()
+        # Add a code change AND a STATE+metrics bundle in one commit (the
+        # worst-case mixed shape).
+        (self.root / "src.py").write_text("print('unreviewed')\n", encoding="utf-8")
+        self.git("add", "src.py")
+        self.git("add", "sdd/changes/example/STATE.md")
+        self.git("add", "sdd/changes/example/metrics.md")
+        self.git(
+            "commit",
+            "-m",
+            "sdd(example): record review and ship a code change",
+        )
+        with self.assertRaisesRegex(
+            LifecycleError, "genuine drift past implementation_sha"
+        ):
+            repair_review_suffix(self.root, FEATURE)
+        # The worktree is left exactly as it was — no partial reset.
+        head_after = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(
+            "sdd(example): record review and ship a code change",
+            self.git("show", "-s", "--format=%s", head_after).stdout.strip(),
+        )
+
+    def test_repair_review_suffix_refuses_at_pr_open(self) -> None:
+        """A suffix that has been pushed (``PR_OPEN``) cannot be rewound;
+        the user must instead re-run ``/sdd:review <feature>``."""
+        # Walk to PR_OPEN through the canonical helpers.
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        record_pr(
+            self.root,
+            FEATURE,
+            PR_URL,
+            runner=self.gh_runner(self._pr_payload("OPEN")),
+        )
+        with self.assertRaisesRegex(LifecycleError, "past READY_FOR_PR"):
+            repair_review_suffix(self.root, FEATURE)
+
+    def test_validate_ship_suffix_still_rejects_arbitrary_commits(self) -> None:
+        """Belt and suspenders: a hand-crafted STATE-only commit with the
+        canonical transition subject but a fake ``implementation_sha`` is
+        still caught by the existing classifier — the regression fix is
+        about metrics, not about relaxing STATE-validation rules."""
+        mark_local_verified(self.root, FEATURE)
+        mark_ready(self.root, FEATURE, "main")
+        (self.root / "code.py").write_text("x = 1\n", encoding="utf-8")
+        self.git("add", "code.py")
+        self.git("commit", "-m", "unreviewed code")
+        with self.assertRaisesRegex(
+            LifecycleError, "unauthorized lifecycle subject"
+        ):
+            validate_ship_suffix(self.root, FEATURE)
 
 
 if __name__ == "__main__":

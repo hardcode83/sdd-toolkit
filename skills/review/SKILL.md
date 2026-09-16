@@ -178,13 +178,23 @@ reason. Then:
    the change may already be at `PR_OPEN`, in which case the milestones below
    would be a no-op or an error:
 
-   - `ACTIVE` or `LOCAL_VERIFIED` → the standard two-milestone sequence:
+   - `ACTIVE` or `LOCAL_VERIFIED` → record-review walks the canonical two-
+     milestone sequence atomically and produces a metrics commit when
+     one is pending, leaving a suffix `validate-ship` accepts:
 
      ```bash
-     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-local-verified <feature>
-     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . mark-ready <feature> --base <target-base-branch>
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-review <feature> --base <target-base-branch>
      python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . validate-ship <feature>
      ```
+
+     The two lifecycle commits are `mark-local-verified`'s
+     `ACTIVE -> LOCAL_VERIFIED` and `mark-ready`'s
+     `LOCAL_VERIFIED -> READY_FOR_PR`; the optional third is the
+     metrics-only commit, only made when the metrics ledgers are dirty.
+     `record-review` is the canonical re-entry; do not call
+     `mark-local-verified` and `mark-ready` separately, do not hand-write
+     the metrics commit, and do not bundle `STATE.md` into a non-lifecycle
+     commit.
 
    - `PR_OPEN` → recertification: launch the panel over the range
      `implementation_sha..HEAD` (the new fix, not the whole branch) and, on
@@ -231,13 +241,41 @@ reason. Then:
 
    `sync` rebuilds every phase row from the captured log and refreshes the
    consolidated row in `sdd/metrics.md`, so a change waiting for its merge
-   already has complete metrics instead of none until archive. **Commit the
-   result as a metrics-only commit** — `git add sdd/changes/<feature>/metrics.md
-   sdd/metrics.md && git commit -m "sdd(<feature>): review metrics"` — nothing
-   else in it: the ship gate authorizes exactly that shape after the lifecycle
-   milestones (ADR 0008, adenda). Never leave the diff dirty and never fold it
-   into another commit; a metrics commit that also touched code once made ship
-   rewrite history to get past its own gate.
+   already has complete metrics instead of none until archive. **Commit
+   those metrics files through the toolkit, not by hand.** The lifecycle
+   helper
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . record-review <feature> --base <target-base-branch>
+   ```
+
+   walks the canonical milestone sequence (`mark-local-verified`,
+   `mark-ready --base <base>`) atomically and commits the metrics files as a
+   `sdd(<feature>): review metrics` commit whose only paths are
+   `sdd/changes/<feature>/metrics.md` and `sdd/metrics.md`. State.md is never
+   on its path list, so the suffix is always a ship-valid shape (a
+   hand-crafted metrics commit that also touched `STATE.md` once left
+   `READY_FOR_PR` in deadlock — `validate-ship` rejected the bundle, no
+   canonical recovery existed, and the historic fix was `git reset --soft
+   HEAD~1`, which the ship skill now refuses). `record-review` is idempotent:
+   re-running on a branch that already reached `READY_FOR_PR` only emits a
+   new metrics commit if the metrics files are dirty.
+
+   **Recovery from a stale bundle.** If the suffix is already in the
+   bad-bundle shape (a single commit touching `STATE.md` plus the metrics
+   files), `repair-review-suffix` rewinds it to `implementation_sha` and
+   replays the canonical sequence:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd_lifecycle.py" --root . repair-review-suffix <feature>
+   ```
+
+   It refuses on any functional drift (a commit that also touches code,
+   specs, evidence or archive — that is genuine drift, not a metrics
+   bundling error), and on `PR_OPEN`/`MERGED`/`ARCHIVED` (the suffix may
+   already be published). Never fold a metrics change into a `STATE.md`
+   lifecycle commit and never hand-write the metrics commit: the toolkit
+   alone produces the suffix the gate accepts.
 
 7. **Offer to publish — one question, not five instructions.** On a passing
    verdict, `READY_FOR_PR` is a change that is finished locally and invisible to

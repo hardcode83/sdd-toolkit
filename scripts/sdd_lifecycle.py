@@ -2193,6 +2193,425 @@ def mark_recertified(
     return f"PR_OPEN re-anchored at {head[:12]}."
 
 
+# The metrics files this feature owns; both must remain measurable but non-lifecycle.
+REVIEW_METRICS_SUBJECT = "sdd({feature}): review metrics"
+
+
+def _commit_review_metrics(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Commit any dirty metrics ledger rows for this feature as a metrics commit.
+
+    The commit, when made, has subject `sdd(<feature>): review metrics` and
+    touches ONLY files inside ``metrics_paths(feature)``. STATE.md is never
+    in scope: bundling it would create a commit shape ``validate_ship_suffix``
+    rejects, leaving the change stuck at READY_FOR_PR (ADR 0008, adenda — the
+    historic fix was a forbidden ``git reset --soft HEAD~1``).
+
+    Idempotent: if no metrics file is dirty, no commit is made. The lifecycle
+    milestones already in place are exactly what ``validate_ship_suffix``
+    accepts, so no recovery is needed; this function just adds the optional
+    metrics commit on top.
+    """
+    expected = sorted(metrics_paths(feature))
+    dirty: list[str] = []
+    for path in expected:
+        status = run_command(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--", path],
+            root,
+            runner,
+        ).stdout
+        if status.strip():
+            dirty.append(path)
+    if not dirty:
+        return "READY_FOR_PR recorded (no pending metrics to commit)."
+    subject = REVIEW_METRICS_SUBJECT.format(feature=feature)
+    # Stage ONLY the dirty metrics paths (a non-metrics dirty file would be
+    # inherited as a typo — ``--only`` plus an explicit pathspec refuses it).
+    run_command(["git", "add", "--"] + dirty, root, runner)
+    result = runner(
+        [
+            "git",
+            "commit",
+            "--only",
+            "-m",
+            subject,
+            "--",
+        ]
+        + dirty,
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        # Roll the partial staging back so the worktree is never half-prepared.
+        try:
+            run_command(["git", "restore", "--staged", "--"] + dirty, root, runner)
+        except LifecycleError:
+            pass
+        detail = (result.stderr or result.stdout).strip()
+        raise LifecycleError(
+            f"metrics commit failed: {detail or 'unknown error'}"
+        )
+    commit = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    return f"metrics committed as {commit[:12]}."
+
+
+def record_review(
+    root: Path,
+    feature: str,
+    base_branch: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """End-to-end review milestone: certify + advance lifecycle + commit metrics.
+
+    The review skill's happy path used to be a four-step hand dance —
+    ``mark-local-verified``, ``mark-ready``, ``usage-sync.py sync``, then a
+    hand-written ``git commit`` for the metrics files. Step 4 is the step
+    where the agents mis-shape the suffix: bundling ``STATE.md`` (unchanged
+    since the lifecycle commits) into a single ``metrics + STATE`` commit.
+    ``validate_ship_suffix`` correctly rejects that shape (it is none of
+    metrics-only, lifecycle STATE-only, or sync-merge), the change is stuck
+    at READY_FOR_PR with no canonical recovery, and the documented fix was a
+    ``git reset --soft HEAD~1`` that the ship skill now explicitly forbids.
+
+    This helper is the single home for the milestone + metrics combination:
+
+      - temporarily moves any dirty metrics files out of the worktree so
+        the lifecycle helpers — which refuse dirty worktrees outside
+        STATE.md — can run;
+      - calls ``mark-local-verified`` (canonical ``ACTIVE->LOCAL_VERIFIED``)
+        with HEAD still pointing at the implementation anchor (so the
+        recorded ``implementation_sha`` is the implementation commit, not
+        anything else);
+      - calls ``mark-ready --base <base>`` (canonical
+        ``LOCAL_VERIFIED->READY_FOR_PR``);
+      - restores the metrics files and commits them as a metrics-only
+        commit whose subject matches the canonical
+        ``sdd(<feature>): review metrics`` shape. STATE.md is never added
+        here; even a workspace that accidentally left it dirty never
+        lands in the metrics commit's paths.
+
+    Idempotent on re-entry: when state is already ``READY_FOR_PR`` with
+    ``local_review: APPROVED`` (a re-run after a previous invocation), it
+    only emits a metrics commit if one is pending.
+    """
+    change = active_change(root, feature)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(f"'{feature}' has no STATE.md; run /sdd:new first.")
+    state = data.get("state")
+    if state in {"PR_OPEN", "MERGED", "ARCHIVED", "CANCELLED"}:
+        raise LifecycleError(
+            f"record-review applies to changes that have not been published "
+            f"(state {state} is past READY_FOR_PR). Use `mark-recertified` for "
+            f"PR_OPEN and /sdd:archive for MERGED."
+        )
+    if state == "READY_FOR_PR":
+        if data.get("local_review") != "APPROVED":
+            raise LifecycleError(
+                "READY_FOR_PR is set but local_review is not APPROVED; the "
+                "lifecycle is inconsistent. Re-run /sdd:review <feature> from "
+                "the beginning."
+            )
+        # Idempotent re-entry: the lifecycle commits are already in place.
+        return _commit_review_metrics(root, feature, runner)
+    if state not in {"ACTIVE", "LOCAL_VERIFIED"}:
+        raise LifecycleError(
+            f"record-review requires state ACTIVE or LOCAL_VERIFIED; found "
+            f"'{state}'. Re-run /sdd:review <feature>."
+        )
+    # Drain metrics files out of the worktree so the lifecycle helpers
+    # see a strictly-STATE.md dirty (or clean) tree. We back them up to
+    # a private temp dir so the user's data is never lost — even on the
+    # failure paths.
+    backup_dir = Path(tempfile.mkdtemp(prefix="sdd-record-"))
+    backups: dict[str, Path] = {}
+    try:
+        for path in metrics_paths(feature):
+            target = root / path
+            if target.exists():
+                backup = backup_dir / path.replace("/", "_")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup)
+                backups[path] = backup
+                target.unlink()
+        # Walking the canonical sequence: ACTIVE -> LOCAL_VERIFIED -> READY_FOR_PR.
+        # Both helpers are strict about dirty worktrees, BLOCKED.md, the panel
+        # receipt and the STATE continuity contract; whatever they refuse is
+        # surfaced here verbatim.
+        mark_local_verified(root, feature, runner=runner)
+        mark_ready(root, feature, base_branch, runner=runner)
+    finally:
+        # Always restore, even on the failure paths above.
+        for path, backup in backups.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, target)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    # With the lifecycle in place, drain whatever the metrics files contain
+    # into a metrics-only commit. STATE.md is never on its path list.
+    return _commit_review_metrics(root, feature, runner)
+
+
+def repair_review_suffix(
+    root: Path,
+    feature: str,
+    runner: Runner = subprocess.run,
+) -> str:
+    """Split a STATE+metrics bundle in the suffix back into canonical shapes.
+
+    When an agent bypasses ``record-review`` and bundles ``STATE.md`` into a
+    single commit with the metrics files, ``validate_ship_suffix`` rejects the
+    suffix and the change is stuck at READY_FOR_PR with no canonical
+    recovery. This command rewinds the suffix to ``implementation_sha`` and
+    replays the canonical milestone sequence using the STATE.md content the
+    agent intended: one ``ACTIVE->LOCAL_VERIFIED`` lifecycle commit, one
+    ``LOCAL_VERIFIED->READY_FOR_PR`` lifecycle commit, and the metrics files
+    re-committed as a metrics-only commit.
+
+    Refuses when:
+
+      - the branch has already been pushed (state is ``PR_OPEN`` /
+        ``MERGED`` / ``ARCHIVED`` — the reset would rewrite published
+        history);
+      - any suffix commit touches a functional path (code, specs, evidence,
+        archive); it is then genuine drift the panel did not certify, and
+        ``/sdd:review <feature>`` must absorb the fix;
+      - the offending commit is a sync-merge (``sync-base`` already
+        authorizes its shape, including the second-parent-in-base rule).
+    """
+    change = active_change(root, feature)
+    data = read_state(change)
+    if not data:
+        raise LifecycleError(f"'{feature}' has no STATE.md.")
+    state = data.get("state")
+    if state in {"PR_OPEN", "MERGED", "ARCHIVED"}:
+        raise LifecycleError(
+            f"repair-review-suffix only operates on unpushed branches "
+            f"(state {state} is past READY_FOR_PR and the suffix may be "
+            f"published). Re-run /sdd:review <feature> instead."
+        )
+    if state == "CANCELLED":
+        raise LifecycleError("Change is CANCELLED; nothing to repair.")
+    implementation_sha = data.get("implementation_sha")
+    if not SHA_RE.fullmatch(implementation_sha or ""):
+        raise LifecycleError("STATE.md has no stable implementation_sha anchor.")
+    head = run_command(["git", "rev-parse", "HEAD"], root, runner).stdout.strip()
+    if not try_command(
+        ["git", "merge-base", "--is-ancestor", implementation_sha, head], root, runner
+    ):
+        raise LifecycleError("implementation_sha must be an ancestor of HEAD.")
+    expected_path = lifecycle_path(root, feature, runner)
+    candidates = run_command(
+        [
+            "git",
+            "rev-list",
+            "--reverse",
+            "--first-parent",
+            f"{implementation_sha}..{head}",
+        ],
+        root,
+        runner,
+    ).stdout.split()
+    bad: list[str] = []
+    for commit in candidates:
+        parents = run_command(
+            ["git", "show", "-s", "--format=%P", commit], root, runner
+        ).stdout.split()
+        if len(parents) != 1:
+            raise LifecycleError(
+                f"Repair only covers single-parent suffix commits; {commit[:12]} is "
+                f"a merge that the canonical sync-base / lifecycle paths already own."
+            )
+        paths = run_command(
+            [
+                "git",
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commit,
+            ],
+            root,
+            runner,
+        ).stdout.split()
+        touches_state = expected_path in paths
+        touches_metrics = bool(set(paths) & metrics_paths(feature))
+        functional = [path for path in paths if not NON_CODE_PATH_RE.search(path)]
+        if touches_state and functional:
+            raise LifecycleError(
+                f"Commit {commit[:12]} also touches a functional path "
+                f"({', '.join(functional)}); it is genuine drift past "
+                f"implementation_sha, not a metrics bundling error. Run "
+                f"/sdd:review <feature> to absorb it."
+            )
+        if touches_state and not touches_metrics:
+            continue
+        if touches_state and touches_metrics:
+            bad.append(commit)
+    if not bad:
+        return (
+            "No mixed STATE+metrics commits in the suffix; the canonical "
+            "shape is already ship-ready."
+        )
+    # Capture the agent's intended STATE.md content (post-bad-commit): it
+    # carries the full READY_FOR_PR metadata they wrote.
+    intended_state = (change / "STATE.md").read_text(encoding="utf-8")
+    intended = state_from_text(intended_state, f"{change / 'STATE.md'}")
+    # Capture the consolidated metrics content: union of paths across the bad
+    # commits, with the latest content the agent left on each.
+    metrics_content: dict[str, str] = {}
+    for commit in bad:
+        paths = run_command(
+            [
+                "git",
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commit,
+            ],
+            root,
+            runner,
+        ).stdout.split()
+        for path in set(paths) & metrics_paths(feature):
+            if path not in metrics_content:
+                metrics_content[path] = run_command(
+                    ["git", "show", f"{commit}:{path}"], root, runner
+                ).stdout
+    # Rewind the suffix. ``--mixed`` resets HEAD and the index to the
+    # implementation anchor while leaving the working tree untouched — that
+    # way the agent's STATE.md content and metrics content are still on disk
+    # to be replayed through the canonical lifecycle shape.
+    try:
+        run_command(
+            ["git", "reset", "--mixed", implementation_sha], root, runner
+        )
+    except LifecycleError as error:
+        raise LifecycleError(
+            f"Could not rewind the suffix to implementation_sha; the branch "
+            f"may have been pushed. Details: {error}"
+        ) from error
+    # At this point: HEAD=implementation_sha, index=implementation_sha,
+    # worktree=STATE.md at READY_FOR_PR (modified, allowed) plus metrics files
+    # (modified, NOT allowed by ``ensure_clean_or_only_expected_state``).
+    # Back the metrics files out of the worktree so the lifecycle helpers can
+    # stage STATE.md cleanly.
+    backup_dir = Path(tempfile.mkdtemp(prefix="sdd-repair-"))
+    backups: dict[str, Path] = {}
+    try:
+        for path in metrics_content:
+            source = root / path
+            if source.exists():
+                backup = backup_dir / path.replace("/", "_")
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, backup)
+                backups[path] = backup
+                source.unlink()
+        # ``git reset --mixed`` left the worktree untouched. STATE.md on
+        # disk is still the agent's intended READY_FOR_PR content — the
+        # ``lifecycle_commit`` helper insists on a continuous parent STATE
+        # at the expected source state, so restore STATE.md from the
+        # implementation anchor's tree (which is ACTIVE) before walking it
+        # forward.
+        run_command(
+            ["git", "checkout", implementation_sha, "--", expected_path],
+            root,
+            runner,
+        )
+        # Reconstruct the intermediate LOCAL_VERIFIED state. Only the state
+        # name, local_review and implementation_sha change here — the rest of
+        # the metadata travels unchanged in the second lifecycle commit.
+        intermediate = {field: intended.get(field, "") for field in STATE_FIELDS}
+        intermediate["schema"] = intermediate["schema"] or "1"
+        intermediate["state"] = "LOCAL_VERIFIED"
+        intermediate["local_review"] = "APPROVED"
+        intermediate["implementation_sha"] = implementation_sha
+        # ``lifecycle_commit`` writes its own STATE bytes (it does the strict
+        # pre-write on the parent's continuity). Do NOT pre-write here: the
+        # expected_before check inside the helper would see LOCAL_VERIFIED on
+        # disk and refuse, since the implementation anchor's STATE.md is
+        # ACTIVE.
+        active_to_local = lifecycle_commit(
+            root,
+            feature,
+            "ACTIVE->LOCAL_VERIFIED",
+            intermediate,
+            runner,
+        )
+        classify_lifecycle_commit(root, active_to_local, feature, runner)
+        # Restore the agent's intended target content and replay the second
+        # lifecycle transition.
+        ready = lifecycle_commit(
+            root,
+            feature,
+            "LOCAL_VERIFIED->READY_FOR_PR",
+            intended,
+            runner,
+        )
+        classify_lifecycle_commit(root, ready, feature, runner)
+        # Re-emit the metrics files as a metrics-only commit. The content we
+        # captured was the agent's last-known authoritative version; writing
+        # it now is the same data the bad commit carried, only shaped right.
+        if metrics_content:
+            for path, content in metrics_content.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            metrics_paths_sorted = sorted(metrics_content)
+            run_command(
+                ["git", "add", "--"] + metrics_paths_sorted, root, runner
+            )
+            subject = REVIEW_METRICS_SUBJECT.format(feature=feature)
+            result = runner(
+                [
+                    "git",
+                    "commit",
+                    "--only",
+                    "-m",
+                    subject,
+                    "--",
+                ]
+                + metrics_paths_sorted,
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode:
+                try:
+                    run_command(
+                        ["git", "restore", "--staged", "--"] + metrics_paths_sorted,
+                        root,
+                        runner,
+                    )
+                except LifecycleError:
+                    pass
+                detail = (result.stderr or result.stdout).strip()
+                raise LifecycleError(
+                    f"metrics commit failed during repair: {detail or 'unknown error'}"
+                )
+    finally:
+        # Whatever happened, bring every backed-up file back so the user's
+        # working tree never loses data — even on the failure paths above.
+        for path, backup in backups.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, target)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    # Final guard: the suffix must now be a ship-ready shape; ``validate-ship``
+    # is also the deterministic check the ship skill runs.
+    validate_ship_suffix(root, feature, runner=runner)
+    return (
+        f"Repaired {len(bad)} mixed commit(s); the suffix is now lifecycle-only."
+    )
+
+
 def record_pr(
     root: Path,
     feature: str,
@@ -2667,6 +3086,20 @@ def build_parser() -> argparse.ArgumentParser:
     ready = subparsers.add_parser("mark-ready")
     ready.add_argument("feature")
     ready.add_argument("--base", required=True)
+    record_review_cmd = subparsers.add_parser(
+        "record-review",
+        help="review milestone: certify + advance lifecycle + commit pending metrics atomically",
+    )
+    record_review_cmd.add_argument("feature")
+    record_review_cmd.add_argument("--base", required=True)
+    repair_suffix = subparsers.add_parser(
+        "repair-review-suffix",
+        help=(
+            "rewind a suffix that bundles STATE.md into a metrics commit and replay "
+            "the canonical milestone sequence (unpushed branches only)"
+        ),
+    )
+    repair_suffix.add_argument("feature")
     recertify = subparsers.add_parser(
         "mark-recertified",
         help="re-anchor implementation_sha on the same open PR after a fix",
@@ -2754,6 +3187,10 @@ def main(argv: list[str] | None = None) -> int:
             message = mark_local_verified(root, args.feature)
         elif args.command == "mark-ready":
             message = mark_ready(root, args.feature, args.base)
+        elif args.command == "record-review":
+            message = record_review(root, args.feature, args.base)
+        elif args.command == "repair-review-suffix":
+            message = repair_review_suffix(root, args.feature)
         elif args.command == "mark-recertified":
             message = mark_recertified(root, args.feature)
         elif args.command == "record-pr":
