@@ -154,7 +154,12 @@
       agents report back" — every `Agent` call is a foreground call whose result
       arrives in the same turn. Measured on the first real auto run: the review
       fork launched seven reviewers in the background, said it would wait for
-      their notifications, and was ended with `sdd-qa` still running.
+      their notifications, and was ended with `sdd-qa` still running. The tell
+      is a tool result that is a task id instead of the agent's report; the
+      answer is to relaunch that agent in the foreground now, not to wait. It
+      recurred on 2026-09-21 (two of four live sessions, one of them the
+      delegated review of `/sdd:auto`), so `run` and `review` repeat this next
+      to the `Agent` call itself.
     - Unattended: `/sdd:auto` runs its terminal phases in a **fresh headless
       session** (`claude -p`, launched through `scripts/sdd_auto_outcome.py` so
       the permission recipe lives in one tested place), and reads what came back

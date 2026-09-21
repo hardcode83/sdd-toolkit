@@ -240,7 +240,11 @@ def main(argv: list[str] | None = None) -> int:
             previous = receipt_path(args.root, args.feature)
             if previous is None or not previous.is_file():
                 raise ValueError("carry refused: no previous receipt for this change")
-            present = {e.get("reviewer_id") for e in raw_results if isinstance(e, dict)}
+            # The trusted key decides presence too: an envelope without the
+            # self-declared top-level reviewer_id (the minimal --plan shape) must
+            # not be mistaken for an absent reviewer and doubled by a carry.
+            present = {e.get("planned_reviewer_id") or e.get("reviewer_id")
+                       for e in raw_results if isinstance(e, dict)}
             raw_results = raw_results + carried_envelopes(
                 json.loads(previous.read_text(encoding="utf-8")), plan, present,
                 args.feature, args.phase, head, git_cwd,
@@ -262,10 +266,18 @@ def main(argv: list[str] | None = None) -> int:
             results = []
             by_identity = {}
             for envelope in raw_results:
-                if (not isinstance(envelope, dict) or not envelope.get("invocation_id")
-                        or not isinstance(envelope.get("planned_reviewer_id"), str)
-                        or not isinstance(envelope.get("payload"), dict)):
-                    raise ValueError("result collection lacks trusted Claude invocation identity")
+                if not isinstance(envelope, dict) or not isinstance(envelope.get("payload"), dict):
+                    raise ValueError("result envelope is not {invocation_id, planned_reviewer_id, payload}: build it from --plan")
+                if not envelope.get("invocation_id"):
+                    raise ValueError("result envelope lacks invocation_id (the Agent tool_use id)")
+                if not isinstance(envelope.get("planned_reviewer_id"), str):
+                    if isinstance(envelope.get("reviewer_id"), str):
+                        raise ValueError(
+                            f"result envelope for {envelope['reviewer_id']!r} carries reviewer_id but no "
+                            "planned_reviewer_id: the trusted identity is the agent type you launched "
+                            "for that slot (pre-0.54.1 shape; see --plan)"
+                        )
+                    raise ValueError("result collection lacks trusted Claude invocation identity (planned_reviewer_id)")
                 # Trusted binding is which Agent call this is (`planned_reviewer_id`,
                 # set by the caller from the subagent it launched) — never the
                 # reviewer's own self-declared `reviewer_id`, which two reviewers

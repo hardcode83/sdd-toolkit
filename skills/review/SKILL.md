@@ -104,6 +104,12 @@ reason. Then:
    they report back": on the first real auto run this fork did exactly that and
    was ended with `sdd-qa` still running, so the verdict had to be rebuilt by
    the calling session.
+   The tell that it is happening again: a tool result that is a task id or
+   "running in background" instead of the reviewer's JSON. That reviewer is
+   lost to this fork — relaunch it in the foreground, in this same turn, and
+   never end the turn waiting for it. It recurred on 2026-09-21 in the delegated
+   review of `/sdd:auto`, twice in one session, which is why the rule sits
+   here, next to the call, and not only in shared rule 11.
    Launch `sdd-security` with `model: opus` here: its agent file defaults to
    Sonnet for the per-section panels of `/sdd:run`, and feature scale — the
    whole change, trust boundaries across sections — is where the stronger
@@ -121,7 +127,7 @@ reason. Then:
    - Always at feature scale regardless of annotations: the R# completeness matrix (met/partially/unmet with `file:line` — qa) and cumulative scope creep.
    Give each reviewer the feature name, all requirement IDs, the annotation summary (which sections are pre-verified), and the full diff (or the file list if no git history delimits it).
 3. **Synthesize**: merge the three reports, dedupe, and drop any finding without a referent (R#, D#, or quoted steering rule). Present per requirement: **met / partially met / unmet** with `file:line` of implementation and test (from the QA report), then the surviving findings most severe first, then scope creep.
-4. Route the selected logical plan through the shared reviewer-panel boundary — `scripts/reviewer_panel.py --phase review --feature <feature> --scope … --results …` (with `--worktree <path>` when the feature lives elsewhere). An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
+4. Route the selected logical plan through the shared reviewer-panel boundary — `scripts/reviewer_panel.py --phase review --feature <feature> --scope … --results …` (with `--worktree <path>` when the feature lives elsewhere). Ask `--plan` for the shapes first, exactly as `/sdd:run` step 3 does: one envelope per planned reviewer, `invocation_id` = the `Agent` tool_use id, `planned_reviewer_id` = the agent type you launched for that slot (the trusted identity — never a `reviewer_id` read out of the reviewer's JSON), `payload` = the reviewer's JSON. An unavailable, malformed, incomplete, identity-mismatched, or out-of-scope result is an explicit non-passing result; never turn a degraded panel into certification by inline substitution.
 
    **The gate writes the receipt.** On every evaluation `reviewer_panel.py` persists the verdict per reviewer, the gate and the HEAD it judged, in `<git common dir>/sdd/receipts/<feature>.json` — machine-local, shared by every worktree, invisible to `git status`. `sdd_lifecycle.py receipt <feature>` prints it and says whether it certifies HEAD. Two things follow (ADR 0007):
    - **A reviewer cut by its turn limit is relaunched alone.** Its partial result is a non-PASS for the gate, but the panel does not start over: relaunch **that reviewer** with the same prompt plus "resume from what you already established", and re-run the gate. Measured: 15 of 24 turn-limit cuts were `sdd-qa` running full suites at feature scale, and every cut used to relaunch all seven.

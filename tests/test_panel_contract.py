@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -36,6 +37,29 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn("referents inline", run)
         for quoted in ("with their EARS text", "**quoted**", "diff range"):
             self.assertIn(quoted, run)
+
+    def test_results_examples_carry_the_trusted_identity_key(self) -> None:
+        """Regression (2026-09-21): run's inline `--results` example kept the
+        pre-0.54.1 shape (`reviewer_id` at top level) after the gate started
+        demanding `planned_reviewer_id`; a session that copied it was refused."""
+        for name in ("run", "review"):
+            with self.subTest(skill=name):
+                self.assertIn("planned_reviewer_id", self.read_skill(name))
+        run = self.read_skill("run")
+        for example in re.findall(r"--results '\[\{[^\n]*", run):
+            self.assertIn("planned_reviewer_id", example)
+            self.assertNotIn('"reviewer_id"', example)
+
+    def test_the_launch_is_foreground_next_to_the_agent_call(self) -> None:
+        """Written three times and still violated (2026-09-21, two of four live
+        sessions): the rule has to sit where the `Agent` call is made, with the
+        tell (a task id instead of the envelope) and the recovery (relaunch)."""
+        for name in ("run", "review"):
+            with self.subTest(skill=name):
+                text = self.read_skill(name)
+                self.assertIn("running in background", text)
+                self.assertIn("relaunch it in the", text)
+                self.assertIn("never end the turn", text.lower())
 
     def test_every_panel_agent_has_a_turn_budget(self) -> None:
         for agent in PANEL_AGENTS:

@@ -60,7 +60,7 @@ refer to the numbering in the change's `tasks.md`):
    **Trust the disk, not the report** (shared rule 11): after the implementer returns, read the section in `tasks.md` to confirm which boxes are checked, and `git status --porcelain` / `git diff --stat` for the file list. If the implementer stopped on a `CONFLICT`, go to step 4; on a `BLOCKER`, step 5. If it checked tasks it reports as unverified, uncheck them and say so.
 
    **Runtime without subagents** (Codex today, or a session where `Agent` is unavailable): implement the section yourself, with exactly the contract above as your checklist — same order, same verification before `[x]`, same notes. The delegation is a cost optimisation; the contract is the phase.
-3. **Review panel — after each completed section.** When the last task of a numbered section is checked and the section touched production code (skip it for pure scaffolding/docs/config sections, and in `solo` mode), launch the review panel **in parallel** (one message, one `Agent` call per reviewer):
+3. **Review panel — after each completed section.** When the last task of a numbered section is checked and the section touched production code (skip it for pure scaffolding/docs/config sections, and in `solo` mode), launch the review panel **in parallel and in the foreground** (one message, one `Agent` call per reviewer, every result back in this same turn):
    - **Core reviewers (always)**: types `sdd-architect`, `sdd-security`, `sdd-qa`.
    - **Project reviewers (additive)**: every agent the project defines at `.claude/agents/sdd-review-*.md` (agent type = the file's `name`; discover with a glob before launching), filtered by the shared plan: a reviewer whose `phases`/`applies_to` definitively exclude this section's files is recorded as skipped; one without that metadata runs on every section (`/sdd:doctor` reports those as `SDD028`).
 
@@ -71,6 +71,17 @@ refer to the numbering in the change's `tasks.md`):
    exactly the independence the panel exists to buy. In the first measured corpus
    **481 of 481** panel launches were sequential — treat a lone `Agent` call in a
    message as the bug it is.
+
+   **Foreground means each `Agent` call's result — the reviewer's JSON — is in
+   this turn's tool results before you write another word.** Never end the turn
+   to "wait for the reviewers": in an interactive session a late notification
+   may still land; in a fork or a headless session (`/sdd:auto` runs this phase
+   under `claude -p`) it never does, and the rule is written for the worst case.
+   The tell: a tool result that is a task id or "running in background" instead
+   of the envelope — that reviewer was backgrounded; relaunch it in the
+   foreground in this same turn rather than waiting. Measured twice on one day
+   (2026-09-21): a run panel that ended its turn with `sdd-qa` still pending,
+   and a review fork that dropped its payloads twice in a row.
 
    **Give each reviewer its referents inline, don't send it hunting.** You hold
    the plan; the reviewers do not, and left to rediscover it they averaged 60
@@ -89,13 +100,18 @@ refer to the numbering in the change's `tasks.md`):
    G="${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py"
    python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '{"feature":"<feature>","scope_id":"run:<feature>:<N>","files":[<the section's files>]}' --plan
    # → launch one Agent per entry of `launch`, all in ONE message, foreground; each returns its JSON envelope
-   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '<same scope>' --results '[{"invocation_id":"<tool_use id>","reviewer_id":"…","payload":<the reviewer's JSON>}, …]'
+   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '<same scope>' --results '[{"invocation_id":"<tool_use id>","planned_reviewer_id":"<agent type you launched>","payload":<the reviewer's JSON>}, …]'
    ```
 
    **Results are JSON, not reports.** Each reviewer's final message is the result
    envelope of `reviewer_plan.py` (`reviewer_id`, `scope_id`, `lens`, `verdict`,
    `findings`, `evidence`, `status`) and nothing else — the agent files carry the
-   exact shape; `--plan` prints an `example_results` list you fill in. The gate's
+   exact shape; `--plan` prints an `example_results` list you fill in.
+   `planned_reviewer_id` is the trusted identity: the agent type of *your*
+   `Agent` call for that slot, never a `reviewer_id` read out of the JSON the
+   reviewer returned (two reviewers can mislabel or swap their own). An envelope
+   keyed `reviewer_id` at the top level is the pre-0.54.1 shape and the gate
+   refuses it by name. The gate's
    exit code is the verdict; on 0 it has already annotated the heading. Read the
    findings from the JSON; never ask a reviewer to explain itself in prose.
    - **Referent filter**: a finding without its referent (R#, design decision D#, or a quoted steering rule) is discarded — the agents are instructed this way, enforce it when synthesizing.
