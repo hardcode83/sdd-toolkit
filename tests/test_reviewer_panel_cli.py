@@ -48,6 +48,19 @@ class ReviewerPanelCliTests(unittest.TestCase):
         result = self.invoke("run", [entry["payload"] for entry in raw])
         self.assertEqual(result.returncode, 1)
 
+    def test_cli_names_the_stale_reviewer_id_shape(self):
+        # Regression (2026-09-21): a session copied run's pre-0.54.1 example
+        # (`reviewer_id` at top level, no `planned_reviewer_id`) and got the
+        # generic identity error, indistinguishable from a dropped collection.
+        raw = self.results()
+        for entry in raw:
+            del entry["planned_reviewer_id"]
+        result = self.invoke("run", raw)
+        self.assertEqual(result.returncode, 1)
+        errors = json.loads(result.stdout)["errors"]
+        self.assertTrue(any("planned_reviewer_id" in err and "reviewer_id" in err for err in errors))
+        self.assertTrue(any(raw[0]["reviewer_id"] in err for err in errors))
+
     def test_cli_fails_closed_on_swapped_self_declared_identity(self):
         # Regression: two reviewers (e.g. sdd-architect and sdd-security) return
         # JSON whose self-declared `reviewer_id`/`lens` are swapped with each
