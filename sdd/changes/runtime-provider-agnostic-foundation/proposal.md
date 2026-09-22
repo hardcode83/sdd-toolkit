@@ -20,8 +20,10 @@ optimizations without touching the SDD core contract.
 ## What changes
 
 After this change: (1) a documented and minimally machine-readable capability
-model separates SDD core from runtime adapter from provider/model, with the
-env-derived provider profile as its only configuration surface; (2) a provider
+model separates SDD core from runtime adapter from provider/model, with
+configuration and capability acquisition defined as runtime-specific — the SDD
+core never knows the concrete source — and an env-derived capability profile
+implemented for the Claude Code adapter; (2) a provider
 preflight detects incomplete alias mappings and warns with an actionable
 message before any phase launches reviewers or implementers; (3) regression
 tests pin environment inheritance for delegated sessions and the reviewer
@@ -34,13 +36,14 @@ contract changes.
 
 ## Requirements
 
-### R1 — Explicit capability model
+### R1 — Explicit capability model with runtime-specific configuration sources
 
 **As a** toolkit maintainer, **I want** the separation of SDD core, runtime
-adapter, and provider/model capability to be explicit and written down with a
-minimal machine-readable profile, **so that** later changes can add or adjust
-runtimes and providers without re-litigating what is contract and what is
-implementation detail.
+adapter, and provider/model capability to be explicit, with capability and
+configuration acquisition defined as a runtime responsibility, **so that**
+later changes can add or adjust runtimes and providers without re-litigating
+what is contract and what is implementation detail, and without the SDD core
+ever depending on one configuration source.
 
 Acceptance criteria:
 
@@ -49,13 +52,23 @@ Acceptance criteria:
    telemetry) as SDD core, runtime-specific, or provider capability, and SHALL
    state the rule that an abstraction requires at least two real
    implementations.
-2. WHEN a delegated or forked phase starts, THE SYSTEM SHALL be able to read a
-   provider capability profile derived exclusively from environment variables
-   (never from project `sdd/` files), exposing at minimum: alias-to-model
-   mapping, structured-output support, effort support, budget semantics, and
-   fallback support, each with an `unknown` state when not determinable.
-3. IF a capability cannot be determined from the environment, THEN THE SYSTEM
-   SHALL record it as `unknown` and SHALL NOT guess a provider-specific value.
+2. WHEN the capability model is defined, THE SYSTEM SHALL state that obtaining
+   configuration and capabilities is runtime-specific: the SDD core consumes a
+   capability profile through the runtime adapter and SHALL NOT know or assume
+   the concrete source (environment variables, runtime config files, or any
+   other mechanism the runtime uses).
+3. WHEN the Claude Code adapter needs a capability profile, THIS CHANGE SHALL
+   implement it env-derived for Claude Code with Anthropic-compatible gateways
+   (reading `ANTHROPIC_BASE_URL`, the `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`
+   family, and related variables), exposing at minimum: alias-to-model mapping,
+   structured-output support, effort support, budget semantics, and fallback
+   support, each with an `unknown` state when not determinable.
+4. IF a capability cannot be determined from the runtime's configuration,
+   THEN THE SYSTEM SHALL record it as `unknown` and SHALL NOT guess a
+   provider-specific value.
+5. WHEN a runtime without an implemented profile source is in use (e.g. Codex
+   CLI), THE SYSTEM SHALL NOT impose `ANTHROPIC_*` variables or tier aliases on
+   it; the profile source for that runtime is defined by its own change.
 
 ### R2 — Provider preflight
 
@@ -94,13 +107,14 @@ Acceptance criteria:
    only the `SDD_AUTO_DELEGATED` and `SDD_AUTO` guards on top of the parent
    environment, demonstrated by the same test.
 
-### R4 — Reviewer identity and foreground regression
+### R4 — Reviewer identity and foreground dispatch regression
 
-**As a** maintainer, **I want** an executable proof that reviewer results only
-certify when they arrive caller-bound in the foreground, **so that** the
-historical incident (reviewers launched in background from a fork; the fork
-ended its turn; results returned to the parent; reviewers showed PASS with no
-receipt and `STATE.local_review` stuck at PENDING) can never regress silently.
+**As a** maintainer, **I want** an executable regression over the reviewer
+dispatch/orchestration path that proves results only certify when they arrive
+caller-bound in the foreground, **so that** the historical incident — reviewers
+launched in background from a fork; the fork ended its turn; the results
+returned to the parent; reviewers showed PASS with no receipt and
+`STATE.local_review` stuck at PENDING — can never regress silently.
 
 Acceptance criteria:
 
@@ -108,27 +122,43 @@ Acceptance criteria:
    per planned reviewer carrying `invocation_id`, `planned_reviewer_id`, and
    `payload`, with `planned_reviewer_id` as the only trusted identity, and
    SHALL fail closed on duplicates, swaps, or self-declared identity — this is
-   the existing gate contract, now pinned by a regression test that
-   demonstrates a swapped/missing trusted binding is rejected.
-2. WHEN the panel documentation and skills describe reviewer execution, THE
-   SYSTEM SHALL state foreground-in-same-turn as a mandatory property and SHALL
-   describe the background-launch anti-pattern and its observable symptom (PASS
-   without receipt) as a detected failure mode in tests or doctor checks.
+   the existing gate contract, pinned by a regression test demonstrating that a
+   swapped or missing trusted binding is rejected.
+2. WHEN the dispatch/orchestration path is exercised in a test, THE SYSTEM
+   SHALL demonstrate both arms of the incident pattern: the correct path
+   (reviewers launched foreground, in the same caller turn, envelopes
+   caller-bound, gate run, receipt emitted by `reviewer_panel.py`, lifecycle
+   certification accepted) and the failure path (reviewer work returned outside
+   the caller-bound collection — e.g. results arriving after the collecting
+   turn ended, or a panel verdict claimed without a receipt on disk), and SHALL
+   prove the failure arm cannot produce certification: no receipt, no
+   `mark-local-verified` acceptance, panel verdict treated as not having
+   happened.
+3. IF a runtime or harness cannot guarantee foreground, same-turn, caller-bound
+   collection of every planned reviewer, THEN THE SYSTEM SHALL classify that
+   runtime/harness as BLOCKED/INCOMPATIBLE for panel certification and SHALL
+   NEVER convert such a condition into a PASS.
 
 ### R5 — Provider recipes and quota semantics
 
 **As a** user on Kimi, MiniMax, or Codex/OpenAI, **I want** the toolkit
-documentation to state the exact environment recipe each backend needs and its
-quota/budget semantics, **so that** I can configure a backend in one read and
-know which toolkit protections are real on it.
+documentation to state the exact configuration recipe each backend needs and
+its quota/budget semantics, **so that** I can configure a backend in one read
+and know which toolkit protections are real on it.
 
 Acceptance criteria:
 
-1. WHEN a user reads the models reference, THE SYSTEM SHALL provide an
-   environment recipe for Anthropic, Kimi (Anthropic-compatible gateway),
-   MiniMax, and Codex/OpenAI, each naming the variables to set and the aliases
-   each tier resolves to.
-2. WHEN a backend bills by usage windows rather than per-token USD, THE
+1. WHEN a user reads the models reference, THE SYSTEM SHALL provide a recipe
+   for the Anthropic-compatible group — Claude Code as runtime with Anthropic,
+   Kimi, or MiniMax as provider — naming the environment variables to set and
+   the aliases each tier resolves to through them.
+2. WHEN a user runs the Codex CLI runtime with OpenAI models, THE SYSTEM SHALL
+   document the real configuration surface of that runtime as evidenced by the
+   repository's existing Codex support (adapter manifest, `docs/codex.md`,
+   adapter install script, panel handoff), and SHALL NOT document
+   `ANTHROPIC_*` variables or tier aliases for Codex unless evidence shows the
+   existing adapter actually consumes them.
+3. WHEN a backend bills by usage windows rather than per-token USD, THE
    SYSTEM SHALL document that `--max-budget-usd` does not protect that quota,
    and SHALL document the observed Auto Mode classifier behavior on
    non-Anthropic gateways (classifier requests consume provider quota) without
