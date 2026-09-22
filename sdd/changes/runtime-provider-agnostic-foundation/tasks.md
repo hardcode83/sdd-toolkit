@@ -12,10 +12,10 @@
 
 ## 1. Provider capability profile and alias preflight
 
-- [ ] 1.1 Create `scripts/provider_profile.py` (stdlib only) with `read_claude_code_profile(env)` returning `base_url`, `alias_map` (only aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` is set), and `structured_output`/`effort`/`budget_semantics`/`fallback` as `"unknown"` when not determinable — never guessed. [R1]
-- [ ] 1.2 Implement `alias_warnings(aliases, env)`: when `ANTHROPIC_BASE_URL` is set, one actionable message per alias in {haiku, sonnet, opus, fable} lacking its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`; no warnings when BASE_URL is unset; full model names pass through with no warning. [R2]
-- [ ] 1.3 Add the CLI entry point: `python3 scripts/provider_profile.py check --aliases sonnet,opus` prints warnings to stderr and exits 1 when any mapping is missing, exits 0 otherwise. [R2]
-- [ ] 1.4 Re-implement `provider_warnings` in `scripts/sdd_auto_outcome.py` on top of `alias_warnings`, keeping its existing signature, message shape, and behavior so `tests/test_sdd_auto_outcome.py` passes unchanged. [R2]
+- [x] 1.1 Create `scripts/provider_profile.py` (stdlib only) with `read_claude_code_profile(env)` returning `base_url`, `alias_map` (only aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` is set), and `structured_output`/`effort`/`budget_semantics`/`fallback` as `"unknown"` when not determinable — never guessed. [R1]
+- [x] 1.2 Implement `alias_warnings(aliases, env)`: when `ANTHROPIC_BASE_URL` is set, one actionable message per alias in {haiku, sonnet, opus, fable} lacking its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`; no warnings when BASE_URL is unset; full model names pass through with no warning. [R2]
+- [x] 1.3 Add the CLI entry point: `python3 scripts/provider_profile.py check --aliases sonnet,opus` prints warnings to stderr and exits 1 when any mapping is missing, exits 0 otherwise. [R2]
+- [x] 1.4 Re-implement `provider_warnings` in `scripts/sdd_auto_outcome.py` on top of `alias_warnings`, keeping its existing signature, message shape, and behavior so `tests/test_sdd_auto_outcome.py` passes unchanged. [R2]
 
 ## 2. Phase preflight integration
 
@@ -56,3 +56,7 @@
 
 <!-- Append-only, written by the implementer of each section for the next one:
      decisions taken, names chosen, gotchas found. One bullet each, no prose. -->
+- Section 1: `tests/test_provider_profile.py` was added even though the design table (not tasks.md) requires it — recorded here as the cross-reference gap it closes; it follows the same sys.path convention as `tests/test_sdd_auto_outcome.py`.
+- Section 1: CLI `--aliases` is comma-separated and repeatable (`action="append"`, each occurrence split on commas); documented in the `main()` docstring.
+- Section 1: `provider_warnings(model, env)` in `sdd_auto_outcome.py` is now a thin wrapper calling `provider_profile.alias_warnings([model], env)`; the exact warning string is produced by `provider_profile.py`, so any message change must keep `tests/test_sdd_auto_outcome.py` green (it asserts length only, not text).
+- Section 1: the four capability fields (`structured_output`, `effort`, `budget_semantics`, `fallback`) are always `"unknown"` — no env variable determinably signals them today; the constant is `provider_profile.UNDETERMINED`.

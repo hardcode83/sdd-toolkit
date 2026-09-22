@@ -197,7 +197,18 @@ def provider_warnings(model: str, env: dict[str, str] | None = None) -> list[str
     to whatever `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` says; unset, it resolves to the
     Anthropic model ID, which the provider will not serve. Say so before the
     session fails on its first request (`references/models.md`).
+
+    One shared check lives in `provider_profile.py` (the Claude Code profile
+    source); this is the thin wrapper the recipe and the tests call, passing
+    the single session model as the alias list (D3).
     """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import provider_profile  # noqa: PLC0415
+    except ImportError:
+        provider_profile = None
+    if provider_profile is not None:
+        return provider_profile.alias_warnings([model], env)
     env = os.environ if env is None else env
     if not env.get("ANTHROPIC_BASE_URL"):
         return []
