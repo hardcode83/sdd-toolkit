@@ -86,6 +86,19 @@ class AliasWarningsTests(unittest.TestCase):
         """R2 criterion 3: a full model ID needs no alias mapping."""
         self.assertEqual(provider_profile.alias_warnings(["MiniMax-M3"], dict(self.BASE)), [])
 
+    def test_whitespace_padded_alias_is_still_checked_not_passed_through(self) -> None:
+        """A padded alias must hit the ALIAS_ENV lookup, not slip through as a
+        would-be full model name."""
+        warnings = provider_profile.alias_warnings(["sonnet", " opus"], dict(self.BASE))
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any("ANTHROPIC_DEFAULT_SONNET_MODEL" in w for w in warnings))
+        self.assertTrue(any("ANTHROPIC_DEFAULT_OPUS_MODEL" in w for w in warnings))
+
+    def test_empty_alias_list_warns_nothing(self) -> None:
+        """alias_warnings([]) stays vacuous by design — sdd_auto_outcome calls
+        it with a single model; the CLI rejects the empty expansion instead."""
+        self.assertEqual(provider_profile.alias_warnings([], dict(self.BASE)), [])
+
 
 class CliTests(unittest.TestCase):
     def run_cli(self, argv: list[str], env: dict[str, str]) -> tuple[int, str]:
@@ -134,6 +147,18 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("ANTHROPIC_DEFAULT_OPUS_MODEL", err)
+
+    def test_empty_expanded_alias_list_is_a_usage_error(self) -> None:
+        """`check --aliases ""` must not turn the mandatory preflight into a
+        no-op: usage error on stderr, non-zero exit."""
+        code, err = self.run_cli(["check", "--aliases", ""], {})
+        self.assertNotEqual(code, 0)
+        self.assertIn("--aliases", err)
+
+    def test_whitespace_only_alias_list_is_a_usage_error(self) -> None:
+        code, err = self.run_cli(["check", "--aliases", " , "], {})
+        self.assertNotEqual(code, 0)
+        self.assertIn("--aliases", err)
 
     def test_cli_as_subprocess(self) -> None:
         """The documented invocation, end to end."""

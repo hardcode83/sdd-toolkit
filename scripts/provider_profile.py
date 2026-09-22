@@ -82,13 +82,22 @@ def alias_warnings(aliases: Iterable[str], env: Mapping[str, str] | None = None)
     Returns [] when `ANTHROPIC_BASE_URL` is unset (native Anthropic serves the
     IDs) and [] for any name that is not one of the four aliases — a full
     model name needs no mapping and passes through untouched.
+
+    Each name is stripped of surrounding whitespace before the lookup, so a
+    padded alias (' opus') is checked as ' opus'.stripped() == 'opus', not
+    silently passed through as a full model name. An empty or all-whitespace
+    name is skipped here; it is the caller's job to reject a list that expands
+    to nothing (the CLI does — see `main`) so the mandatory preflight cannot
+    become a no-op. `alias_warnings([])` itself legitimately returns []:
+    `sdd_auto_outcome` calls it with a single model after its own checks, so
+    emptiness is meaningful there, not a malformed invocation.
     """
     env = os.environ if env is None else env
     if not env.get("ANTHROPIC_BASE_URL"):
         return []
     warnings = []
     for alias in aliases:
-        variable = ALIAS_ENV.get(alias.lower())
+        variable = ALIAS_ENV.get(alias.strip().lower())
         if variable and not env.get(variable):
             warnings.append(
                 f"ANTHROPIC_BASE_URL is set but {variable} is not: the alias {alias!r} "
@@ -122,6 +131,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "check":
         aliases = [name for group in args.aliases for name in group.split(",") if name.strip()]
+        if not aliases:
+            print(
+                "check: --aliases expanded to an empty list; pass at least one "
+                "alias (haiku, sonnet, opus, fable) — e.g. --aliases sonnet,opus",
+                file=sys.stderr,
+            )
+            return 2
         warnings = alias_warnings(aliases)
         for warning in warnings:
             print(warning, file=sys.stderr)
