@@ -35,7 +35,7 @@
 - [x] 4.3 Failure arm, variant "fork ended without gate": simulate reviewer output existing only as self-declared PASS with the gate never run (no receipt on disk); assert `sdd_lifecycle.ensure_panel_receipt` raises and certification is unreachable — the claimed PASS certifies nothing. [R4]
 - [x] 4.4 Assert the existing doctor check for a hand-written `panel: PASS` annotation without a matching receipt (`SDD032`) flags the symptom of the historical incident, keeping that detection pinned. [R4]
 
-## 5. Documentation: recipes, layer model, Codex configuration surface
+## 5. Documentation: recipes, layer model, Codex configuration surface <!-- panel: PASS 2026-09-23 receipt:b948f0ed -->
 
 - [x] 5.1 Restructure `references/models.md` into the Anthropic-compatible group (Claude Code runtime × Anthropic/Kimi/MiniMax providers) with an exact env recipe for Kimi (aliases mapped to the Kimi model, BASE_URL, credential variable) alongside the existing MiniMax recipe, each recipe noting the observation date and a verification command. [R5]
 - [x] 5.2 Add the quota-semantics section to `references/models.md`: `--max-budget-usd` does not protect usage-window quotas (Kimi's 5-hour window observed 2026-09); Auto Mode classifier requests on non-Anthropic gateways consume provider quota (observed Claude Code notice via api.kimi.com); no optimization prescribed. [R5]
