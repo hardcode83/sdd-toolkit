@@ -47,10 +47,10 @@
 - [x] 6.1 Bump `version` to 0.54.4 in both `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` in one commit (repo rule: manifests move together; CI enforces parity). [R1]
 - [x] 6.2 Run `python3 scripts/validate_toolkit.py all` and fix any contract violation it reports (skills, manifests, boundary, fixtures). [R1]
 
-## 7. Verification
+## 7. Verification <!-- panel: skipped — orchestrator-run verification; evidence: 581 tests OK (exit 0), validate_toolkit.py all 5 checks PASS -->
 
-- [ ] 7.1 Full test suite passes: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`
-- [ ] 7.2 Toolkit contracts validate: `python3 scripts/validate_toolkit.py all`
+- [x] 7.1 Full test suite passes: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`
+- [x] 7.2 Toolkit contracts validate: `python3 scripts/validate_toolkit.py all`
 
 ## Implementation Notes
 
