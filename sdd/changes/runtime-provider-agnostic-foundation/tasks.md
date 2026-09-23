@@ -42,10 +42,10 @@
 - [x] 5.3 Create `references/runtime-provider.md`: the three layers (SDD core / runtime adapter / provider capability) with concrete file classifications; the rule that a new abstraction requires two real implementations; the profile schema with `unknown` semantics; configuration acquisition as runtime-specific (env-derived implemented for Claude Code only); the standing rule that a runtime unable to guarantee foreground, same-turn, caller-bound reviewer collection is BLOCKED/INCOMPATIBLE for panel certification — never PASS. [R1, R4]
 - [x] 5.4 Add a "Configuration surface" section to `docs/codex.md` stating from evidence what Codex consumes (its own session model configuration; the `shell_environment_policy.set` block from `codex-adapter-install.sh`) and that `ANTHROPIC_*` variables and tier aliases are not Codex configuration (aliases document intent only). [R5]
 
-## 6. Release bump and validation
+## 6. Release bump and validation <!-- panel: skipped — config-only manifest bump; CI enforces parity, validate_toolkit.py all PASS at 0.54.4 -->
 
-- [ ] 6.1 Bump `version` to 0.54.4 in both `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` in one commit (repo rule: manifests move together; CI enforces parity). [R1]
-- [ ] 6.2 Run `python3 scripts/validate_toolkit.py all` and fix any contract violation it reports (skills, manifests, boundary, fixtures). [R1]
+- [x] 6.1 Bump `version` to 0.54.4 in both `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` in one commit (repo rule: manifests move together; CI enforces parity). [R1]
+- [x] 6.2 Run `python3 scripts/validate_toolkit.py all` and fix any contract violation it reports (skills, manifests, boundary, fixtures). [R1]
 
 ## 7. Verification
 
