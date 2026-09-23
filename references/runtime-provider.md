@@ -50,10 +50,16 @@ methodology has a single home.
 
 | Surface | Files |
 |---|---|
-| Tier-alias frontmatter and `Agent` calls (`context: fork`, `background`, `effort`, `model: <alias>`) | `skills/*/SKILL.md`, `agents/sdd-review-*.md` |
+| Tier-alias frontmatter and `Agent` calls (`context: fork`, `background`, `effort`, `model: <alias>`) | `skills/*/SKILL.md`, `agents/sdd-architect.md`, `agents/sdd-qa.md`, `agents/sdd-security.md`, `templates/reviewer-template.md` |
 | Headless recipe: the single process spawn (`claude -p`, `--permission-mode auto`, `--json-schema`, `--max-budget-usd`, …) | `scripts/sdd_auto_outcome.py` |
 | Env-derived capability profile and alias preflight | `scripts/provider_profile.py` |
 | Claude telemetry (usage scripts, OTel sink) | `scripts/usage-*.sh`, `scripts/usage-sink.py`, `scripts/usage-sync.py` |
+
+Consumer-project reviewers are a different surface: each SDD project
+creates its `sdd-review-*.md` agents at `.claude/agents/sdd-review-*.md`
+from the toolkit's `templates/reviewer-template.md`. Those files are
+project-local and are not toolkit-shipped; the toolkit ships only the
+template and its own panel agents listed above.
 
 ### Runtime adapter — Codex CLI (experimental)
 
