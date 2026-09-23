@@ -19,9 +19,9 @@
 
 ## 2. Phase preflight integration
 
-- [ ] 2.1 Add to `skills/run/SKILL.md` (step 1, before the first `Agent` launch): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus`; on exit 1, stop the phase and report the exact missing variable names from stderr. [R2]
-- [ ] 2.2 Add the same preflight step to `skills/review/SKILL.md` before the panel launch, identical wording and hard-stop behavior. [R2]
-- [ ] 2.3 Add the same preflight step to `skills/auto/SKILL.md` (inline path, before any `Agent` launch; the delegated path is already covered by `sdd_auto_outcome.py`). [R2]
+- [x] 2.1 Add to `skills/run/SKILL.md` (step 1, before the first `Agent` launch): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus`; on exit 1, stop the phase and report the exact missing variable names from stderr. [R2]
+- [x] 2.2 Add the same preflight step to `skills/review/SKILL.md` before the panel launch, identical wording and hard-stop behavior. [R2]
+- [x] 2.3 Add the same preflight step to `skills/auto/SKILL.md` (inline path, before any `Agent` launch; the delegated path is already covered by `sdd_auto_outcome.py`). [R2]
 
 ## 3. Environment inheritance regression tests
 
@@ -62,3 +62,5 @@
 - Section 1: the four capability fields (`structured_output`, `effort`, `budget_semantics`, `fallback`) are always `"unknown"` — no env variable determinably signals them today; the constant is `provider_profile.UNDETERMINED`.
 - Section 1 (round-1 fix, D3/R2 crit. 2): removed the inline ImportError fallback and the duplicated `ALIAS_ENV` table from `provider_warnings` in `scripts/sdd_auto_outcome.py`; `provider_profile` is now imported at module top (sibling on the same sys.path, like the lazy `sdd_lifecycle` convention but top-level per the review), so an import failure fails loudly at import time and exactly one check implementation lives in `scripts/provider_profile.py`.
 - Section 1 (round-2 fix, R2): `alias_warnings` now strips each alias before the `ALIAS_ENV` lookup, so `--aliases "sonnet, opus"` warns on the padded `opus` instead of passing it through; `main()` rejects an expanded-empty alias list (`--aliases ""`) with a usage error on stderr and exit 2, while `alias_warnings([])` stays vacuous on purpose (sdd_auto_outcome calls it with a single model). Regression tests added for both.
+- Section 2: one shared wording block ("Provider preflight (hard stop)", `check --aliases sonnet,opus`, exit 1 → stop the phase and report the exact variable names from stderr, names never values, exit 2 = usage error/bug, silent exit 0 when `ANTHROPIC_BASE_URL` unset) replicated in all three skills; run = first bullet of step 1 (inserting a new numbered step was rejected: other skills reference "run step 3"/"step 6" by number); review = lead-in of step 2, immediately before "Launch the review panel in parallel"; auto = its own "### Provider preflight (inline path, hard stop)" subsection at the top of "## Per-feature pipeline" (before step 1's Branch + claim, hence before the step-3 `sdd-architect` Agent launch), plus one sentence stating the delegated path must NOT duplicate it because `sdd_auto_outcome.py` already runs the same check via `provider_warnings`.
+- Section 2: no validator/test changes needed — `validate_toolkit.py all` passes as-is and the contract tests only assert presence of pre-existing strings in the skill files; full unittest suite passes (exit 0).

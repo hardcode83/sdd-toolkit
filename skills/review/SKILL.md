@@ -94,7 +94,12 @@ reason. Then:
    **Then the branch guard, before reading a single diff.** Verify `git branch --show-current` is `sdd/<feature>` (or the branch `STATE.md` records). If it is not, **STOP** and report it — do not "fix" it with a checkout. `/sdd:run` has carried this guard since worktrees existed because it writes code; review needs it just as much because it *certifies*: `mark-ready` records `head_branch` and `implementation_sha` as the merge gate's evidence, and a review run from the base branch would sign a range that is not the change. Until now the conversation usually carried the right directory over from run; a phase that starts in a fresh context (shared rule 11) has only what it asks for.
 
    Then read the change's `proposal.md`, `design.md` (if any), and `tasks.md`. Mark the phase for usage attribution: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-mark.sh" <feature> review` (run it unconditionally — the script itself no-ops when tracking is off; NEVER skip it based on your own assessment of whether metrics are enabled). Without this mark, review's spend is attributed to whichever phase ran last.
-2. **Launch the review panel in parallel** — every `Agent` call in a **single**
+2. **Provider preflight (hard stop).** Before the first `Agent` launch, run:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus
+   ```
+   This phase launches agents on the `sonnet` and `opus` aliases; on a provider gateway (`ANTHROPIC_BASE_URL` set), each alias needs its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` mapping. On exit 1, **stop the phase** and report the exact missing variable names it prints to stderr (variable names only, never values) — set them and re-run; never launch an agent on an unmapped alias. Exit 2 is a usage error: report it as a toolkit bug, not a provider gap. With `ANTHROPIC_BASE_URL` unset the check exits 0 silently and nothing changes.
+   **Launch the review panel in parallel** — every `Agent` call in a **single**
    assistant message, sent together: the three core reviewers — `sdd-architect`,
    `sdd-security`, `sdd-qa` — plus every project reviewer at
    `.claude/agents/sdd-review-*.md` (same discovery and contract as in `/sdd:run`).

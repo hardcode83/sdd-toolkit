@@ -169,6 +169,18 @@ were waiting on it, so a run of `N` can legitimately reach features that were
 not workable when it started. Deferred entries (`deferred-until`) are never in
 the frontier and auto never picks them — their trigger is a human judgement.
 
+### Provider preflight (inline path, hard stop)
+
+Before the first `Agent` launch on the **inline path**, run:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus
+```
+
+This phase launches agents on the `sonnet` and `opus` aliases; on a provider gateway (`ANTHROPIC_BASE_URL` set), each alias needs its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` mapping. On exit 1, **stop the phase** and report the exact missing variable names it prints to stderr (variable names only, never values) — set them and re-run; never launch an agent on an unmapped alias. Exit 2 is a usage error: report it as a toolkit bug, not a provider gap. With `ANTHROPIC_BASE_URL` unset the check exits 0 silently and nothing changes.
+
+The **delegated path** must NOT run this step a second time: `sdd_auto_outcome.py` already runs the same check (`provider_warnings`, which wraps `alias_warnings`) when it launches a session.
+
 ### One session per feature
 
 **A multi-feature run must not carry feature 1 into feature 4.** Measured over
