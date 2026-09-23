@@ -10,7 +10,7 @@
      it may travel with the PR as a deferred entry; it may sit on any line of
      the task item, not only the checkbox line. -->
 
-## 1. Provider capability profile and alias preflight
+## 1. Provider capability profile and alias preflight <!-- panel: PASS 2026-09-22 receipt:9ba2dc06 -->
 
 - [x] 1.1 Create `scripts/provider_profile.py` (stdlib only) with `read_claude_code_profile(env)` returning `base_url`, `alias_map` (only aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` is set), and `structured_output`/`effort`/`budget_semantics`/`fallback` as `"unknown"` when not determinable — never guessed. [R1]
 - [x] 1.2 Implement `alias_warnings(aliases, env)`: when `ANTHROPIC_BASE_URL` is set, one actionable message per alias in {haiku, sonnet, opus, fable} lacking its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`; no warnings when BASE_URL is unset; full model names pass through with no warning. [R2]
