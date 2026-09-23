@@ -23,7 +23,7 @@
 - [x] 2.2 Add the same preflight step to `skills/review/SKILL.md` before the panel launch, identical wording and hard-stop behavior. [R2]
 - [x] 2.3 Add the same preflight step to `skills/auto/SKILL.md` (inline path, before any `Agent` launch; the delegated path is already covered by `sdd_auto_outcome.py`). [R2]
 
-## 3. Environment inheritance regression tests
+## 3. Environment inheritance regression tests <!-- panel: PASS 2026-09-23 receipt:4de3e0ca -->
 
 - [x] 3.1 Extend `tests/test_sdd_auto_outcome.py`: fake `claude` records its full environment; a test sets `ANTHROPIC_BASE_URL`, a credential variable, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_SONNET_MODEL`, runs `sdd_auto_outcome.run`, and asserts all of them reached the executable plus exactly `SDD_AUTO_DELEGATED=1` and `SDD_AUTO=1` added on top of the parent environment. [R3]
 - [x] 3.2 In the same module, assert `delegated_environment` adds only the two SDD guards to a supplied base environment and mutates nothing else. [R3]
