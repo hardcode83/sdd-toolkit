@@ -10,6 +10,9 @@ at the dispatch/orchestration level, end to end at the Python boundary:
   `reviewer_panel.py` gate writes a receipt -> `ensure_panel_receipt` accepts;
 - failure arm "background return": envelopes lacking trusted invocation
   identity -> `dispatch_claude_panel` fails closed, no PASS panel;
+- failure arm "collection incomplete": the launcher returns fewer envelopes
+  than planned reviewers (or a non-envelope entry) -> `dispatch_claude_panel`
+  fails closed on the collection-incomplete branch, no PASS panel;
 - failure arm "fork ended without gate": self-declared PASS with no receipt
   on disk -> `ensure_panel_receipt` raises and `mark-local-verified` is
   unreachable;
@@ -156,7 +159,8 @@ class CorrectArmTests(DispatchFixture):
 
 class BackgroundReturnFailureTests(DispatchFixture):
     """R4 criterion 2, failure path: reviewer work returned outside the
-    caller-bound collection — envelopes with no trusted invocation identity."""
+    caller-bound collection — envelopes with no trusted invocation identity,
+    an incomplete collection, or a non-envelope collection entry."""
 
     def test_envelopes_without_trusted_identity_fail_closed(self) -> None:
         plan = self.plan()
@@ -180,6 +184,27 @@ class BackgroundReturnFailureTests(DispatchFixture):
         self.assertEqual("FAIL", panel.gate)
         self.assertFalse(panel.passed)
         self.assertIn("Claude trusted invocation identity mismatch", " ".join(panel.errors))
+
+    def test_collection_count_short_fails_closed(self) -> None:
+        plan = self.plan()
+        short = self.all_pass()[:-1]
+        panel = self.rp.dispatch_claude_panel(plan, CallerBoundLauncher(short), FEATURE, REFERENTS)
+        self.assertEqual("FAIL", panel.gate)
+        self.assertFalse(panel.passed, "one envelope short must never become a PASS panel")
+        self.assertIn("Claude invocation collection incomplete", " ".join(panel.errors))
+        with self.assertRaises(PermissionError):
+            self.rp.certification_capability(panel)
+
+    def test_non_mapping_envelope_fails_closed(self) -> None:
+        plan = self.plan()
+        mixed = self.all_pass()
+        mixed[1] = "raw reviewer output, not an envelope"
+        panel = self.rp.dispatch_claude_panel(plan, CallerBoundLauncher(mixed), FEATURE, REFERENTS)
+        self.assertEqual("FAIL", panel.gate)
+        self.assertFalse(panel.passed, "a non-envelope entry must never become a PASS panel")
+        self.assertIn("Claude invocation collection incomplete", " ".join(panel.errors))
+        with self.assertRaises(PermissionError):
+            self.rp.certification_capability(panel)
 
 
 class ForkEndedWithoutGateTests(DispatchFixture):
