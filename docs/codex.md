@@ -54,6 +54,37 @@ all three fail (the shell expands the unset variable to `/rules.md`).
 
 Claude Code installation and `/sdd:*` commands remain unchanged.
 
+## Configuration surface
+
+What Codex actually consumes, stated from the repository's evidence rather
+than by analogy with Claude Code:
+
+1. **Its own session model configuration.** A Codex session runs on the model
+   Codex's own configuration names; the adapter neither sets nor renames it.
+   Evidence: the adapter manifest (`.codex-plugin/plugin.json`) points at the
+   shared skills and declares no model configuration, and the known
+   limitations above state that Codex uses the model configured for its
+   session. MiniMax continues through the Claude route, not through Codex.
+2. **The `shell_environment_policy.set` block written by
+   `scripts/codex-adapter-install.sh`** into `~/.codex/config.toml`: the
+   managed block sets exactly one key, `CLAUDE_PLUGIN_ROOT = "<installed
+   plugin root>"`, so the shared skills' `${CLAUDE_PLUGIN_ROOT}` file reads
+   and the hook resolve in Codex's shell. That is the whole of what the
+   adapter writes into Codex configuration; the script refuses to clobber an
+   unmanaged `[shell_environment_policy]` table.
+
+What Codex does **not** consume, per the same evidence: the `ANTHROPIC_*`
+variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, the
+credential variables) are Claude Code's provider configuration — nothing in
+the adapter manifest, the install script, or the panel handoff reads them.
+The tier aliases (`haiku`/`sonnet`/`opus`/`fable`) in skill and agent
+frontmatter are ignored by Codex and document intent only: which phases
+deserve the stronger model, expressed for runtimes that have aliases. A
+project that wants that ladder under Codex uses Codex profiles, outside the
+toolkit. The layer model behind this split is
+`references/runtime-provider.md`; the Claude Code recipes are
+`references/models.md`.
+
 ## Invocation
 
 Invoke a phase explicitly with `$<skill>`. Some Codex clients may display the
