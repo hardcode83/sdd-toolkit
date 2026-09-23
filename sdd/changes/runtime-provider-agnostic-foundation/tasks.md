@@ -28,7 +28,7 @@
 - [x] 3.1 Extend `tests/test_sdd_auto_outcome.py`: fake `claude` records its full environment; a test sets `ANTHROPIC_BASE_URL`, a credential variable, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_SONNET_MODEL`, runs `sdd_auto_outcome.run`, and asserts all of them reached the executable plus exactly `SDD_AUTO_DELEGATED=1` and `SDD_AUTO=1` added on top of the parent environment. [R3]
 - [x] 3.2 In the same module, assert `delegated_environment` adds only the two SDD guards to a supplied base environment and mutates nothing else. [R3]
 
-## 4. Reviewer dispatch regression tests
+## 4. Reviewer dispatch regression tests <!-- panel: PASS 2026-09-23 receipt:89ef7a93 -->
 
 - [x] 4.1 Create `tests/test_reviewer_dispatch_regression.py` with the correct arm: a fake launcher returns one caller-bound envelope per planned reviewer (`invocation_id`, `planned_reviewer_id` = the launched identity, `payload`) to `reviewer_plan.dispatch_claude_panel`; assert panel PASS; then run the `reviewer_panel.py` gate over those envelopes against a fixture scope and assert a receipt is written; assert `sdd_lifecycle.ensure_panel_receipt` accepts it. [R4]
 - [x] 4.2 Failure arm, variant "background return": a fake launcher returns payloads lacking trusted invocation identity (no `invocation_id` / no `planned_reviewer_id`); assert `dispatch_claude_panel` fails closed with no PASS panel. [R4]
