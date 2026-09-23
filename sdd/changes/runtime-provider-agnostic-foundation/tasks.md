@@ -17,7 +17,7 @@
 - [x] 1.3 Add the CLI entry point: `python3 scripts/provider_profile.py check --aliases sonnet,opus` prints warnings to stderr and exits 1 when any mapping is missing, exits 0 otherwise. [R2]
 - [x] 1.4 Re-implement `provider_warnings` in `scripts/sdd_auto_outcome.py` on top of `alias_warnings`, keeping its existing signature, message shape, and behavior so `tests/test_sdd_auto_outcome.py` passes unchanged. [R2]
 
-## 2. Phase preflight integration
+## 2. Phase preflight integration <!-- panel: PASS 2026-09-23 receipt:1bec0fbe -->
 
 - [x] 2.1 Add to `skills/run/SKILL.md` (step 1, before the first `Agent` launch): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus`; on exit 1, stop the phase and report the exact missing variable names from stderr. [R2]
 - [x] 2.2 Add the same preflight step to `skills/review/SKILL.md` before the panel launch, identical wording and hard-stop behavior. [R2]
