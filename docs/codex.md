@@ -85,6 +85,12 @@ toolkit. The layer model behind this split is
 `references/runtime-provider.md`; the Claude Code recipes are
 `references/models.md`.
 
+Consequently, the provider preflight step in the phase skills (the
+`provider_profile.py check --aliases sonnet,opus` hard stop in `run`,
+`review`, and `auto`) is Claude-Code-only: under Codex it is skipped by
+design, not enforced — running it would stop a Codex phase on missing
+`ANTHROPIC_DEFAULT_<ALIAS>_MODEL` variables that Codex never reads.
+
 ## Invocation
 
 Invoke a phase explicitly with `$<skill>`. Some Codex clients may display the

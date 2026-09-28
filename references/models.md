@@ -188,11 +188,14 @@ the project, including a teammate on a different provider.
 
 Two consequences the scripts enforce, for every provider of this group:
 
-- `scripts/sdd_auto_outcome.py run` (and the phase preflight step of
-  `skills/run`, `skills/review`, `skills/auto`) warns when
-  `ANTHROPIC_BASE_URL` is set and the variable for the alias it is about to
-  use is not: the alias would resolve to an Anthropic model ID the provider
-  does not serve, and the session would fail on its first request.
+- `scripts/sdd_auto_outcome.py run` warns when `ANTHROPIC_BASE_URL` is set and
+  the variable for the alias it is about to use is not: the delegated session
+  spawns anyway, and the failure lands as an ERROR/INCOMPLETE classification,
+  never a silent pass. The phase preflight step of `skills/run`,
+  `skills/review`, `skills/auto` (Claude Code only) hard-stops instead —
+  exit 1 before the first `Agent` launch, naming the exact variables. Both
+  fire because the alias would otherwise resolve to an Anthropic model ID the
+  provider does not serve, and the session would fail on its first request.
 - The same script refuses `haiku` as the **session** model of a headless auto
   run, whatever it maps to: Claude Code's auto permission mode is unavailable
   for that alias and the session silently starts in Manual (ADR 0005). Pass

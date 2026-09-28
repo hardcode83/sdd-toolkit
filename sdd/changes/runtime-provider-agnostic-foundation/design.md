@@ -74,6 +74,15 @@ Rejected: a doctor check instead of a phase step — doctor is a periodic audit;
 this must fire at the moment of launch. (Doctor integration remains a possible
 follow-up, not this change.)
 
+**Runtime scope (feature-review fix):** the hard stop applies to runtimes that
+resolve tier aliases through `ANTHROPIC_*` variables — today Claude Code.
+Codex selects its session model from its own configuration and never consumes
+`ANTHROPIC_*` (R1 criterion 5; `docs/codex.md` "Configuration surface"), so
+under Codex the skill step is a documented skip, not an enforced stop —
+enforcing it would hard-stop Codex phases on unactionable variables. The three
+skills carry the skip instruction next to the step; `references/models.md` and
+`references/runtime-provider.md` state the split.
+
 ### D4 — Reviewer dispatch regression as a dedicated test module with two executable arms
 
 **Chosen:** a new `tests/test_reviewer_dispatch_regression.py` pins the
@@ -136,13 +145,13 @@ foreground caller-bound collection are stated there as standing rules.
 | `.codex-plugin/plugin.json` → shared `skills/` | A. Legitimate runtime dependency | `docs/codex.md:22-24` — no copied methodology |
 | `codex-adapter-install.sh` (`CLAUDE_PLUGIN_ROOT` via `shell_environment_policy.set`) | A. Legitimate runtime dependency — runtime-specific config bridge | `docs/codex.md:26-53` |
 | Native panel handoff (`build_codex_handoff`, `validate_codex_handoff`, `dispatch_codex_panel`) | A. Legitimate runtime dependency — the runtime adapter boundary already exists | `reviewer_plan.py:404-500`; `tests/test_codex_smoke.py` |
-| `review`/`ship`/`archive`/`status`/`history` Claude frontmatter (`context: fork`, `background`, `effort`) ignored by Codex | D. Stays runtime-specific; skills already degrade by design (HANDOFF blocks) | `docs/codex.md:108-115` |
-| Tier aliases in skill/agent frontmatter under Codex | D. Intent documentation only; no model selection | `docs/codex.md:122-126` |
-| Worktree isolation without `EnterWorktree` (manual `git worktree add` + `claim`) | D. Stays runtime-specific handoff; never silently ignored | `docs/codex.md:94-95` |
-| `sdd_auto_outcome.py` headless delegation under Codex (`claude -p` spawn) | C. Capability to abstract — **out of this change**; documented fallback is inline execution (`AUTO_OUTCOME: UNAVAILABLE`) | `docs/codex.md:92` |
-| Telemetry (`usage-*.sh`, OTel sink) | D. Stays Claude-runtime-specific | `docs/codex.md:97` |
-| `AskUserQuestion` absence under Codex | D. Stays runtime-specific; HANDOFF is the shared contract | `docs/codex.md:134-136` |
-| Tournament orchestration (Claude Agent + worktrees) | D. Unsupported under Codex, documented | `docs/codex.md:96` |
+| `review`/`ship`/`archive`/`status`/`history` Claude frontmatter (`context: fork`, `background`, `effort`) ignored by Codex | D. Stays runtime-specific; skills already degrade by design (HANDOFF blocks) | `docs/codex.md:145-152` |
+| Tier aliases in skill/agent frontmatter under Codex | D. Intent documentation only; no model selection | `docs/codex.md:159-163` |
+| Worktree isolation without `EnterWorktree` (manual `git worktree add` + `claim`) | D. Stays runtime-specific handoff; never silently ignored | `docs/codex.md:131-132` |
+| `sdd_auto_outcome.py` headless delegation under Codex (`claude -p` spawn) | C. Capability to abstract — **out of this change**; documented fallback is inline execution (`AUTO_OUTCOME: UNAVAILABLE`) | `docs/codex.md:129` |
+| Telemetry (`usage-*.sh`, OTel sink) | D. Stays Claude-runtime-specific | `docs/codex.md:134` |
+| `AskUserQuestion` absence under Codex | D. Stays runtime-specific; HANDOFF is the shared contract | `docs/codex.md:171-173` |
+| Tournament orchestration (Claude Agent + worktrees) | D. Unsupported under Codex, documented | `docs/codex.md:133` |
 
 No item was found that is an accidental coupling (B) in the sense of "works by
 luck and should not"; the existing adapter boundaries are deliberate.

@@ -129,9 +129,9 @@ never writes state; it reads configuration and reports.
 
 ### Preflight contract (D3)
 
-Before any phase launches its first `Agent` (or, for the delegated auto path,
-before the headless session spawns), the aliases the phase will use — `sonnet`
-and `opus` — are checked with one shared implementation:
+Before a phase on the Claude Code runtime launches its first `Agent`, the
+aliases the phase will use — `sonnet` and `opus` — are checked with one shared
+implementation:
 
 ```bash
 python3 scripts/provider_profile.py check --aliases sonnet,opus
@@ -141,7 +141,20 @@ When `ANTHROPIC_BASE_URL` is set and an alias lacks its
 `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` mapping, the phase stops (exit 1) and
 reports the exact missing variable names — never values. With no
 `ANTHROPIC_BASE_URL` the check is silent; a full model name passes through
-untouched. A panel that would die on its first request must fail as a loud,
+untouched.
+
+The step is **Claude-Code-only**: it exists because Claude Code resolves the
+tier aliases through `ANTHROPIC_*` variables. Codex selects its session model
+from its own configuration and never consumes `ANTHROPIC_*` (`docs/codex.md`,
+"Configuration surface"), so under Codex the step is a documented skip, not an
+enforced stop — enforcing it would halt Codex phases on variables that runtime
+cannot use.
+
+On the delegated auto path the same check runs, with the same shared
+implementation, before the headless session spawns — but it warns rather than
+stops (its pre-existing, deliberately preserved behavior): the session
+spawns, and one that dies on a missing mapping classifies ERROR/INCOMPLETE,
+never PASS. A panel that would die on its first request must fail as a loud,
 actionable configuration error, never as a silent dead panel.
 
 ### Reviewer collection is foreground, same-turn, caller-bound — or the runtime is BLOCKED
