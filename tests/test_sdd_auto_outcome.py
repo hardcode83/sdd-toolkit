@@ -290,9 +290,11 @@ class RunTests(unittest.TestCase):
             self.assertEqual(recorded.get(key), value)
         parent = dict(os.environ)
         # The child shell re-derives PWD from the cwd we pass (and macOS
-        # tempdirs are symlinks), bumps SHLVL for its own invocation, and sets
-        # _ to the last command it ran — all shell artifacts, not recipe input.
-        for shell_derived in ("PWD", "SHLVL", "_"):
+        # tempdirs are symlinks), bumps SHLVL for its own invocation, sets
+        # _ to the last command it ran, and drops OLDPWD unless it cd's —
+        # all shell artifacts, not recipe input. OLDPWD matters when the
+        # suite itself is invoked from a cd'd shell that exported it.
+        for shell_derived in ("PWD", "OLDPWD", "SHLVL", "_"):
             parent.pop(shell_derived, None)
             recorded.pop(shell_derived, None)
         self.assertEqual(set(recorded) - set(parent), {"SDD_AUTO", "SDD_AUTO_DELEGATED"})
