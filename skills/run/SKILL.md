@@ -77,16 +77,19 @@ refer to the numbering in the change's `tasks.md`):
    **481 of 481** panel launches were sequential — treat a lone `Agent` call in a
    message as the bug it is.
 
-   **Foreground means each `Agent` call's result — the reviewer's JSON — is in
-   this turn's tool results before you write another word.** Never end the turn
-   to "wait for the reviewers": in an interactive session a late notification
-   may still land; in a fork or a headless session (`/sdd:auto` runs this phase
-   under `claude -p`) it never does, and the rule is written for the worst case.
-   The tell: a tool result that is a task id or "running in background" instead
-   of the envelope — that reviewer was backgrounded; relaunch it in the
-   foreground in this same turn rather than waiting. Measured twice on one day
-   (2026-09-21): a run panel that ended its turn with `sdd-qa` still pending,
-   and a review fork that dropped its payloads twice in a row.
+   **Foreground means each `Agent` call is answered in this turn: never end the turn
+   to "wait for the reviewers".** In an interactive session a late
+   notification may still land; in a fork or a headless session (`/sdd:auto`
+   runs this phase under `claude -p`) it never does, and the rule is written for
+   the worst case. The tell: a tool result that is a task id or
+   "running in background" instead of the report — the harness backgrounded that reviewer
+   (measured: it does so for calls made from inside a fork even when you asked
+   for the foreground). Do not end the turn and do not reconstruct anything: run
+   the gate below with `--wait`, which blocks until every report has landed;
+   relaunch it in the same turn only if the gate reports that reviewer failed.
+   Measured twice on one day (2026-09-21): a run panel that ended its turn with
+   `sdd-qa` still pending, and a review fork that dropped its payloads twice in
+   a row.
 
    **Give each reviewer its referents inline, don't send it hunting.** You hold
    the plan; the reviewers do not, and left to rediscover it they averaged 60
@@ -95,30 +98,45 @@ refer to the numbering in the change's `tasks.md`):
    **with their EARS text**, the design decisions (D#) that apply **quoted**, the
    steering rules that bind this scope **quoted**, and the exact diff range. The
    agent files tell them to read these; a prompt that already carries them turns
-   reading into verifying.
+   reading into verifying. The exact `scope_id` in the prompt is also what the
+   gate checks to know the reviewer was launched for this section, and every
+   prompt ends with the output contract (a project reviewer's file may not carry
+   it): "your final message is one JSON object with `reviewer_id`, `scope_id`,
+   `lens`, `verdict`, `findings`, `evidence`, `status` — nothing else".
 
-   **Ask the gate for the plan before launching, then feed it the results.**
-   Never read the gate's source to learn its shapes (the first dense auto run
-   spent turns grepping it). The sequence is three commands:
+   **Ask the gate for the plan before launching, then let it collect the
+   verdicts.** Never read the gate's source to learn its shapes (the first dense
+   auto run spent turns grepping it). The sequence is three steps, each gate call
+   a **single static command** — the literal path, no `G=…;` variable, no
+   heredoc, no file under `/tmp`, so a narrow permission rule matches it:
 
    ```bash
-   G="${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py"
-   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '{"feature":"<feature>","scope_id":"run:<feature>:<N>","files":[<the section's files>]}' --plan
-   # → launch one Agent per entry of `launch`, all in ONE message, foreground; each returns its JSON envelope
-   python3 "$G" --root . --phase run --feature <feature> --section <N> --scope '<same scope>' --results '[{"invocation_id":"<tool_use id>","planned_reviewer_id":"<agent type you launched>","payload":<the reviewer's JSON>}, …]'
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py --root . --phase run --feature <feature> --section <N> --scope '{"feature":"<feature>","scope_id":"run:<feature>:<N>","files":[<the section's files>]}' --plan
+   # → launch one Agent per entry of `launch`, all in ONE message; each result prints `agentId: <id>`
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py --root . --phase run --feature <feature> --section <N> --scope '<same scope>' --collect --invocations '{"sdd-architect":"<its agentId>","sdd-security":"<its agentId>","sdd-qa":"<its agentId>", …}' --wait 540
    ```
 
-   **Results are JSON, not reports.** Each reviewer's final message is the result
-   envelope of `reviewer_plan.py` (`reviewer_id`, `scope_id`, `lens`, `verdict`,
-   `findings`, `evidence`, `status`) and nothing else — the agent files carry the
-   exact shape; `--plan` prints an `example_results` list you fill in.
-   `planned_reviewer_id` is the trusted identity: the agent type of *your*
-   `Agent` call for that slot, never a `reviewer_id` read out of the JSON the
-   reviewer returned (two reviewers can mislabel or swap their own). An envelope
-   keyed `reviewer_id` at the top level is the pre-0.54.1 shape and the gate
-   refuses it by name. The gate's
-   exit code is the verdict; on 0 it has already annotated the heading. Read the
-   findings from the JSON; never ask a reviewer to explain itself in prose.
+   **You never write a verdict.** `--invocations` maps each planned reviewer to
+   the `agentId` its `Agent` call's result printed — ids, nothing else. The gate
+   reads Claude Code's own record of each call: the agent type the harness
+   launched is the trusted identity (a reviewer cannot swap slots by mislabeling
+   its JSON), and the verdict is the JSON object the reviewer delivered. Give the
+   Bash call a 600000 ms timeout to match `--wait 540`. **Forbidden**, because it
+   is a fabricated CI pass whatever its intent — and auto mode's classifier
+   refuses it as one (`[CI Bypass]`, `[Self-Approval]`: 28 refusals measured,
+   ADR 0009): typing `"verdict"` JSON into any command, writing envelopes to a
+   file, a heredoc or a `python3 -c`, or reading a reviewer's transcript or
+   `tool-results` to rebuild its answer. `--results` survives only as a legacy
+   path for harnesses that hand the gate the reviewers' JSON themselves; inside
+   Claude Code it is never the way. A reviewer the gate cannot collect — no
+   report, prose instead of JSON, an error, an ambiguous id — comes back
+   `unavailable` with the reason and the gate fails closed; the fix is to
+   relaunch that reviewer, never to describe its verdict to the gate.
+   `planned_reviewer_id`, in the legacy shape, is the same trusted identity
+   `--collect` reads from the harness: never a `reviewer_id` taken from the
+   reviewer's JSON. The gate's exit code is the verdict; on 0 it has already
+   annotated the heading. Read the findings from the gate's output; never ask a
+   reviewer to explain itself in prose.
    - **Referent filter**: a finding without its referent (R#, design decision D#, or a quoted steering rule) is discarded — the agents are instructed this way, enforce it when synthesizing.
    - **Fix rounds are delegated too, and they climb a ladder.** Give the accepted findings (file:line, referent, what, fix direction) to a fresh implementer with the same contract as step 2, scoped to those findings; then re-run **only the reviewer(s) whose findings were fixed**, scoped to the fix.
      - **Round 1**: implementer on `model: sonnet` (the section's tier).
@@ -127,7 +145,7 @@ refer to the numbering in the change's `tasks.md`):
      - The panel gate is unchanged: a reviewer's `FAIL` is a `FAIL`, whatever the severity of what remains. Accepting residual findings as debt is the user's call at the gate, never the orchestrator's (`docs/adr/0006-decisions-three-levels.md`, D4).
    - A `DESIGN-CONFLICT` finding from the architect is not a code fix — it goes through the deviation rule (step 4).
    - If a reviewer cannot be resolved, spawned, waited on, or collected, record an explicit unavailable result. The shared reviewer-panel gate fails closed; do not substitute an inline reviewer for a missing mandatory or applicable reviewer.
-   - **A reviewer cut by its turn limit is relaunched alone**, with the same prompt plus "resume from what you already established" — never the whole panel. The others' envelopes are already in hand; only the missing one is re-collected before the gate runs.
+   - **A reviewer cut by its turn limit is relaunched alone** — a new `Agent` call, not a `SendMessage` to the old one (a resumed reviewer hands back twice and the gate refuses the ambiguity) — with the same prompt plus "resume from what you already established", never the whole panel. Re-run the gate with the new `agentId` in that reviewer's slot and the others unchanged.
    - **Tests run in the foreground, with a time budget, and never as something to "wait for".** Implementers and reviewers run the project's test commands as ordinary foreground calls with an explicit timeout (`--timeout`/`timeout` of the runner, or the Bash call's own), scoped to what the section touches; the full suite runs once, in the Verification section. On a host under contention (the run above: six stacks on one Docker VM, a QA pass of 80 minutes, two implementers of one section ending their turn to "wait for the background pytest") the rule is: shrink the scope to the change's own tests, record `command · sha · result` in `## Implementation Notes`, and move on. Ending a turn to wait for a background test is how a subagent ends for good.
    - **The verdict is persisted by the gate, not by you.** On PASS, `reviewer_panel.py --section N` writes `<!-- panel: PASS <date> receipt:<id> -->` on the section heading (keeping `<!-- hard -->`) and the receipt next to the feature's in `<git common dir>/sdd/receipts/`. Never write that marker yourself. A section you skip on purpose — pure scaffolding, docs or config — gets `<!-- panel: skipped — <reason> -->` written by you, so the skip is a decision on record and not an omission. **No section N+1 starts while section N's heading carries neither marker**: an unannotated completed section is a panel that did not happen (the first dense auto run skipped section 1's panel with "84 tests passing" as the whole justification).
 4. **On deviation:** if implementation reveals the design or a requirement is wrong, STOP. Explain the conflict, agree the fix with the user, update `proposal.md`/`design.md`/`tasks.md` to match reality, then continue. Never silently diverge from the spec — the documents must stay true.

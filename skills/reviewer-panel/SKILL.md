@@ -29,9 +29,22 @@ response is synthesized as an explicit unavailable result and cannot pass.
 The same trusted-binding rule as the Codex boundary applies here too: a
 result's identity is `planned_reviewer_id` — which `Agent` call (subagent
 type) produced it — never the `reviewer_id` the reviewer's own JSON declares.
-`scripts/reviewer_panel.py --results` enforces this at the shell boundary; two
-reviewers self-reporting the same or swapped identity must fail closed,
-attributed per reviewer, not merge into one another's slot.
+`scripts/reviewer_panel.py --collect` enforces this at the shell boundary
+without the orchestrator ever writing a verdict: given
+`--invocations '{"<planned reviewer id>":"<agentId of its Agent call>"}'`, it
+reads Claude Code's record of each call (`subagents/agent-<id>.meta.json`, the
+parent transcript's `Agent` tool_use and tool_result, the reviewer's
+`SubagentHandback`), requires the launched type to be the planned reviewer
+(`<id>` or `sdd:<id>`) and the prompt to carry the exact `scope_id`, and
+extracts the single JSON result object of the delivered report. A record that
+is missing, duplicated, contradictory, still running (`--wait S` polls), an
+error or interruption, or a report without exactly one contract object is an
+`unavailable` result (ADR 0009). The legacy `--results` envelope list applies
+the same rule to harnesses that hand the gate the JSON themselves; inside
+Claude Code it is never used, because an orchestrator typing a PASS verdict
+is indistinguishable from one fabricating it. Two reviewers self-reporting the
+same or swapped identity must fail closed, attributed per reviewer, not merge
+into one another's slot.
 
 `build_codex_handoff()` is the native boundary. It emits one request per
 planned item and the exact capability contract for the top-level Codex
@@ -44,9 +57,10 @@ capability or worktree mutation failures are unavailable results.
 Do not use `.codex/agents`, `~/.codex/agents`, copied prompts, symlinks, or
 project Codex configuration.
 
-`scripts/reviewer_panel.py --plan` prints the planned reviewers and an example
-`--results` for a scope, so no caller reads the gate's source to learn its
-shapes. With `--phase run --section N` the gate writes the section's receipt
+`scripts/reviewer_panel.py --plan` prints the planned reviewers and the exact
+`--collect` command for a scope, so no caller reads the gate's source to learn
+its shapes; its legacy `example_results` carries a placeholder verdict the gate
+refuses, never a ready-made `PASS`. With `--phase run --section N` the gate writes the section's receipt
 (`<feature>-run-<N>.json`) and, on PASS, the `panel: PASS … receipt:<id>` marker
 on the section heading — it is the only writer of that marker (ADR 0008).
 `scripts/reviewer_panel.py` persists every feature-scale evaluation (`review`,
@@ -65,7 +79,8 @@ section PASS annotation or certification; this module itself never writes
 `STATE.md`.
 
 For shell lifecycle entry points, `scripts/reviewer_panel.py` is the same
-closed-world gate: pass the exact phase scope and collected transport JSON;
+closed-world gate: pass the exact phase scope and the invocation ids
+(`--collect`), or a harness's collected transport JSON (`--results`);
 continue to annotation/certification only on exit 0. A non-zero exit is a
 visible fail-closed result.
 

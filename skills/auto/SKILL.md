@@ -25,6 +25,14 @@ The executable auto call is `auto_panel(...)`; delegated handoffs carry its
 plan/results and are re-gated by the receiving run/review path.
 The shell-facing boundary is `scripts/reviewer_panel.py --phase auto`; auto
 must stop on a non-zero gate exit and never call `mark-recertified` itself.
+Inside Claude Code every panel gate — here and in the run/review paths auto
+delegates to — is fed with `--collect --invocations '{"<reviewer>":"<agentId>"}'
+--wait 540`, one static command with the literal
+`${CLAUDE_PLUGIN_ROOT}/scripts/reviewer_panel.py` path: the gate reads each
+verdict from the harness's own record of the `Agent` call. No session of auto
+ever writes `"verdict"` JSON, a heredoc or a `/tmp` file for the gate, or reads
+a reviewer's `tool-results` back; auto mode's classifier refuses those as
+`[CI Bypass]`/`[Self-Approval]` and the run dies on it (ADR 0009).
 
 Arguments: `N` (number of roadmap entries to process; default 1) or a
 specific feature name. Only roadmap entries are eligible — auto NEVER

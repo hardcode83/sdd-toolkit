@@ -139,7 +139,7 @@ Dos cosas que sí decomisiona solo, y que antes hacían falta pedir aparte: **es
 
 **Desbloquear una feature de auto** → lee su `BLOCKED.md` (`sdd_lifecycle.py blocked <feature>` lo lista con tipos), decide, borra la entrada y retoma con las fases normales en su rama `sdd/<feature>` — o `/sdd:auto <feature>` para que auto continúe desde donde quedó (reanuda por fase; nunca regenera tus documentos). Solo las entradas `decision` paran a auto; las `deferred` y `assumed` viajan con el PR y las resuelves allí. Y si contestas "adelante" sin elegir, auto toma la opción recomendada y la registra como `assumed` — no como decisión tuya.
 
-**El panel de una sección dio PASS pero review la revisa entera** → la anotación no la escribió el gate (mira `sdd-doctor`, `SDD032`). El PASS válido lleva `receipt:<id>`; se obtiene ejecutando `reviewer_panel.py --phase run --section N` con los sobres de los revisores, y `--plan` te da la forma exacta.
+**El panel de una sección dio PASS pero review la revisa entera** → la anotación no la escribió el gate (mira `sdd-doctor`, `SDD032`). El PASS válido lleva `receipt:<id>`; se obtiene ejecutando `reviewer_panel.py --phase run --section N --collect --invocations '{…}'` con los `agentId` de las llamadas a los revisores (el gate lee él mismo sus veredictos), y `--plan` te da el comando exacto.
 
 **Ship me pide comandos** → ya no debería: publica la rama él mismo si nadie la ha publicado y certifica desde el recibo si review no marcó. Si lo hace, mira si la sesión corre una versión vieja del plugin (`sdd_session.py check` lo avisa) y reinicia la sesión.
 
