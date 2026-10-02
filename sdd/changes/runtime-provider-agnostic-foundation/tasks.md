@@ -1,0 +1,74 @@
+# Tasks: runtime-provider-agnostic-foundation
+
+<!-- Markers, read by /sdd:run and the lifecycle gates (HTML comments, invisible
+     when rendered). On a section heading: "hard" makes that section's
+     implementer run on the stronger model; "panel: PASS <date> receipt:<id>"
+     is written by the panel gate (reviewer_panel.py) when the section's review
+     panel passes — never by hand; "panel: skipped — <reason>" records a
+     deliberate skip (scaffolding, docs, config). On a task line:
+     "manual" marks a task only a human can perform — run leaves it to you and
+     it may travel with the PR as a deferred entry; it may sit on any line of
+     the task item, not only the checkbox line. -->
+
+## 1. Provider capability profile and alias preflight <!-- panel: PASS 2026-09-22 receipt:9ba2dc06 -->
+
+- [x] 1.1 Create `scripts/provider_profile.py` (stdlib only) with `read_claude_code_profile(env)` returning `base_url`, `alias_map` (only aliases whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` is set), and `structured_output`/`effort`/`budget_semantics`/`fallback` as `"unknown"` when not determinable — never guessed. [R1]
+- [x] 1.2 Implement `alias_warnings(aliases, env)`: when `ANTHROPIC_BASE_URL` is set, one actionable message per alias in {haiku, sonnet, opus, fable} lacking its `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`; no warnings when BASE_URL is unset; full model names pass through with no warning. [R2]
+- [x] 1.3 Add the CLI entry point: `python3 scripts/provider_profile.py check --aliases sonnet,opus` prints warnings to stderr and exits 1 when any mapping is missing, exits 0 otherwise. [R2]
+- [x] 1.4 Re-implement `provider_warnings` in `scripts/sdd_auto_outcome.py` on top of `alias_warnings`, keeping its existing signature, message shape, and behavior so `tests/test_sdd_auto_outcome.py` passes unchanged. [R2]
+
+## 2. Phase preflight integration <!-- panel: PASS 2026-09-23 receipt:1bec0fbe -->
+
+- [x] 2.1 Add to `skills/run/SKILL.md` (step 1, before the first `Agent` launch): run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/provider_profile.py" check --aliases sonnet,opus`; on exit 1, stop the phase and report the exact missing variable names from stderr. [R2]
+- [x] 2.2 Add the same preflight step to `skills/review/SKILL.md` before the panel launch, identical wording and hard-stop behavior. [R2]
+- [x] 2.3 Add the same preflight step to `skills/auto/SKILL.md` (inline path, before any `Agent` launch; the delegated path is already covered by `sdd_auto_outcome.py`). [R2]
+
+## 3. Environment inheritance regression tests <!-- panel: PASS 2026-09-23 receipt:4de3e0ca -->
+
+- [x] 3.1 Extend `tests/test_sdd_auto_outcome.py`: fake `claude` records its full environment; a test sets `ANTHROPIC_BASE_URL`, a credential variable, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_SONNET_MODEL`, runs `sdd_auto_outcome.run`, and asserts all of them reached the executable plus exactly `SDD_AUTO_DELEGATED=1` and `SDD_AUTO=1` added on top of the parent environment. [R3]
+- [x] 3.2 In the same module, assert `delegated_environment` adds only the two SDD guards to a supplied base environment and mutates nothing else. [R3]
+
+## 4. Reviewer dispatch regression tests <!-- panel: PASS 2026-09-23 receipt:89ef7a93 -->
+
+- [x] 4.1 Create `tests/test_reviewer_dispatch_regression.py` with the correct arm: a fake launcher returns one caller-bound envelope per planned reviewer (`invocation_id`, `planned_reviewer_id` = the launched identity, `payload`) to `reviewer_plan.dispatch_claude_panel`; assert panel PASS; then run the `reviewer_panel.py` gate over those envelopes against a fixture scope and assert a receipt is written; assert `sdd_lifecycle.ensure_panel_receipt` accepts it. [R4]
+- [x] 4.2 Failure arm, variant "background return": a fake launcher returns payloads lacking trusted invocation identity (no `invocation_id` / no `planned_reviewer_id`); assert `dispatch_claude_panel` fails closed with no PASS panel. [R4]
+- [x] 4.3 Failure arm, variant "fork ended without gate": simulate reviewer output existing only as self-declared PASS with the gate never run (no receipt on disk); assert `sdd_lifecycle.ensure_panel_receipt` raises and certification is unreachable — the claimed PASS certifies nothing. [R4]
+- [x] 4.4 Assert the existing doctor check for a hand-written `panel: PASS` annotation without a matching receipt (`SDD032`) flags the symptom of the historical incident, keeping that detection pinned. [R4]
+
+## 5. Documentation: recipes, layer model, Codex configuration surface <!-- panel: PASS 2026-09-23 receipt:b948f0ed -->
+
+- [x] 5.1 Restructure `references/models.md` into the Anthropic-compatible group (Claude Code runtime × Anthropic/Kimi/MiniMax providers) with an exact env recipe for Kimi (aliases mapped to the Kimi model, BASE_URL, credential variable) alongside the existing MiniMax recipe, each recipe noting the observation date and a verification command. [R5]
+- [x] 5.2 Add the quota-semantics section to `references/models.md`: `--max-budget-usd` does not protect usage-window quotas (Kimi's 5-hour window observed 2026-09); Auto Mode classifier requests on non-Anthropic gateways consume provider quota (observed Claude Code notice via api.kimi.com); no optimization prescribed. [R5]
+- [x] 5.3 Create `references/runtime-provider.md`: the three layers (SDD core / runtime adapter / provider capability) with concrete file classifications; the rule that a new abstraction requires two real implementations; the profile schema with `unknown` semantics; configuration acquisition as runtime-specific (env-derived implemented for Claude Code only); the standing rule that a runtime unable to guarantee foreground, same-turn, caller-bound reviewer collection is BLOCKED/INCOMPATIBLE for panel certification — never PASS. [R1, R4]
+- [x] 5.4 Add a "Configuration surface" section to `docs/codex.md` stating from evidence what Codex consumes (its own session model configuration; the `shell_environment_policy.set` block from `codex-adapter-install.sh`) and that `ANTHROPIC_*` variables and tier aliases are not Codex configuration (aliases document intent only). [R5]
+
+## 6. Release bump and validation <!-- panel: skipped — config-only manifest bump; CI enforces parity, validate_toolkit.py all PASS at 0.54.4 -->
+
+- [x] 6.1 Bump `version` to 0.54.4 in both `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` in one commit (repo rule: manifests move together; CI enforces parity). [R1]
+- [x] 6.2 Run `python3 scripts/validate_toolkit.py all` and fix any contract violation it reports (skills, manifests, boundary, fixtures). [R1]
+
+## 7. Verification <!-- panel: skipped — orchestrator-run verification; evidence: 581 tests OK (exit 0), validate_toolkit.py all 5 checks PASS -->
+
+- [x] 7.1 Full test suite passes: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`
+- [x] 7.2 Toolkit contracts validate: `python3 scripts/validate_toolkit.py all`
+
+## Implementation Notes
+
+<!-- Append-only, written by the implementer of each section for the next one:
+     decisions taken, names chosen, gotchas found. One bullet each, no prose. -->
+- Section 1: `tests/test_provider_profile.py` was added even though the design table (not tasks.md) requires it — recorded here as the cross-reference gap it closes; it follows the same sys.path convention as `tests/test_sdd_auto_outcome.py`.
+- Section 1: CLI `--aliases` is comma-separated and repeatable (`action="append"`, each occurrence split on commas); documented in the `main()` docstring.
+- Section 4: resumed from an interrupted implementer — the untracked test module was kept and completed by the orchestrator; two fixture assumptions fixed against the real gate: only the run-phase gate annotates a heading (`--phase run --section 1`, ADR 0008 — the review-phase gate certifies via receipt alone), and `mark_local_verified` runs `ensure_local_gates` before the receipt check, so the test completes task 2.1 first to exercise the "No panel receipt" failure. 8/8 module tests pass; reordered-envelope PASS test pins order-independence of caller-bound collection.
+- Section 1: `provider_warnings(model, env)` in `sdd_auto_outcome.py` is now a thin wrapper calling `provider_profile.alias_warnings([model], env)`; the exact warning string is produced by `provider_profile.py`, so any message change must keep `tests/test_sdd_auto_outcome.py` green (it asserts length only, not text).
+- Section 1: the four capability fields (`structured_output`, `effort`, `budget_semantics`, `fallback`) are always `"unknown"` — no env variable determinably signals them today; the constant is `provider_profile.UNDETERMINED`.
+- Section 1 (round-1 fix, D3/R2 crit. 2): removed the inline ImportError fallback and the duplicated `ALIAS_ENV` table from `provider_warnings` in `scripts/sdd_auto_outcome.py`; `provider_profile` is now imported at module top (sibling on the same sys.path, like the lazy `sdd_lifecycle` convention but top-level per the review), so an import failure fails loudly at import time and exactly one check implementation lives in `scripts/provider_profile.py`.
+- Section 1 (round-2 fix, R2): `alias_warnings` now strips each alias before the `ALIAS_ENV` lookup, so `--aliases "sonnet, opus"` warns on the padded `opus` instead of passing it through; `main()` rejects an expanded-empty alias list (`--aliases ""`) with a usage error on stderr and exit 2, while `alias_warnings([])` stays vacuous on purpose (sdd_auto_outcome calls it with a single model). Regression tests added for both.
+- Section 2: one shared wording block ("Provider preflight (hard stop)", `check --aliases sonnet,opus`, exit 1 → stop the phase and report the exact variable names from stderr, names never values, exit 2 = usage error/bug, silent exit 0 when `ANTHROPIC_BASE_URL` unset) replicated in all three skills; run = first bullet of step 1 (inserting a new numbered step was rejected: other skills reference "run step 3"/"step 6" by number); review = lead-in of step 2, immediately before "Launch the review panel in parallel"; auto = its own "### Provider preflight (inline path, hard stop)" subsection at the top of "## Per-feature pipeline" (before step 1's Branch + claim, hence before the step-3 `sdd-architect` Agent launch), plus one sentence stating the delegated path must NOT duplicate it because `sdd_auto_outcome.py` already runs the same check via `provider_warnings`.
+- Section 2: no validator/test changes needed — `validate_toolkit.py all` passes as-is and the contract tests only assert presence of pre-existing strings in the skill files; full unittest suite passes (exit 0).
+- Section 3: new tests are `RunTests.test_run_propagates_provider_env_and_adds_only_the_two_guards` (R3 crit. 1+2) and `RecipeTests.test_delegated_environment_adds_only_the_guards_and_leaves_the_base_alone` (R3 crit. 2); the fake `claude` now records its full environment via `env | sort > <tempdir>/env.txt` (existing `fake_claude` mechanism, records into the test's TemporaryDirectory, never the repo).
+- Section 3: the full-env comparison must normalize three shell-derived variables on both sides before diffing against `os.environ`: `PWD` (child shell re-derives it from the `cwd` run arg; macOS tempdirs are symlinks), `SHLVL` (child bumps it), `_` (set to the last command run) — these are shell artifacts, not recipe input; everything else must match the parent env exactly plus only `SDD_AUTO`/`SDD_AUTO_DELEGATED`.
+- Section 3: test credential/base-url/model values are deliberately fake (`test-api-key`, `https://gateway.example.test/anthropic`, `test-model-1`, `TestSonnet-Alias-1`) per security steering; the parent-env test vars are set via `os.environ.update` with an `addCleanup` restore (`RunTests.restore_env`).
+- Section 4 (panel-fix round, D4): the BackgroundReturnFailure arm now pins the previously unpinned "results count short / non-Mapping entry" branch of `dispatch_claude_panel` (reviewer_plan.py:373-375) — `test_collection_count_short_fails_closed` and `test_non_mapping_envelope_fails_closed` assert gate FAIL, `passed` False, the "Claude invocation collection incomplete" error, and `PermissionError` from `certification_capability`; verified non-vacuous by removing the branch in a scratch copy, after which both new tests fail.
+- Section 5: Kimi recipe evidence — the only repo evidence is `api.kimi.com` as observed host (proposal/tasks R5 text: 5-hour window + Auto Mode classifier notice observed 2026-09) and `https://api.kimi.com/anthropic` as a *test fixture* in `tests/test_provider_profile.py` (not an observed config). Exact BASE_URL path, Kimi model name, and the credential variable Kimi's endpoint expects are marked `unknown` in `references/models.md` with a verify-before-use instruction; MiniMax recipe observation date is 2026-09-05 (commit f70c0c7 that introduced it).
+- Section 5: `references/runtime-provider.md` summarizes the layer model per D6 — the per-item Codex inventory with evidence stays in design.md; `test_decisions_contract.py` pins only the strings "`haiku`"/"`sonnet`"/"`opus`"/"`fable`"/"ANTHROPIC_DEFAULT_SONNET_MODEL" in models.md, all preserved in the restructure. No validator/test changes needed; `validate_toolkit.py all` exit 0 and full unittest suite exit 0 after 5.1–5.4.
+- Section 5 (fix round, D7): `references/runtime-provider.md` layer-2 Claude Code row cited `agents/sdd-review-*.md` as the tier-alias frontmatter surface — that path does not exist in the toolkit (it is the consumer-project location). Row now cites the real toolkit files `agents/sdd-architect.md`, `agents/sdd-qa.md`, `agents/sdd-security.md` (verified `model: sonnet`) plus `templates/reviewer-template.md`; a separate note states consumer-project reviewers live at `.claude/agents/sdd-review-*.md`, created from the template, and are NOT toolkit-shipped. Every other path cited in the file was `ls`-verified to exist; no other dead paths found. `validate_toolkit.py all` exit 0.

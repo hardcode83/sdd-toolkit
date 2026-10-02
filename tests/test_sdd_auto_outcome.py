@@ -95,6 +95,15 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(env["SDD_AUTO"], "1")
         self.assertEqual(env["PATH"], "/bin")
 
+    def test_delegated_environment_adds_only_the_guards_and_leaves_the_base_alone(self) -> None:
+        """R3: the child env is exactly the parent env plus the two guards — no
+        pruning of provider variables, and the caller's dict is never mutated."""
+        base = {"PATH": "/bin", "ANTHROPIC_BASE_URL": "https://gateway.example.test/anthropic"}
+        snapshot = dict(base)
+        env = sdd_auto_outcome.delegated_environment(base)
+        self.assertEqual(env, {**snapshot, "SDD_AUTO_DELEGATED": "1", "SDD_AUTO": "1"})
+        self.assertEqual(base, snapshot)
+
 
 class ClassifyTests(unittest.TestCase):
     def test_pass_blocked_failed_follow_the_outcome_object(self) -> None:
@@ -241,6 +250,56 @@ class RunTests(unittest.TestCase):
         script = self.bin / "claude"
         script.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    @staticmethod
+    def restore_env(previous: dict) -> None:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_run_propagates_provider_env_and_adds_only_the_two_guards(self) -> None:
+        """R3: ANTHROPIC_BASE_URL, the credential variable, ANTHROPIC_MODEL, and
+        the ANTHROPIC_DEFAULT_<ALIAS>_MODEL remaps must reach the delegated
+        executable untouched, and the child env is exactly the parent env plus
+        SDD_AUTO_DELEGATED/SDD_AUTO. Values are deliberately fake."""
+        settings = {
+            "ANTHROPIC_BASE_URL": "https://gateway.example.test/anthropic",
+            "ANTHROPIC_API_KEY": "test-api-key",
+            "ANTHROPIC_MODEL": "test-model-1",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "TestSonnet-Alias-1",
+        }
+        previous = {key: os.environ.get(key) for key in settings}
+        self.addCleanup(self.restore_env, previous)
+        os.environ.update(settings)
+
+        payload = json.dumps(result(structured_output=outcome("PASS")))
+        # The fake records its full environment so the test can compare it
+        # against the parent environment the run started from.
+        record = Path(self.directory.name) / "env.txt"
+        self.fake_claude(f"env | sort > '{record}'\ncat <<'EOF'\n{payload}\nEOF")
+        verdict = sdd_auto_outcome.run("/sdd:review demo", cwd=Path(self.directory.name))
+        self.assertEqual(verdict["kind"], "PASS")
+
+        recorded = {}
+        for line in record.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            recorded[key] = value
+        for key, value in settings.items():
+            self.assertEqual(recorded.get(key), value)
+        parent = dict(os.environ)
+        # The child shell re-derives PWD from the cwd we pass (and macOS
+        # tempdirs are symlinks), bumps SHLVL for its own invocation, sets
+        # _ to the last command it ran, and drops OLDPWD unless it cd's —
+        # all shell artifacts, not recipe input. OLDPWD matters when the
+        # suite itself is invoked from a cd'd shell that exported it.
+        for shell_derived in ("PWD", "OLDPWD", "SHLVL", "_"):
+            parent.pop(shell_derived, None)
+            recorded.pop(shell_derived, None)
+        self.assertEqual(set(recorded) - set(parent), {"SDD_AUTO", "SDD_AUTO_DELEGATED"})
+        for key, value in parent.items():
+            self.assertEqual(recorded[key], value)
 
     def test_missing_claude_is_unavailable(self) -> None:
         verdict = sdd_auto_outcome.run("/sdd:review demo", executable="claude-that-does-not-exist")

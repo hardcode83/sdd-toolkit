@@ -50,6 +50,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import provider_profile
+
 OUTCOMES = ("PASS", "BLOCKED", "FAILED")
 KINDS = ("PASS", "BLOCKED", "FAILED", "DENIED", "ERROR", "INCOMPLETE", "UNAVAILABLE")
 
@@ -182,14 +184,6 @@ def build_command(
     return command
 
 
-ALIAS_ENV = {
-    "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "fable": "ANTHROPIC_DEFAULT_FABLE_MODEL",
-}
-
-
 def provider_warnings(model: str, env: dict[str, str] | None = None) -> list[str]:
     """The toolkit names models by alias so the environment can remap them.
 
@@ -197,18 +191,14 @@ def provider_warnings(model: str, env: dict[str, str] | None = None) -> list[str
     to whatever `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` says; unset, it resolves to the
     Anthropic model ID, which the provider will not serve. Say so before the
     session fails on its first request (`references/models.md`).
+
+    One shared check lives in `provider_profile.py` (the Claude Code profile
+    source); this is the thin wrapper the recipe and the tests call, passing
+    the single session model as the alias list (D3). `provider_profile` is
+    imported at module top: if the import ever breaks, this module must fail
+    loudly at import time, not fall back to a silent duplicate of the check.
     """
-    env = os.environ if env is None else env
-    if not env.get("ANTHROPIC_BASE_URL"):
-        return []
-    alias = model.lower()
-    variable = ALIAS_ENV.get(alias)
-    if variable and not env.get(variable):
-        return [
-            f"ANTHROPIC_BASE_URL is set but {variable} is not: the alias {alias!r} "
-            "will resolve to the Anthropic model ID, which this provider may not serve."
-        ]
-    return []
+    return provider_profile.alias_warnings([model], env)
 
 
 def delegated_environment(base: dict[str, str] | None = None) -> dict[str, str]:
