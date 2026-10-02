@@ -176,3 +176,12 @@ without a receipt on disk is treated as not having happened; certification
 without `ensure_panel_receipt` acceptance is unreachable. The runtime-level
 proof for a given harness belongs to the conformance suite; the rule itself
 is not conditional on it.
+
+In Claude Code the collection is the gate's own, not the orchestrator's:
+`reviewer_panel.py --collect --invocations '{"<reviewer>":"<agentId>"}' --wait S`
+reads the harness's records of each `Agent` call (the launched type is the
+trusted identity, the delivered `SubagentHandback` report is the payload) and
+blocks inside the caller's turn until every report lands — which is what keeps
+a reviewer the harness backgrounded caller-bound and same-turn. A record that
+does not resolve to exactly one completed, matching call is `unavailable`
+(ADR 0009). The orchestrator never transcribes a verdict.

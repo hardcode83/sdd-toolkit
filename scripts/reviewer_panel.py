@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,6 +25,16 @@ SECTION_HEADING_RE = re.compile(r"^(## (\d+)\.[^\n]*?)(\s*<!--\s*panel:[^>]*-->)
 EPILOG = """
 Shapes the gate accepts (build them from `--plan`, never by reading this file):
 
+  --collect --invocations '{"sdd-architect": "<agentId>", "sdd-security": "<agentId>", ...}'
+            THE way to feed a Claude Code panel (0.55.0, ADR 0009). One entry per
+            planned reviewer: the `agentId` printed by the result of the `Agent`
+            call you made for that slot (or that call's `toolu_` id). You write no
+            verdict: the gate reads the harness's own records of each call
+            (~/.claude/projects/.../subagents/), checks the launched agent type
+            against the plan, and extracts the reviewer's JSON from the report it
+            delivered. `--wait S` blocks up to S seconds for reviewers still
+            running. Anything missing, ambiguous or malformed is `unavailable`.
+
   --scope   '{"feature": "<f>", "scope_id": "run:<f>:<N>", "files": ["src/a.py", ...]}'
             (`scope_id` is free text; use run:<feature>:<section> per section and
              review:<feature> at feature scale; `files` is the diff's file list)
@@ -32,6 +43,10 @@ Shapes the gate accepts (build them from `--plan`, never by reading this file):
                "payload": {"reviewer_id": "sdd-qa", "scope_id": "run:<f>:<N>", "lens": "qa",
                            "verdict": "PASS", "findings": [], "evidence": ["src/a.py"],
                            "status": "complete"}}, ...]'
+            LEGACY / diagnostic shape (tests, harnesses that hand the gate the
+             reviewers' JSON themselves). Inside Claude Code use --collect: a
+             verdict typed into this argument by the orchestrator is exactly what
+             a permission classifier must refuse.
             (one envelope per planned reviewer; `payload` is the reviewer's final JSON.
              `planned_reviewer_id` is the TRUSTED identity: set it to which reviewer you
              launched (the `subagent_type`/agent name of that `Agent` call), never by
@@ -41,8 +56,8 @@ Shapes the gate accepts (build them from `--plan`, never by reading this file):
              which planned slot a result fills — a reviewer that mislabels its own output
              must not be able to swap places with another reviewer.)
 
-  --plan    prints the planned reviewers for the scope and an example --results,
-            and exits without evaluating anything.
+  --plan    prints the planned reviewers for the scope, the --collect command to
+            run once they report, and exits without evaluating anything.
   --section N   (phase run) writes the section's receipt and, on PASS, annotates
             the `## N.` heading of tasks.md itself — the orchestrator never does.
 """
@@ -52,6 +67,8 @@ NON_CODE_RE = re.compile(r"^(sdd/|docs/)|\.(md|txt|svg|png|jpg|jpeg|gif)$", re.I
 
 MODULE = Path(__file__).resolve().parents[1] / "skills" / "reviewer-panel" / "reviewer_plan.py"
 import importlib.util
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import panel_collect  # noqa: E402
 spec = importlib.util.spec_from_file_location("sdd_reviewer_plan_cli", MODULE)
 assert spec and spec.loader
 reviewer_plan = importlib.util.module_from_spec(spec)
@@ -182,6 +199,28 @@ def carried_envelopes(receipt: dict, plan, present: set[str], feature: str, phas
     return carried
 
 
+PLACEHOLDER_VERDICT = "<copy the reviewer's verdict; legacy --results only>"
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,128}$")
+
+
+def collect_command(args, required) -> str:
+    """The gate command --plan hands back: one static invocation, ids only."""
+    section = f" --section {args.section}" if args.section is not None else ""
+    worktree = f" --worktree {args.worktree}" if args.worktree else ""
+    invocations = json.dumps({item.reviewer_id: "<agentId>" for item in required}, separators=(",", ":"))
+    return (f"python3 {Path(__file__).resolve()} --root {args.root} --phase {args.phase} "
+            f"--feature {args.feature}{section}{worktree} --scope '<same scope>' "
+            f"--collect --invocations '{invocations}' --wait 540")
+
+
+def collected_envelope(collected) -> dict:
+    envelope = {"invocation_id": collected.invocation_id, "planned_reviewer_id": collected.reviewer_id,
+                "payload": collected.payload if collected.payload is not None else {}}
+    if collected.state != panel_collect.COMPLETE:
+        envelope["collection_error"] = collected.reason or f"{collected.reviewer_id} was not collected"
+    return envelope
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -190,8 +229,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--phase", choices=sorted(reviewer_plan.VALID_PHASES), required=True)
     parser.add_argument("--feature", required=True)
     parser.add_argument("--scope", required=True, help="JSON scope object (see epilog)")
-    parser.add_argument("--results", help="JSON list of result envelopes (see epilog); required unless --plan")
-    parser.add_argument("--plan", action="store_true", help="print the planned reviewers and an example --results, then exit")
+    parser.add_argument("--results", help="LEGACY: JSON list of result envelopes (see epilog); inside Claude Code use --collect")
+    parser.add_argument("--collect", action="store_true",
+                        help="read each reviewer's verdict from Claude Code's own records of the Agent calls named by --invocations")
+    parser.add_argument("--invocations", help='(with --collect) JSON object {"<planned reviewer id>": "<agentId of its Agent call>", ...}')
+    parser.add_argument("--wait", type=int, default=0,
+                        help="(with --collect) seconds to keep polling for reviewers that have not delivered yet (max 3600)")
+    parser.add_argument("--transcripts", type=Path,
+                        help="(with --collect) Claude Code projects directory; default $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects")
+    parser.add_argument("--plan", action="store_true", help="print the planned reviewers and the --collect command, then exit")
     parser.add_argument("--section", type=int, help="(phase run) section number: writes its receipt and annotates tasks.md on PASS")
     parser.add_argument("--codex-handoff", help="JSON top-level Codex harness handoff")
     parser.add_argument("--worktree", type=Path, help="feature worktree for a Codex handoff")
@@ -203,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         "--carry",
         action="store_true",
         help="reuse PASS verdicts from the change's previous receipt for reviewers not "
-             "in --results, when only non-code changed since (a re-review after doc fixes)",
+             "in --results/--invocations, when only non-code changed since (a re-review after doc fixes)",
     )
     args = parser.parse_args(argv)
     try:
@@ -217,23 +263,58 @@ def main(argv: list[str] | None = None) -> int:
                 "phase": args.phase, "feature": args.feature, "scope_id": scope.get("scope_id"),
                 "reviewers": [item.to_dict() for item in plan],
                 "launch": [{"agent": item.reviewer_id, "lens": item.lens, "scope_id": item.scope_id} for item in required],
+                # The next command, verbatim: ids only, no verdict anywhere in it.
+                "collect": {
+                    "invocations": {item.reviewer_id: f"<agentId printed by the {item.reviewer_id} Agent call's result>"
+                                    for item in required},
+                    "command": collect_command(args, required),
+                },
+                # Legacy --results shape, kept for harnesses that hand the gate the
+                # reviewers' JSON themselves. The verdict is a placeholder the gate
+                # refuses: a pre-filled PASS is an invitation to fabricate one.
                 "example_results": [{
                     "invocation_id": f"<tool_use id of the {item.reviewer_id} Agent call>",
                     "planned_reviewer_id": item.reviewer_id,
-                    "reviewer_id": item.reviewer_id,
                     "payload": {"reviewer_id": item.reviewer_id, "scope_id": item.scope_id, "lens": item.lens,
-                                "verdict": "PASS", "findings": [], "evidence": list(scope.get("files", []))[:1],
-                                "status": "complete"},
+                                "verdict": PLACEHOLDER_VERDICT, "findings": [],
+                                "evidence": list(scope.get("files", []))[:1], "status": "complete"},
                 } for item in required],
             }, indent=2, sort_keys=True))
             return 0
-        if args.results is None:
+        collection = None
+        if args.collect:
+            if args.results is not None or args.codex_handoff or args.solo:
+                raise ValueError("--collect excludes --results, --codex-handoff and --solo")
+            if args.invocations is None:
+                raise ValueError("--collect needs --invocations '{\"<reviewer id>\": \"<agentId>\", ...}' (see --plan)")
+            invocations = json.loads(args.invocations)
+            if not isinstance(invocations, dict) or any(not isinstance(k, str) or not isinstance(v, str)
+                                                        for k, v in invocations.items()):
+                raise ValueError("--invocations must be a JSON object of reviewer id -> agentId strings")
+            required_ids = {item.reviewer_id for item in plan if item.required}
+            unexpected = sorted(set(invocations) - required_ids)
+            if unexpected:
+                raise ValueError("--invocations names reviewers the plan does not: " + ", ".join(unexpected))
+            if not 0 <= args.wait <= 3600:
+                raise ValueError("--wait must be between 0 and 3600 seconds")
+        elif args.results is None:
             raise ValueError("--results is required (use --plan to see the expected shape)")
-        raw_results = json.loads(args.results)
-        if not isinstance(raw_results, list):
-            raise ValueError("results must be a list")
         if args.phase == "run" and args.section is None:
             raise ValueError("--section N is required for phase run: the gate writes the section's receipt and annotation")
+        if args.collect:
+            session_id = os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+            if session_id is not None and not SESSION_ID_RE.match(session_id):
+                raise ValueError("CLAUDE_CODE_SESSION_ID is not a session id")
+            scopes = {item.reviewer_id: item.scope_id for item in plan}
+            collection = panel_collect.collect(
+                invocations, scopes, root=args.transcripts or panel_collect.projects_dir(),
+                session_id=session_id, wait=args.wait,
+            )
+            raw_results = [collected_envelope(c) for c in collection.values()]
+        else:
+            raw_results = json.loads(args.results)
+            if not isinstance(raw_results, list):
+                raise ValueError("results must be a list")
         git_cwd = args.worktree or args.root
         head = git_out(["rev-parse", "HEAD"], git_cwd)
         if args.carry and not args.solo and not args.codex_handoff:
@@ -249,6 +330,13 @@ def main(argv: list[str] | None = None) -> int:
                 json.loads(previous.read_text(encoding="utf-8")), plan, present,
                 args.feature, args.phase, head, git_cwd,
             )
+        if args.collect:
+            # A planned reviewer neither collected nor carried is a missing
+            # result, attributed to it — not a malformed command.
+            present = {e["planned_reviewer_id"] for e in raw_results}
+            raw_results += [{"invocation_id": "none", "planned_reviewer_id": item.reviewer_id, "payload": {},
+                             "collection_error": f"no invocation id was passed for {item.reviewer_id}"}
+                            for item in plan if item.required and item.reviewer_id not in present]
         if args.solo:
             panel = reviewer_plan.PanelResult(plan, [], "FAIL", ["solo bypass cannot produce panel PASS"])
         elif args.codex_handoff:
@@ -289,8 +377,12 @@ def main(argv: list[str] | None = None) -> int:
             if set(by_identity) != {item.reviewer_id for item in required_items}:
                 raise ValueError("result collection contains an unexpected or missing reviewer")
             for item in required_items:
+                envelope = by_identity[item.reviewer_id]
+                if envelope.get("collection_error"):
+                    results.append(reviewer_plan.synthesize_unavailable_result(item, str(envelope["collection_error"])))
+                    continue
                 try:
-                    results.append(reviewer_plan.normalize_reviewer_result(by_identity[item.reviewer_id]["payload"], item))
+                    results.append(reviewer_plan.normalize_reviewer_result(envelope["payload"], item))
                 except (TypeError, ValueError) as exc:
                     results.append(reviewer_plan.synthesize_unavailable_result(item, str(exc)))
             panel = reviewer_plan.evaluate_panel_gate(plan, results)
@@ -302,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         output["receipt_id"] = receipt_id
         output["annotated"] = annotated
         output["sha"] = head
+        if collection is not None:
+            output["collection"] = [c.to_dict() for c in collection.values()]
         print(json.dumps(output, sort_keys=True))
         return 0 if panel.passed else 1
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
