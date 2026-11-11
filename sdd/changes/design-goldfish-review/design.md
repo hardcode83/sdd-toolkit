@@ -63,6 +63,7 @@ Bash permitido, igual que los revisores core), referencia a
 - `references/design-review.md` (nuevo)
 - `agents/design-goldfish.md` (nuevo)
 - `skills/design/SKILL.md`, `skills/auto/SKILL.md`
+- `scripts/worktree_fingerprint.py` (nuevo, guarda de escritura), `tests/test_worktree_fingerprint.py`
 - `scripts/validate_toolkit.py`, `tests/test_toolkit_validation.py`
   (contrato de la metodología/agente, paso 5 antes del gate, sustituto de auto,
   límite de rondas, preflight), `tests/test_decisions_contract.py` (el test del
@@ -87,6 +88,13 @@ Bash permitido, igual que los revisores core), referencia a
   descarta lo escrito. En Codex, además, sandbox de solo lectura si existe.
   Se elige verificación sobre confianza en el sandbox porque es igual en los
   dos runtimes y detectable por el orquestador.
+- architect+security medium (receipt 68ad6fed): esa huella no veía ficheros
+  sin seguimiento (`design.md` lo está durante la revisión). La guarda pasa a
+  un script determinista `scripts/worktree_fingerprint.py` (stdlib): HEAD +
+  contenido de cada fichero seguido y no seguido (no ignorado), symlinks por
+  destino; la instantánea vive en el git dir para no alterar el árbol.
+  `compare` sale 1 con las rutas cambiadas, 2 si no puede verificar; ambos →
+  UNAVAILABLE. Probado contra repos git reales en los tests.
 
 ## Living spec (al archivar)
 Nueva spec `sdd/specs/design-review.md`: revisión de diseño con contexto fresco
