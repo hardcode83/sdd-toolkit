@@ -100,7 +100,7 @@ same skill in their picker as `sdd-toolkit:<skill>`.
 |---|---|---|
 | Status | `$status` | Read-only. |
 | New | `$new <feature> [seed.md]` | Creates only `proposal.md`; approve it before continuing. |
-| Design | `$design <feature>` | Run after proposal approval; approve `design.md`. |
+| Design | `$design <feature>` | Run after proposal approval; before the gate it spawns one fresh-context native subagent with `references/design-review.md`; approve `design.md`. |
 | Tasks | `$tasks <feature>` | Run after proposal/design approval; approve `tasks.md`. |
 | History | `$history [feature or question]` | Read-only archive query with source citations. |
 | Init | `$init [plan.md]` | Core scaffold is validated; decline unsupported Claude extras when using Codex. |

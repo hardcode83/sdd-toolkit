@@ -446,12 +446,59 @@ def release_guard_errors(changed: list[str], version_changed: bool) -> list[str]
     ]
 
 
+DESIGN_REVIEW_AGENT = "agents/design-goldfish.md"
+DESIGN_REVIEW_METHOD = "references/design-review.md"
+DESIGN_REVIEW_PASSES = (
+    "### 1. Traceability",
+    "### 2. Data availability",
+    "### 3. Path completeness",
+    "### 4. Consistency",
+    "### 5. Verifiability & safety",
+)
+WRITE_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
+
+
+def validate_design_review(root: Path = ROOT) -> list[str]:
+    """The fresh-context design reviewer: one methodology, one read-only adapter.
+
+    It sits outside the `agents/sdd-*.md` core-panel glob on purpose — it
+    certifies nothing, so it must not join the reviewer registry.
+    """
+    errors: list[str] = []
+    method = root / DESIGN_REVIEW_METHOD
+    agent = root / DESIGN_REVIEW_AGENT
+    if not method.is_file():
+        errors.append(f"{DESIGN_REVIEW_METHOD}: design-review methodology is missing")
+    else:
+        text = method.read_text(encoding="utf-8")
+        for heading in DESIGN_REVIEW_PASSES:
+            if heading not in text:
+                errors.append(f"{DESIGN_REVIEW_METHOD}: missing pass '{heading}'")
+        for verdict in ("VERDICT: PASS", "VERDICT: REVISE"):
+            if verdict not in text:
+                errors.append(f"{DESIGN_REVIEW_METHOD}: missing '{verdict}'")
+    if not agent.is_file():
+        errors.append(f"{DESIGN_REVIEW_AGENT}: design-review agent is missing")
+        return errors
+    data = parse_frontmatter(agent, root, errors)
+    content = agent.read_text(encoding="utf-8")
+    if data.get("name") != "design-goldfish":
+        errors.append(f"{DESIGN_REVIEW_AGENT}: name must be 'design-goldfish'")
+    tools = {tool.strip() for tool in data.get("tools", "").split(",") if tool.strip()}
+    if not tools or tools & set(WRITE_TOOLS) or "Read-only" not in content:
+        errors.append(f"{DESIGN_REVIEW_AGENT}: must declare read-only tools and say Read-only")
+    if "design-review.md" not in content:
+        errors.append(f"{DESIGN_REVIEW_AGENT}: must defer to design-review.md, not copy it")
+    return errors
+
+
 VALIDATORS = {
     "boundary": validate_project_boundary,
     "manifests": validate_manifests,
     "skills": validate_skills,
     "fixtures": fixture_contract_errors,
     "reviewer-panel": validate_reviewer_panel,
+    "design-review": validate_design_review,
 }
 
 

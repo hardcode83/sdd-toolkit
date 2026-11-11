@@ -8,7 +8,7 @@ Todo el estado vive en `sdd/` dentro de tu repo — **specs** (qué hace el sist
 
 ```
 /sdd:new ──► proposal (requisitos EARS)      ── tú apruebas ──►
-/sdd:design ──► decisiones técnicas          ── tú apruebas ──►   (se salta si es trivial)
+/sdd:design ──► decisiones técnicas + revisión de diseño con contexto fresco ── tú apruebas ──►   (se salta si es trivial)
 /sdd:tasks ──► checklist verificable         ── tú apruebas ──►
 /sdd:run ──► implementa + panel de revisores por sección
 /sdd:review ──► valida localmente y deja READY_FOR_PR
@@ -95,6 +95,18 @@ Y vuelta al paso 2 con la siguiente entrada de la frontera — que puede no ser 
 Sin plan, el init genera el steering **desde el código real** (stack, comandos verificados, convenciones observadas) y te ofrece un **baseline de specs**: detecta las capabilities del sistema, eliges las 3-6 core, y las documenta leyendo el comportamiento real. No hagas backfill total — specs especulativas que nadie audita son peores que ninguna. El resto se cubre solo: cuando un change toque un área sin spec, `/sdd:archive` la creará ("spec on first touch").
 
 ¿Trabajo a medio hacer? `/sdd:new` documenta el estado final previsto y `/sdd:tasks` pre-marca `[x]` lo ya construido — tras verificarlo contra el código, nunca por tu palabra.
+
+## Revisión de diseño con contexto fresco ("goldfish")
+
+Antes del gate de `/sdd:design`, un revisor que **no ha visto la sesión**
+(`sdd:design-goldfish`) lee `proposal.md`, `design.md` y el código real que el
+diseño toca, y aplica cinco pasadas (`references/design-review.md`):
+trazabilidad, disponibilidad de datos, caminos completos, consistencia y
+verificabilidad. Quien diseña tiene el contexto y por eso no ve lo que dio por
+supuesto; el revisor sí. No certifica nada: los `high` se corrigen en el diseño
+o pasan a pregunta abierta, con una re-revisión como máximo. En `/sdd:auto` es
+el sustituto de aprobación del diseño. Idea adoptada del patrón
+Elephant-Goldfish (google/elephant-goldfish-model), sin depender de ese plugin.
 
 ## Recetario del día a día
 
