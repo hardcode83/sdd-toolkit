@@ -54,9 +54,10 @@ Alternativa rechazada: ambos — duplica cuota sin evidencia de ganancia.
 ### D6 — Validador (R5)
 Nueva función `validate_design_review` registrada en `VALIDATORS` como
 `design-review`, incluida en `all`: existencia de ambos ficheros, `name:
-design-goldfish`, `Read-only` (= ninguna herramienta de edición de ficheros —
-Edit/Write/NotebookEdit/MultiEdit— más el contrato de solo lectura del cuerpo;
-Bash permitido, igual que los revisores core), referencia a
+design-goldfish`, `Read-only` (= `tools` es un subconjunto de la allowlist
+`{Read, Grep, Glob}` — sin Bash ni herramientas de edición, parseado por
+tokens, vacío o ausente falla — más el contrato de solo lectura del cuerpo; ver
+la nota post-merge de la ronda 4), referencia a
 `design-review.md`, y en la metodología los cinco títulos de pasada y `VERDICT:`.
 
 ## Affected files
@@ -69,7 +70,7 @@ Bash permitido, igual que los revisores core), referencia a
   límite de rondas, preflight), `tests/test_decisions_contract.py` (el test del
   modelo explícito en auto pasa del architect al revisor de diseño)
 - `README.md` (dos líneas que atribuían la aprobación del design a `sdd-architect`)
-- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (0.56.0)
+- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (0.56.0 en PR #75; 0.56.1 con los arreglos post-merge)
 - `docs/guide.md`, `docs/codex.md`
 
 ## Post-merge fix (0.56.1, review de feature receipt 7c736b92)
