@@ -20,7 +20,9 @@ code, and it certifies nothing: it advises the author and whoever approves.
 
 Never use a session conversation, a chat summary, or anything the prompt
 paraphrases about intent: if the documents do not say it, it is not decided.
-Read-only: do not edit, create or run anything that writes.
+Read-only: do not edit, create or run anything that writes. The Claude adapter
+has no shell at all (Read, Grep, Glob); compare versions by reading files, not
+by running git.
 
 ## The five passes
 
@@ -83,7 +85,9 @@ VERDICT: PASS
 VERDICT: REVISE
 ```
 
-`PASS` only when there is no `high` finding. If the methodology or the change's
+The verdict is the **last line**, exactly one of those two (or `UNAVAILABLE`
+below), with nothing after it. `PASS` only when there is no `high` finding. If the methodology or the change's
 `proposal.md`/`design.md` cannot be read, reply only
 `VERDICT: UNAVAILABLE — <what is missing>`: a review that did not happen is
-never reported as one.
+never reported as one. A reply whose last line is anything else — missing, an
+unknown token, cut off by a budget — **is** `UNAVAILABLE` to whoever reads it.

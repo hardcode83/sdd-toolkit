@@ -10,5 +10,5 @@
 
 ## 3. Validación y release
 - [x] 3.1 `validate_design_review` + tests (R5.1)
-- [x] 3.2 Bump 0.56.0 en ambos manifests (R5.2); docs guide/codex
+- [x] 3.2 Bump 0.56.0 (PR #75) → 0.56.1 (arreglos post-merge) en ambos manifests (R5.2); docs guide/codex
 - [x] 3.3 `python3 scripts/validate_toolkit.py all` y la suite unittest en verde

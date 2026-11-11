@@ -54,22 +54,57 @@ Alternativa rechazada: ambos — duplica cuota sin evidencia de ganancia.
 ### D6 — Validador (R5)
 Nueva función `validate_design_review` registrada en `VALIDATORS` como
 `design-review`, incluida en `all`: existencia de ambos ficheros, `name:
-design-goldfish`, `Read-only` (= ninguna herramienta de edición de ficheros —
-Edit/Write/NotebookEdit/MultiEdit— más el contrato de solo lectura del cuerpo;
-Bash permitido, igual que los revisores core), referencia a
+design-goldfish`, `Read-only` (= `tools` es un subconjunto de la allowlist
+`{Read, Grep, Glob}` — sin Bash ni herramientas de edición, parseado por
+tokens, vacío o ausente falla — más el contrato de solo lectura del cuerpo; ver
+la nota post-merge de la ronda 4), referencia a
 `design-review.md`, y en la metodología los cinco títulos de pasada y `VERDICT:`.
 
 ## Affected files
 - `references/design-review.md` (nuevo)
 - `agents/design-goldfish.md` (nuevo)
 - `skills/design/SKILL.md`, `skills/auto/SKILL.md`
+- `scripts/worktree_fingerprint.py` (nuevo, guarda de escritura), `tests/test_worktree_fingerprint.py`
 - `scripts/validate_toolkit.py`, `tests/test_toolkit_validation.py`
   (contrato de la metodología/agente, paso 5 antes del gate, sustituto de auto,
   límite de rondas, preflight), `tests/test_decisions_contract.py` (el test del
   modelo explícito en auto pasa del architect al revisor de diseño)
 - `README.md` (dos líneas que atribuían la aprobación del design a `sdd-architect`)
-- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (0.56.0)
+- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (0.56.0 en PR #75; 0.56.1 con los arreglos post-merge)
 - `docs/guide.md`, `docs/codex.md`
+
+## Post-merge fix (0.56.1, review de feature receipt 7c736b92)
+- sdd-security medium: solo una última línea exacta `VERDICT: PASS|REVISE` es
+  veredicto; cualquier otra cosa (sin línea, token desconocido, respuesta
+  cortada por presupuesto) es `UNAVAILABLE` → BLOCK en auto (steering
+  security: salida incompleta de revisor falla cerrado). El agente cierra con
+  `UNAVAILABLE` si agota el presupuesto.
+- sdd-security low: el check de solo lectura (D6) pasa a allowlist
+  `{Read, Grep, Glob, Bash}` con parseo por tokens, no denylist por comas.
+
+- sdd-security medium (receipt d71275bb): bajo Codex el solo-lectura del
+  revisor dependía solo del prompt. Ahora (ambos runtimes) la skill aplica un
+  *write guard*: huella `git status --porcelain` + hash de `git diff HEAD`
+  antes y después; cualquier diferencia → UNAVAILABLE (BLOCK en auto) y se
+  descarta lo escrito. En Codex, además, sandbox de solo lectura si existe.
+  Se elige verificación sobre confianza en el sandbox porque es igual en los
+  dos runtimes y detectable por el orquestador.
+- architect+security medium (receipt 68ad6fed): esa huella no veía ficheros
+  sin seguimiento (`design.md` lo está durante la revisión). La guarda pasa a
+  un script determinista `scripts/worktree_fingerprint.py` (stdlib): HEAD +
+  contenido de cada fichero seguido y no seguido (no ignorado), symlinks por
+  destino; la instantánea vive en el git dir para no alterar el árbol.
+  `compare` sale 1 con las rutas cambiadas, 2 si no puede verificar; ambos →
+  UNAVAILABLE. Probado contra repos git reales en los tests.
+- security medium×2 + low×2 (receipt 8a09b19c): parchear la guarda caso a caso
+  no converge mientras el revisor tenga shell. Cambio de enfoque: el control
+  primario pasa a ser estructural — el agente Claude queda con Read/Grep/Glob
+  (sin Bash: no puede escribir), y en Codex el hijo corre en sandbox de solo
+  lectura o no se lanza (unavailable). La guarda queda como segunda capa:
+  siempre desde el toplevel del repo, bit ejecutable en la huella, snapshot
+  fallido → no se lanza, `compare` consume la instantánea. Límites aceptados y
+  documentados: el git dir y las rutas ignoradas (sin shell no son alcanzables
+  por el revisor Claude; en Codex los cubre el sandbox).
 
 ## Living spec (al archivar)
 Nueva spec `sdd/specs/design-review.md`: revisión de diseño con contexto fresco
