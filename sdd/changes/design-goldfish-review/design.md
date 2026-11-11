@@ -80,6 +80,14 @@ Bash permitido, igual que los revisores core), referencia a
 - sdd-security low: el check de solo lectura (D6) pasa a allowlist
   `{Read, Grep, Glob, Bash}` con parseo por tokens, no denylist por comas.
 
+- sdd-security medium (receipt d71275bb): bajo Codex el solo-lectura del
+  revisor dependía solo del prompt. Ahora (ambos runtimes) la skill aplica un
+  *write guard*: huella `git status --porcelain` + hash de `git diff HEAD`
+  antes y después; cualquier diferencia → UNAVAILABLE (BLOCK en auto) y se
+  descarta lo escrito. En Codex, además, sandbox de solo lectura si existe.
+  Se elige verificación sobre confianza en el sandbox porque es igual en los
+  dos runtimes y detectable por el orquestador.
+
 ## Living spec (al archivar)
 Nueva spec `sdd/specs/design-review.md`: revisión de diseño con contexto fresco
 (R1–R5).

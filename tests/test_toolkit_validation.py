@@ -185,6 +185,16 @@ class DesignReviewContractTests(unittest.TestCase):
                 self.edit("agents/design-goldfish.md", "tools: Read, Grep, Glob, Bash", f"tools: {tools}")
                 self.assertIn("read-only", " ".join(validate_design_review(self.tmp)))
 
+    def test_design_review_write_guard_is_verified_not_trusted(self) -> None:
+        design = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
+        guard = design.index("**Write guard (both runtimes):**")
+        self.assertLess(guard, design.index("**Gate.**"))
+        self.assertIn("git status --porcelain=v1 --untracked-files=all", design)
+        self.assertIn("Any difference → the review is **unavailable**", design)
+        self.assertIn("**read-only sandbox**", design)
+        auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
+        self.assertIn("a write detected by the design skill's write guard", auto)
+
     def test_only_an_exact_last_line_verdict_counts_and_auto_fails_closed(self) -> None:
         method = (ROOT / "references/design-review.md").read_text(encoding="utf-8")
         self.assertIn("**last line**", method)

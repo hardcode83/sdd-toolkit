@@ -288,7 +288,8 @@ Then, for the feature at hand:
    `assumed` (gate-conversion rule above); without one → BLOCK.
    Only a last line of exactly `VERDICT: PASS` or `VERDICT: REVISE` is a
    verdict; anything else — `VERDICT: UNAVAILABLE`, no verdict line, an
-   unknown token, a reply cut off by a budget — or no fresh-context reviewer
+   unknown token, a reply cut off by a budget, a write detected by the design
+   skill's write guard — or no fresh-context reviewer
    → BLOCK (fail closed: auto has no human gate to fall back on). Commit: `sdd(<feature>): design`.
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
