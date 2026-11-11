@@ -1,6 +1,6 @@
 ---
 schema: 1
-state: LOCAL_VERIFIED
+state: READY_FOR_PR
 local_review: APPROVED
 repository: hardcode83/sdd-toolkit
 base_branch: main
