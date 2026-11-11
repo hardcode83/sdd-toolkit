@@ -166,8 +166,12 @@ class RunGateContractTests(unittest.TestCase):
         self.assertNotIn("ship does not hide a bootstrap push", ship)
         self.assertIn("Never force-push", ship)
 
-    def test_auto_launches_the_architect_with_a_model(self) -> None:
-        self.assertIn("`sdd-architect` (an `Agent` call with\n   `model: sonnet` explicit", read("skills", "auto", "SKILL.md"))
+    def test_auto_launches_the_design_reviewer_with_a_model(self) -> None:
+        # Since 0.56.0 the design approval substitute is the fresh-context design
+        # reviewer (it replaced sdd-architect on the design document); the
+        # contract that every launch names its tier still holds.
+        self.assertIn("(`sdd:design-goldfish`, an `Agent` call with `model: opus` explicit",
+                      read("skills", "auto", "SKILL.md").replace("\n   ", " "))
 
 
 class ForegroundForkContractTests(unittest.TestCase):

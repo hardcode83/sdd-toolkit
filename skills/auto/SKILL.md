@@ -276,14 +276,18 @@ Then, for the feature at hand:
    entry (and its source doc, if referenced) and respect `product.md`.
    Commit: `sdd(<feature>): proposal`.
 3. **design** — follow the design skill (skip if trivial, as it says).
-   Approval substitute: launch `sdd-architect` (an `Agent` call with
-   `model: sonnet` explicit — every launch names its alias,
-   `${CLAUDE_PLUGIN_ROOT}/references/models.md`; the first dense auto run
-   launched it twice without one) to review the **design document** against
-   `architecture.md` and the proposal before any code; its findings are fixed
-   in the document and re-reviewed by the same agent, at most twice. An open
-   question with a recommendation → `assumed` (gate-conversion rule above);
-   without one → BLOCK. Commit: `sdd(<feature>): design`.
+   Approval substitute: the design skill's fresh-context design review
+   (`sdd:design-goldfish`, an `Agent` call with `model: opus` explicit — every
+   launch names its alias, `${CLAUDE_PLUGIN_ROOT}/references/models.md`; the
+   first dense auto run launched reviewers without one; under Codex, the
+   design skill's native-subagent path) following
+   `${CLAUDE_PLUGIN_ROOT}/references/design-review.md`, before any code. Same
+   limit as the design skill: one review + one re-review, the re-review a new
+   launch. Its `high` findings are fixed in the document; a `high` still open
+   after the re-review, like an open question, with a recommendation →
+   `assumed` (gate-conversion rule above); without one → BLOCK.
+   `VERDICT: UNAVAILABLE` or no fresh-context reviewer → BLOCK (auto has no
+   human gate to fall back on). Commit: `sdd(<feature>): design`.
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.

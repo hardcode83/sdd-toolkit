@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from validate_toolkit import (  # noqa: E402
     parse_frontmatter,
     release_guard_errors,
     validate_codex_manifests,
+    validate_design_review,
     validate_manifests,
     validate_project_boundary,
     validate_reviewer_panel,
@@ -131,3 +134,75 @@ class ReleaseGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesignReviewContractTests(unittest.TestCase):
+    """The fresh-context design reviewer: one methodology, one read-only adapter."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        for rel in ("agents/design-goldfish.md", "references/design-review.md"):
+            (self.tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / rel, self.tmp / rel)
+
+    def edit(self, rel: str, old: str, new: str) -> None:
+        path = self.tmp / rel
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new), encoding="utf-8")
+
+    def test_shipped_reviewer_is_valid(self) -> None:
+        self.assertEqual([], validate_design_review())
+
+    def test_it_stays_outside_the_core_panel_registry(self) -> None:
+        self.assertEqual([], validate_reviewer_panel())
+        self.assertFalse((ROOT / "agents" / "design-goldfish.md").name.startswith("sdd-"))
+
+    def test_missing_files_fail(self) -> None:
+        (self.tmp / "agents/design-goldfish.md").unlink()
+        (self.tmp / "references/design-review.md").unlink()
+        errors = validate_design_review(self.tmp)
+        self.assertEqual(2, len(errors), errors)
+
+    def test_a_missing_pass_fails(self) -> None:
+        self.edit("references/design-review.md", "### 3. Path completeness", "### 3. Paths")
+        self.assertIn("Path completeness", " ".join(validate_design_review(self.tmp)))
+
+    def test_a_missing_verdict_fails(self) -> None:
+        self.edit("references/design-review.md", "VERDICT: REVISE", "VERDICT: NO")
+        self.assertTrue(validate_design_review(self.tmp))
+
+    def test_write_tools_fail(self) -> None:
+        self.edit("agents/design-goldfish.md", "tools: Read, Grep", "tools: Read, Edit, Grep")
+        self.assertIn("read-only", " ".join(validate_design_review(self.tmp)))
+
+    def test_agent_must_defer_to_the_methodology(self) -> None:
+        path = self.tmp / "agents/design-goldfish.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("design-review.md", "x.md"),
+                        encoding="utf-8")
+        self.assertIn("defer", " ".join(validate_design_review(self.tmp)))
+
+    def test_design_skill_launches_it_before_the_gate(self) -> None:
+        text = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
+        review = text.index("sdd:design-goldfish")
+        self.assertLess(review, text.index("**Gate.**"))
+        self.assertIn("references/design-review.md", text)
+        self.assertIn("sdd:design-goldfish", (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8"))
+
+    def test_round_limit_and_fresh_rereview_are_stated_in_both_skills(self) -> None:
+        design = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
+        auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
+        self.assertIn("one review + one re-review", design)
+        self.assertIn("one review + one re-review", auto)
+        self.assertIn("never resume the first reviewer", design)
+        self.assertIn("the re-review a new launch", auto)
+
+    def test_design_review_preflights_the_opus_alias_before_launching(self) -> None:
+        design = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
+        self.assertLess(design.index("check --aliases opus"), design.index("subagent_type: sdd:design-goldfish"))
+
+    def test_unavailable_is_defined_by_the_methodology_and_blocks_auto(self) -> None:
+        self.assertIn("VERDICT: UNAVAILABLE", (ROOT / "references/design-review.md").read_text(encoding="utf-8"))
+        auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
+        self.assertIn("`VERDICT: UNAVAILABLE` or no fresh-context reviewer → BLOCK", auto)

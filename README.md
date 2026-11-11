@@ -569,7 +569,7 @@ mapeo es del entorno del usuario, no del toolkit ni de `sdd/project.md`:
 |---|---|---|
 | `init` | sonnet | — |
 | `new` | **opus** | — (gate humano; en auto: auto-check vs roadmap + product.md) |
-| `design` | **opus** | en modo auto: `sdd-architect` pre-aprueba el design antes de codificar |
+| `design` | **opus** | revisión de diseño con contexto fresco (`sdd:design-goldfish`, opus) antes del gate; en modo auto es el sustituto de aprobación |
 | `tasks` | sonnet | — (check de cobertura R#→tareas) |
 | `run` | sonnet (orquestador, inline) | **un implementador fresco por sección** (`Agent` en sonnet; opus si la sección lleva `<!-- hard -->`), y **panel por sección**: `sdd-architect` + `sdd-security` + `sdd-qa` en paralelo, más los revisores del proyecto que apliquen; los fixes también van a un implementador |
 | `tournament` | sonnet (orquestador) | 3 implementadores opus en worktrees aislados + panel como juez — skill propia, solo bajo petición |
@@ -720,7 +720,7 @@ Para crear uno: copia `templates/reviewer-template.md` del plugin a `.claude/age
 
 ## Modo autónomo (`/sdd:auto`)
 
-Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace `sdd-architect`, el panel es obligatorio por sección y `review` debe dar PASS. Tu revisión se mueve a **una rama + PR por feature**; lo que necesita decisión se convierte en **BLOCKED**. Auto registra `PR_OPEN` y se detiene: las specs vivas, el tick definitivo del roadmap y el archive esperan a que GitHub confirme el merge y se ejecute `/sdd:archive`.
+Ejecuta features del roadmap **sin intervención hasta abrir el PR**, sustituyendo cada gate humano por su equivalente automático: el scope lo pre-autoriza el roadmap (auto jamás inventa features), la aprobación del design la hace la revisión de diseño con contexto fresco (`sdd:design-goldfish`), el panel es obligatorio por sección y `review` debe dar PASS. Tu revisión se mueve a **una rama + PR por feature**; lo que necesita decisión se convierte en **BLOCKED**. Auto registra `PR_OPEN` y se detiene: las specs vivas, el tick definitivo del roadmap y el archive esperan a que GitHub confirme el merge y se ejecute `/sdd:archive`.
 
 Lanzamiento: `/sdd:auto 1` en sesión normal para calibrar; desatendido vía headless con la receta del toolkit (`python3 "$PLUGIN/scripts/sdd_auto_outcome.py" run "/sdd:auto 2" --cwd .` en cron/CI). La receta importa: un `claude -p` arranca en modo Manual, `acceptEdits` no aprueba comandos de shell y nadie está para responder al prompt — así murieron las tres primeras ejecuciones reales de auto, en menos de dos minutos, sobre `python3 …/sdd_roadmap.py`. El script lanza la sesión con `--permission-mode auto --permission-prompts none`, en Sonnet u Opus (**nunca Haiku**: para él el modo auto no existe y la sesión cae a Manual sin avisar), con `--json-schema` para que la fase termine en un objeto de veredicto, y resume lo que volvió en una última línea `AUTO_OUTCOME: PASS|BLOCKED|FAILED|DENIED|ERROR|INCOMPLETE|UNAVAILABLE`. Una denegación de permisos es `DENIED`: no es una decisión sino una regla que falta, y queda en `BLOCKED.md` como `deferred` con el comando exacto. Medidas y alternativas en [ADR 0005](docs/adr/0005-auto-headless-recipe.md). Precondiciones: árbol git limpio y steering docs concretos — en auto el panel es el único revisor durante la ejecución, y es tan bueno como tus referentes.
 
