@@ -95,6 +95,15 @@ Bash permitido, igual que los revisores core), referencia a
   destino; la instantánea vive en el git dir para no alterar el árbol.
   `compare` sale 1 con las rutas cambiadas, 2 si no puede verificar; ambos →
   UNAVAILABLE. Probado contra repos git reales en los tests.
+- security medium×2 + low×2 (receipt 8a09b19c): parchear la guarda caso a caso
+  no converge mientras el revisor tenga shell. Cambio de enfoque: el control
+  primario pasa a ser estructural — el agente Claude queda con Read/Grep/Glob
+  (sin Bash: no puede escribir), y en Codex el hijo corre en sandbox de solo
+  lectura o no se lanza (unavailable). La guarda queda como segunda capa:
+  siempre desde el toplevel del repo, bit ejecutable en la huella, snapshot
+  fallido → no se lanza, `compare` consume la instantánea. Límites aceptados y
+  documentados: el git dir y las rutas ignoradas (sin shell no son alcanzables
+  por el revisor Claude; en Codex los cubre el sandbox).
 
 ## Living spec (al archivar)
 Nueva spec `sdd/specs/design-review.md`: revisión de diseño con contexto fresco

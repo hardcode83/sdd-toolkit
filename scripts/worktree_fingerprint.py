@@ -10,9 +10,16 @@ reply. The snapshot covers what `git status` / `git diff HEAD` alone miss:
 - every untracked, non-ignored file's content (`design.md` is usually still
   untracked while it is being reviewed — the hole receipt 68ad6fed found).
 
-Symlinks are recorded by target, never followed. The snapshot file lives in
-the git dir (default `<git-dir>/sdd/worktree-fingerprint.json`), so writing it
-never changes the worktree it describes.
+Symlinks are recorded by target, never followed; a file's executable bit is
+part of its digest. The whole repository is checked from its top level, so
+running from a subdirectory never narrows the guard. The snapshot file lives
+in the git dir (default `<git-dir>/sdd/worktree-fingerprint.json`), so writing
+it never changes the worktree it describes, and `compare` deletes it after
+reading, so a stale snapshot is never compared twice.
+
+Accepted limits (the guard is the second layer; the first is that the
+reviewer has no shell / runs in a read-only sandbox): the git dir itself
+(hooks, config, index, refs) and gitignored paths are not covered.
 
     worktree_fingerprint.py snapshot [--root R] [--out FILE]
     worktree_fingerprint.py compare  [--root R] [--before FILE]
@@ -57,6 +64,7 @@ def _entry_digest(path: Path) -> str:
         if path.is_dir():  # a submodule or nested repo listed as one path
             return "dir"
         digest = hashlib.sha256()
+        digest.update(b"x" if os.access(path, os.X_OK) else b"-")
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 16), b""):
                 digest.update(chunk)
@@ -112,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--root", default=".")
         command.add_argument(flag, dest="store")
     args = parser.parse_args(argv)
-    root = Path(args.root).resolve()
     try:
+        root = Path(_git(Path(args.root).resolve(), "rev-parse", "--show-toplevel").decode().strip())
         store = Path(args.store) if args.store else default_store(root)
         if args.command == "snapshot":
             store.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
             before = json.loads(store.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise GuardError(f"cannot read snapshot {store}: {error}") from error
+        finally:
+            store.unlink(missing_ok=True)
         changes = changed_paths(before, snapshot(root))
     except GuardError as error:
         print(f"worktree_fingerprint: {error}", file=sys.stderr)

@@ -63,6 +63,7 @@ class WriteGuardTests(unittest.TestCase):
     def test_editing_or_deleting_a_tracked_file_is_caught(self) -> None:
         (self.root / "tracked.md").write_text("two\n")
         self.assertChanged("tracked.md")
+        self.assertEqual(0, self.run_guard("snapshot")[0])  # compare consumed the last one
         (self.root / "tracked.md").unlink()
         self.assertChanged("tracked.md")
 
@@ -78,6 +79,26 @@ class WriteGuardTests(unittest.TestCase):
         (self.root / "build").mkdir()
         (self.root / "build/out.bin").write_text("artifact\n")
         self.assertEqual((0, ""), self.run_guard("compare"))
+
+    def test_running_from_a_subdirectory_still_guards_the_whole_repo(self) -> None:
+        sub = self.root / "sdd/changes/f"
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(0, main(["snapshot", "--root", str(sub)]))
+        (self.root / "tracked.md").write_text("outside the subtree\n")
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["compare", "--root", str(sub)])
+        self.assertEqual(1, code)
+        self.assertIn("tracked.md", out.getvalue().splitlines())
+
+    def test_an_executable_bit_change_is_caught(self) -> None:
+        os.chmod(self.root / "tracked.md", 0o755)
+        self.assertChanged("tracked.md")
+
+    def test_compare_consumes_the_snapshot_so_it_is_never_reused(self) -> None:
+        self.assertEqual((0, ""), self.run_guard("compare"))
+        code, _ = self.run_guard("compare")
+        self.assertEqual(2, code)
 
     def test_a_missing_snapshot_cannot_vouch(self) -> None:
         out, err = io.StringIO(), io.StringIO()

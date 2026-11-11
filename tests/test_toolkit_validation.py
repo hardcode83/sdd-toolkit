@@ -179,21 +179,24 @@ class DesignReviewContractTests(unittest.TestCase):
 
     def test_read_only_is_an_allowlist_whatever_the_syntax(self) -> None:
         for tools in ("[Read, Edit]", "Read Write", "Read, Grep, Agent", "Read, Skill",
-                      "Read, mcp__docs__update", "Read, Task"):
+                      "Read, mcp__docs__update", "Read, Task", "Read, Grep, Glob, Bash",
+                      "Read, Bash(git:*)"):
             with self.subTest(tools=tools):
                 self.setUp()
-                self.edit("agents/design-goldfish.md", "tools: Read, Grep, Glob, Bash", f"tools: {tools}")
+                self.edit("agents/design-goldfish.md", "tools: Read, Grep, Glob", f"tools: {tools}")
                 self.assertIn("read-only", " ".join(validate_design_review(self.tmp)))
 
     def test_design_review_write_guard_is_verified_not_trusted(self) -> None:
         design = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
-        guard = design.index("**Write guard (both runtimes):**")
+        guard = design.index("**Write guard (both runtimes, second layer):**")
         self.assertLess(guard, design.index("**Gate.**"))
         self.assertIn("scripts/worktree_fingerprint.py\" snapshot", design)
         self.assertIn("scripts/worktree_fingerprint.py\" compare", design)
         self.assertIn("Exit 2 → the guard could not vouch", design)
         self.assertIn("Exit 1 → the review is **unavailable**", design)
-        self.assertIn("**read-only sandbox**", design)
+        self.assertIn("**in a read-only sandbox**", design)
+        self.assertIn("cannot give the child a read-only sandbox, do not launch", design)
+        self.assertIn("a non-zero exit → do not launch", design)
         auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
         self.assertIn("a write detected by the design skill's write guard", auto)
 

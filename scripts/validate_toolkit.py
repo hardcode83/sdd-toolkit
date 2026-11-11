@@ -455,7 +455,9 @@ DESIGN_REVIEW_PASSES = (
     "### 4. Consistency",
     "### 5. Verifiability & safety",
 )
-READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob", "Bash"})
+# No Bash: with a shell a "read-only" reviewer can write anywhere (receipt
+# 8a09b19c); without one it cannot, by construction.
+READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
 
 
 def validate_design_review(root: Path = ROOT) -> list[str]:

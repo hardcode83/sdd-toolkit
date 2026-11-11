@@ -20,7 +20,9 @@ code, and it certifies nothing: it advises the author and whoever approves.
 
 Never use a session conversation, a chat summary, or anything the prompt
 paraphrases about intent: if the documents do not say it, it is not decided.
-Read-only: do not edit, create or run anything that writes.
+Read-only: do not edit, create or run anything that writes. The Claude adapter
+has no shell at all (Read, Grep, Glob); compare versions by reading files, not
+by running git.
 
 ## The five passes
 
