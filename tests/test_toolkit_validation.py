@@ -177,6 +177,26 @@ class DesignReviewContractTests(unittest.TestCase):
         self.edit("agents/design-goldfish.md", "tools: Read, Grep", "tools: Read, Edit, Grep")
         self.assertIn("read-only", " ".join(validate_design_review(self.tmp)))
 
+    def test_read_only_is_an_allowlist_whatever_the_syntax(self) -> None:
+        for tools in ("[Read, Edit]", "Read Write", "Read, Grep, Agent", "Read, Skill",
+                      "Read, mcp__docs__update", "Read, Task"):
+            with self.subTest(tools=tools):
+                self.setUp()
+                self.edit("agents/design-goldfish.md", "tools: Read, Grep, Glob, Bash", f"tools: {tools}")
+                self.assertIn("read-only", " ".join(validate_design_review(self.tmp)))
+
+    def test_only_an_exact_last_line_verdict_counts_and_auto_fails_closed(self) -> None:
+        method = (ROOT / "references/design-review.md").read_text(encoding="utf-8")
+        self.assertIn("**last line**", method)
+        self.assertIn("**is** `UNAVAILABLE`", method)
+        agent = (ROOT / "agents/design-goldfish.md").read_text(encoding="utf-8")
+        self.assertIn("VERDICT: UNAVAILABLE — budget reached", agent)
+        auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
+        self.assertIn("Only a last line of exactly `VERDICT: PASS` or `VERDICT: REVISE` is a verdict", auto)
+        self.assertIn("no verdict line", auto)
+        design = (ROOT / "skills/design/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("a reply cut off all count as unavailable", design)
+
     def test_agent_must_defer_to_the_methodology(self) -> None:
         path = self.tmp / "agents/design-goldfish.md"
         path.write_text(path.read_text(encoding="utf-8").replace("design-review.md", "x.md"),
@@ -205,4 +225,4 @@ class DesignReviewContractTests(unittest.TestCase):
     def test_unavailable_is_defined_by_the_methodology_and_blocks_auto(self) -> None:
         self.assertIn("VERDICT: UNAVAILABLE", (ROOT / "references/design-review.md").read_text(encoding="utf-8"))
         auto = (ROOT / "skills/auto/SKILL.md").read_text(encoding="utf-8").replace("\n   ", " ")
-        self.assertIn("`VERDICT: UNAVAILABLE` or no fresh-context reviewer → BLOCK", auto)
+        self.assertIn("or no fresh-context reviewer → BLOCK (fail closed", auto)

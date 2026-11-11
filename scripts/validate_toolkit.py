@@ -455,7 +455,7 @@ DESIGN_REVIEW_PASSES = (
     "### 4. Consistency",
     "### 5. Verifiability & safety",
 )
-WRITE_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
+READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob", "Bash"})
 
 
 def validate_design_review(root: Path = ROOT) -> list[str]:
@@ -484,8 +484,10 @@ def validate_design_review(root: Path = ROOT) -> list[str]:
     content = agent.read_text(encoding="utf-8")
     if data.get("name") != "design-goldfish":
         errors.append(f"{DESIGN_REVIEW_AGENT}: name must be 'design-goldfish'")
-    tools = {tool.strip() for tool in data.get("tools", "").split(",") if tool.strip()}
-    if not tools or tools & set(WRITE_TOOLS) or "Read-only" not in content:
+    # Allowlist, not denylist: any tool outside the read-only set (Edit, Write,
+    # Agent, Task, Skill, an MCP writer…) fails, whatever the list syntax.
+    tools = set(re.findall(r"[A-Za-z_][\w:-]*", data.get("tools", "")))
+    if not tools or not tools <= READ_ONLY_TOOLS or "Read-only" not in content:
         errors.append(f"{DESIGN_REVIEW_AGENT}: must declare read-only tools and say Read-only")
     if "design-review.md" not in content:
         errors.append(f"{DESIGN_REVIEW_AGENT}: must defer to design-review.md, not copy it")

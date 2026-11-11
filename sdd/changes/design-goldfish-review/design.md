@@ -71,6 +71,15 @@ Bash permitido, igual que los revisores core), referencia a
 - `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (0.56.0)
 - `docs/guide.md`, `docs/codex.md`
 
+## Post-merge fix (0.56.1, review de feature receipt 7c736b92)
+- sdd-security medium: solo una última línea exacta `VERDICT: PASS|REVISE` es
+  veredicto; cualquier otra cosa (sin línea, token desconocido, respuesta
+  cortada por presupuesto) es `UNAVAILABLE` → BLOCK en auto (steering
+  security: salida incompleta de revisor falla cerrado). El agente cierra con
+  `UNAVAILABLE` si agota el presupuesto.
+- sdd-security low: el check de solo lectura (D6) pasa a allowlist
+  `{Read, Grep, Glob, Bash}` con parseo por tokens, no denylist por comas.
+
 ## Living spec (al archivar)
 Nueva spec `sdd/specs/design-review.md`: revisión de diseño con contexto fresco
 (R1–R5).

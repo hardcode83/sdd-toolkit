@@ -286,8 +286,10 @@ Then, for the feature at hand:
    launch. Its `high` findings are fixed in the document; a `high` still open
    after the re-review, like an open question, with a recommendation →
    `assumed` (gate-conversion rule above); without one → BLOCK.
-   `VERDICT: UNAVAILABLE` or no fresh-context reviewer → BLOCK (auto has no
-   human gate to fall back on). Commit: `sdd(<feature>): design`.
+   Only a last line of exactly `VERDICT: PASS` or `VERDICT: REVISE` is a
+   verdict; anything else — `VERDICT: UNAVAILABLE`, no verdict line, an
+   unknown token, a reply cut off by a budget — or no fresh-context reviewer
+   → BLOCK (fail closed: auto has no human gate to fall back on). Commit: `sdd(<feature>): design`.
 4. **tasks** — follow the tasks skill. Approval substitute: verify every R#
    is covered by at least one task (the skill already requires this — here
    it's a hard check). Commit: `sdd(<feature>): tasks`.

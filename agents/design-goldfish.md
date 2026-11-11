@@ -20,5 +20,7 @@ If the prompt does not give the methodology path, look for
 reply `VERDICT: UNAVAILABLE — methodology not found` and stop (the methodology
 defines `UNAVAILABLE` for every other missing input).
 
-Budget: ~40 tool calls. If you reach it, report what you established and what
-you could not reach.
+Budget: ~40 tool calls. If you reach it before finishing the five passes,
+report what you established and what you could not reach, and end with
+`VERDICT: UNAVAILABLE — budget reached before <pass>`: an incomplete review is
+never a PASS.

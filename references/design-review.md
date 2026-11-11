@@ -83,7 +83,9 @@ VERDICT: PASS
 VERDICT: REVISE
 ```
 
-`PASS` only when there is no `high` finding. If the methodology or the change's
+The verdict is the **last line**, exactly one of those two (or `UNAVAILABLE`
+below), with nothing after it. `PASS` only when there is no `high` finding. If the methodology or the change's
 `proposal.md`/`design.md` cannot be read, reply only
 `VERDICT: UNAVAILABLE — <what is missing>`: a review that did not happen is
-never reported as one.
+never reported as one. A reply whose last line is anything else — missing, an
+unknown token, cut off by a budget — **is** `UNAVAILABLE` to whoever reads it.
