@@ -93,6 +93,12 @@ def _read_jsonl(path: Path) -> list[dict]:
                 # record it would have carried is simply not there yet.
                 continue
             if isinstance(row, dict):
+                # Headless `claude -p` sessions echo each request body as an
+                # `api-request-blob` row that repeats the assistant's tool_use
+                # blocks. It is a copy of what was sent, not a second call, so it
+                # is skipped; a genuinely repeated assistant row still fails closed.
+                if row.get("type") == "api-request-blob":
+                    continue
                 rows.append(row)
     return rows
 
