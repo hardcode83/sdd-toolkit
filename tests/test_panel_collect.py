@@ -194,6 +194,21 @@ class HappyPathTests(CollectFixture):
         self.assertNotIn("panel:", next(l for l in self.tasks().splitlines() if l.startswith("## 1.")))
 
 
+    def test_api_request_blob_echoes_of_the_calls_are_not_duplicates(self) -> None:
+        """Headless sessions log each request body as an `api-request-blob` row that repeats the
+        assistant's tool_use blocks; it is an echo, not a second call (regression: 0.56.0 lost the
+        skip and every headless panel came back unavailable)."""
+        ids = self.launch_panel()
+        rows = [json.loads(line) for line in self.tx.main.read_text().splitlines() if line.strip()]
+        for row in rows:
+            if row.get("type") == "assistant":
+                self.tx.append(self.tx.main, {"type": "api-request-blob", "sessionId": SESSION,
+                                              "hash": "0" * 64, "message": row["message"]})
+        result = self.collect(ids)
+        self.assertEqual(0, result.returncode, result.stdout)
+        self.assertEqual("PASS", self.output(result)["gate"])
+
+
 class FailClosedTests(CollectFixture):
     def test_spoofed_identity_the_launched_type_is_not_the_planned_reviewer(self) -> None:
         ids = self.launch_panel()
@@ -260,6 +275,13 @@ class FailClosedTests(CollectFixture):
         ids = self.launch_panel()
         self.tx.hand_back(ids["sdd-qa"], fenced(payload("sdd-qa", self.scope_id, "FAIL")))
         self.assertIn("more than one different report", self.reason(self.collect(ids), "sdd-qa"))
+
+    def test_a_really_repeated_assistant_call_still_fails(self) -> None:
+        ids = self.launch_panel()
+        first = next(json.loads(l) for l in self.tx.main.read_text().splitlines()
+                     if l.strip() and json.loads(l).get("type") == "assistant")
+        self.tx.append(self.tx.main, first)
+        self.assertIn("appears twice", self.reason(self.collect(ids), next(iter(LENSES))))
 
     def test_an_id_recorded_in_two_transcripts_is_ambiguous(self) -> None:
         ids = self.launch_panel()
